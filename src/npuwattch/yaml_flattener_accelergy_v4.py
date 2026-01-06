@@ -2,6 +2,11 @@
 
 This module is intended to be invoked *by* the NPUWattch CLI (npuwattch_console),
 not as a standalone script.
+
+Fully compatible with Timeloop/Accelergy v4 specification:
+- Supports: !Hierarchical, !Parallel, !Pipelined, !Component, !Container, !Nothing
+- Handles spatial fanout on all leaf nodes (Component, Container, Nothing)
+- Supports sparse_optimizations, area_scale, energy_scale, enabled flags
 """
 
 from pathlib import Path
@@ -9,59 +14,76 @@ from pathlib import Path
 import yaml
 from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Union
 
 
 class TreeNode:
     """Represents a node in the architecture hierarchy tree."""
-    def __init__(self, name, node_type, comp_class=None, subclass=None, 
-                 spatial=None, attributes=None, required_actions=None,
-                 constraints=None):
+    def __init__(self, name: str, node_type: str, comp_class: Optional[str] = None,
+                 subclass: Optional[str] = None, spatial: Optional[Dict] = None,
+                 attributes: Optional[Dict] = None, required_actions: Optional[List] = None,
+                 constraints: Optional[Dict] = None, sparse_optimizations: Optional[Dict] = None,
+                 area_scale: Optional[float] = None, energy_scale: Optional[float] = None,
+                 enabled: bool = True, networks: Optional[List] = None):
         self.name = name
-        self.node_type = node_type  #'Hierarchical', 'Parallel', 'Container', 'Component', 'Nothing', 'Root'
+        # Node types: 'Hierarchical', 'Parallel', 'Pipelined', 'Container', 'Component', 'Nothing', 'Root'
+        self.node_type = node_type
         self.comp_class = comp_class
         self.subclass = subclass
         self.spatial = spatial or {}
         self.attributes = attributes or {}
         self.required_actions = required_actions or []
         self.constraints = constraints
-        self.children = []
-        self.parent = None
+        self.sparse_optimizations = sparse_optimizations
+        self.area_scale = area_scale
+        self.energy_scale = energy_scale
+        self.enabled = enabled
+        self.networks = networks or []
+        self.children: List['TreeNode'] = []
+        self.parent: Optional['TreeNode'] = None
         
-    def add_child(self, child):
+    def add_child(self, child: 'TreeNode'):
         """Add a child node."""
         child.parent = self
         self.children.append(child)
         
-    def get_hierarchical_path(self):
+    def get_hierarchical_path(self) -> str:
         """
         Get the full hierarchical path using dot notation.
-        Skip all branch nodes (Hierarchical, Parallel, Root) in the path.
+        Skip all branch nodes (Hierarchical, Parallel, Pipelined, Root) in the path.
         Only include Container and Component nodes.
         """
-        #Build path by walking up, collecting only Container/Component names
         path_parts = []
         current = self
         
         while current is not None and current.node_type != 'Root':
-            if current.node_type in ['Container', 'Component']:
+            if current.node_type in ['Container', 'Component', 'Nothing']:
                 path_parts.insert(0, current.name)
-            #Skip branch nodes: Hierarchical, Parallel
+            # Skip branch nodes: Hierarchical, Parallel, Pipelined
             current = current.parent
         
         return '.'.join(path_parts)
     
-    def calculate_accumulated_mesh(self):
-        """Calculate accumulated mesh dimensions from root to this node."""
+    def calculate_accumulated_mesh(self) -> Tuple[int, int]:
+        """
+        Calculate accumulated mesh dimensions from root to this node.
+        Accumulates spatial from Container nodes AND leaf nodes with spatial fanout.
+        """
         meshX, meshY = 1, 1
         node = self
         while node is not None:
-            #Only accumulate from Container nodes with spatial dimensions
-            if node.node_type == 'Container' and node.spatial:
+            # Accumulate from any node with spatial dimensions (Container, Component, Nothing)
+            if node.spatial:
                 meshX *= node.spatial.get('meshX', 1)
                 meshY *= node.spatial.get('meshY', 1)
             node = node.parent
         return meshX, meshY
+    
+    def get_own_fanout(self) -> int:
+        """Get this node's own spatial fanout (meshX * meshY)."""
+        if self.spatial:
+            return self.spatial.get('meshX', 1) * self.spatial.get('meshY', 1)
+        return 1
     
     def __repr__(self):
         return f"TreeNode({self.name}, {self.node_type})"
@@ -71,9 +93,11 @@ class AccelergyV04Flattener:
     """Flattener for Accelergy v0.4 architecture YAML files."""
     
     def __init__(self):
-        self.flat_components = []
-        self.tree_root = None
-        self.top_level_attributes = {}
+        self.flat_components: List[OrderedDict] = []
+        self.tree_root: Optional[TreeNode] = None
+        self.top_level_attributes: Dict = {}
+        self.constraint_list: List[Dict] = []
+        self.sparse_opt_list: List[Dict] = []
         
     def parse_yaml(self, filepath: str) -> Dict:
         """Load and parse a YAML file with custom Accelergy tags."""
@@ -97,6 +121,11 @@ class AccelergyV04Flattener:
             value['_type'] = 'Hierarchical'
             return value
         
+        def pipelined_constructor(loader, node):
+            value = loader.construct_mapping(node, deep=True)
+            value['_type'] = 'Pipelined'
+            return value
+        
         def nothing_constructor(loader, node):
             value = loader.construct_mapping(node, deep=True)
             value['_type'] = 'Nothing'
@@ -106,6 +135,7 @@ class AccelergyV04Flattener:
         yaml.SafeLoader.add_constructor('!Component', component_constructor)
         yaml.SafeLoader.add_constructor('!Parallel', parallel_constructor)
         yaml.SafeLoader.add_constructor('!Hierarchical', hierarchical_constructor)
+        yaml.SafeLoader.add_constructor('!Pipelined', pipelined_constructor)
         yaml.SafeLoader.add_constructor('!Nothing', nothing_constructor)
         
         with open(filepath, 'r') as f:
@@ -144,7 +174,7 @@ class AccelergyV04Flattener:
         if 'nodes' in arch:
             nodes = arch['nodes']
             
-            #First node is typically the top-level container
+            # First node is typically the top-level container
             if nodes and nodes[0].get('_type') == 'Container':
                 top_container = nodes[0]
                 top_name = top_container.get('name', 'System')
@@ -154,11 +184,15 @@ class AccelergyV04Flattener:
                 top_node = TreeNode(
                     name=f"{top_name}_top_level",
                     node_type='Container',
-                    attributes=top_attrs
+                    attributes=top_attrs,
+                    spatial=top_container.get('spatial', {}),
+                    constraints=top_container.get('constraints', None),
+                    sparse_optimizations=top_container.get('sparse_optimizations', None),
+                    networks=top_container.get('networks', [])
                 )
                 root.add_child(top_node)
                 
-                #Process remaining nodes as hierarchical
+                # Process remaining nodes as hierarchical
                 self._process_hierarchical_nodes(nodes[1:], top_node)
             else:
                 top_node = TreeNode('System_top_level', 'Container')
@@ -178,42 +212,52 @@ class AccelergyV04Flattener:
             node_type = node.get('_type', 'Component')
             
             if node_type == 'Hierarchical':
-                #Create a hierarchical branch node
+                # Create a hierarchical branch node
                 hier_node = TreeNode(name='(hierarchical)', node_type='Hierarchical')
                 scope_stack[-1].add_child(hier_node)
                 
-                #Process children hierarchically
+                # Process children hierarchically
                 if 'nodes' in node:
                     self._process_hierarchical_nodes(node['nodes'], hier_node)
             
             elif node_type == 'Parallel':
-                #Create a parallel branch node
+                # Create a parallel branch node
                 parallel_node = TreeNode(name='(parallel)', node_type='Parallel')
                 scope_stack[-1].add_child(parallel_node)
                 
-                #Process children - each is a sibling
+                # Process children - each is a sibling
                 if 'nodes' in node:
                     for child_node in node['nodes']:
                         self._process_node(child_node, parallel_node)
             
+            elif node_type == 'Pipelined':
+                # Create a pipelined branch node
+                pipelined_node = TreeNode(name='(pipelined)', node_type='Pipelined')
+                scope_stack[-1].add_child(pipelined_node)
+                
+                # Process children - similar to parallel
+                if 'nodes' in node:
+                    for child_node in node['nodes']:
+                        self._process_node(child_node, pipelined_node)
+            
             elif node_type == 'Container':
-                #Create container and push to scope
+                # Create container and push to scope
                 container_node = self._create_container_node(node)
                 scope_stack[-1].add_child(container_node)
                 scope_stack.append(container_node)
             
             elif node_type == 'Component':
-                #Create component in current scope
+                # Create component in current scope
                 component_node = self._create_component_node(node)
                 scope_stack[-1].add_child(component_node)
             
             elif node_type == 'Nothing':
-                #Create nothing node
-                nothing_node = TreeNode(name='(unnamed)', node_type='Nothing')
+                # Create nothing node with full attribute support
+                nothing_node = self._create_nothing_node(node)
                 scope_stack[-1].add_child(nothing_node)
     
     def _process_node(self, node: Dict, parent: TreeNode):
-        """Process a single node (used for Parallel children and Hierarchical children)."""
+        """Process a single node (used for Parallel/Pipelined children and nested Hierarchical)."""
         node_type = node.get('_type', 'Component')
         
         if node_type == 'Hierarchical':
@@ -229,6 +273,13 @@ class AccelergyV04Flattener:
                 for child_node in node['nodes']:
                     self._process_node(child_node, parallel_node)
         
+        elif node_type == 'Pipelined':
+            pipelined_node = TreeNode(name='(pipelined)', node_type='Pipelined')
+            parent.add_child(pipelined_node)
+            if 'nodes' in node:
+                for child_node in node['nodes']:
+                    self._process_node(child_node, pipelined_node)
+        
         elif node_type == 'Container':
             container_node = self._create_container_node(node)
             parent.add_child(container_node)
@@ -238,7 +289,7 @@ class AccelergyV04Flattener:
             parent.add_child(component_node)
         
         elif node_type == 'Nothing':
-            nothing_node = TreeNode(name='(unnamed)', node_type='Nothing')
+            nothing_node = self._create_nothing_node(node)
             parent.add_child(nothing_node)
     
     def _create_container_node(self, node: Dict) -> TreeNode:
@@ -248,19 +299,39 @@ class AccelergyV04Flattener:
             node_type='Container',
             spatial=node.get('spatial', {}),
             attributes=node.get('attributes', {}),
-            constraints=node.get('constraints', None)
+            constraints=node.get('constraints', None),
+            sparse_optimizations=node.get('sparse_optimizations', None),
+            networks=node.get('networks', [])
         )
     
     def _create_component_node(self, node: Dict) -> TreeNode:
-        """Create a Component tree node."""
+        """Create a Component tree node with full v4 attribute support."""
         return TreeNode(
             name=node.get('name', 'component'),
             node_type='Component',
             comp_class=node.get('class', 'unknown'),
             subclass=node.get('subclass', None),
+            spatial=node.get('spatial', {}),
             attributes=node.get('attributes', {}),
             required_actions=node.get('required_actions', None),
-            constraints=node.get('constraints', None)
+            constraints=node.get('constraints', None),
+            sparse_optimizations=node.get('sparse_optimizations', None),
+            area_scale=node.get('area_scale', None),
+            energy_scale=node.get('energy_scale', None),
+            enabled=node.get('enabled', True)
+        )
+    
+    def _create_nothing_node(self, node: Dict) -> TreeNode:
+        """Create a Nothing tree node with full v4 attribute support."""
+        return TreeNode(
+            name=node.get('name', 'nothing'),
+            node_type='Nothing',
+            comp_class=node.get('class', 'nothing'),
+            spatial=node.get('spatial', {}),
+            attributes=node.get('attributes', {}),
+            constraints=node.get('constraints', None),
+            sparse_optimizations=node.get('sparse_optimizations', None),
+            enabled=node.get('enabled', True)
         )
     
     def flatten_hierarchy(self, content: Dict) -> Dict:
@@ -268,19 +339,36 @@ class AccelergyV04Flattener:
         arch = content.get('architecture', {})
         version = arch.get('version', '0.4')
         
-        #Build the hierarchy tree
+        # Reset state
+        self.flat_components = []
+        self.constraint_list = []
+        self.sparse_opt_list = []
+        
+        # Build the hierarchy tree
         self.tree_root = self.build_hierarchy_tree(content)
         
-        #Flatten the tree
+        # Flatten the tree
         self._flatten_tree_node(self.tree_root, {})
         
-        #Build flattened YAML structure
+        # Build flattened YAML structure
         flattened = {
             'architecture': {
                 'version': str(version),
                 'local': self.flat_components
             }
         }
+        
+        # Add constraints if any were collected
+        if self.constraint_list:
+            flattened['architecture_constraints'] = {
+                'targets': self.constraint_list
+            }
+        
+        # Add sparse optimizations if any were collected
+        if self.sparse_opt_list:
+            flattened['sparse_optimizations'] = {
+                'targets': self.sparse_opt_list
+            }
         
         return flattened
     
@@ -291,64 +379,129 @@ class AccelergyV04Flattener:
                 self._flatten_tree_node(child, self.top_level_attributes)
             return
         
-        #Merge attributes - child attributes override parent
+        # Check if node is enabled (skip disabled nodes)
+        if not node.enabled:
+            return
+        
+        # Merge attributes - child attributes override parent
         merged_attrs = deepcopy(parent_attrs)
         merged_attrs.update(node.attributes)
         
-        if node.node_type in ['Hierarchical', 'Parallel']:
-            #Branch nodes don't create components, just process children
+        if node.node_type in ['Hierarchical', 'Parallel', 'Pipelined']:
+            # Branch nodes don't create components, just process children
             for child in node.children:
                 self._flatten_tree_node(child, parent_attrs)
         
         elif node.node_type == 'Container':
-            #Process children with merged attributes
+            # Process children with merged attributes
             for child in node.children:
                 self._flatten_tree_node(child, merged_attrs)
         
         elif node.node_type == 'Component':
-            meshX, meshY = node.calculate_accumulated_mesh()
-            base_name, list_suffix, list_length = self.interpret_component_list(node.name)
-            
-            mesh_instances = meshX * meshY
-            list_instances = list_length if list_length else 1
-            total_instances = mesh_instances * list_instances
-            
-            #Get full hierarchical path (skipping branch nodes)
+            self._flatten_component(node, merged_attrs)
+        
+        elif node.node_type == 'Nothing':
+            # Nothing nodes can have constraints that need to be processed
+            self._flatten_nothing(node, merged_attrs)
+    
+    def _flatten_component(self, node: TreeNode, merged_attrs: Dict):
+        """Flatten a Component node into the flat component list."""
+        meshX, meshY = node.calculate_accumulated_mesh()
+        base_name, list_suffix, list_length = self.interpret_component_list(node.name)
+        
+        mesh_instances = meshX * meshY
+        list_instances = list_length if list_length else 1
+        total_instances = mesh_instances * list_instances
+        
+        # Get full hierarchical path (skipping branch nodes)
+        full_path = node.get_hierarchical_path()
+        instance_suffix = f"[1..{total_instances}]"
+        full_name_with_instances = f"{full_path}{instance_suffix}"
+        
+        # Add mesh information to attributes
+        merged_attrs = deepcopy(merged_attrs)
+        merged_attrs['meshX'] = meshX
+        merged_attrs['meshY'] = meshY
+        
+        # Build component entry
+        comp_entry = OrderedDict([
+            ('name', full_name_with_instances),
+            ('class', node.comp_class)
+        ])
+        
+        if node.subclass:
+            comp_entry['subclass'] = node.subclass
+        
+        comp_entry['attributes'] = merged_attrs
+        
+        # Only add required_actions if specified in the input YAML
+        if node.required_actions is not None and len(node.required_actions) > 0:
+            comp_entry['required_actions'] = node.required_actions
+        
+        # Add area_scale if specified
+        if node.area_scale is not None:
+            comp_entry['area_scale'] = node.area_scale
+        
+        # Add energy_scale if specified
+        if node.energy_scale is not None:
+            comp_entry['energy_scale'] = node.energy_scale
+        
+        comp_entry['enabled'] = True
+        
+        self.flat_components.append(comp_entry)
+        
+        # Process constraints
+        if node.constraints is not None:
+            self._process_constraints(node.name, full_name_with_instances, node.constraints)
+        
+        # Process sparse optimizations
+        if node.sparse_optimizations is not None:
+            self._process_sparse_optimizations(full_name_with_instances, node.sparse_optimizations)
+    
+    def _flatten_nothing(self, node: TreeNode, merged_attrs: Dict):
+        """
+        Flatten a Nothing node. 
+        Nothing nodes don't create storage/compute entries but may have constraints.
+        """
+        # Process constraints if present
+        if node.constraints is not None:
             full_path = node.get_hierarchical_path()
-            instance_suffix = f"[1..{total_instances}]"
-            full_name_with_instances = f"{full_path}{instance_suffix}"
+            self._process_constraints(node.name, full_path, node.constraints)
+        
+        # Process sparse optimizations if present
+        if node.sparse_optimizations is not None:
+            full_path = node.get_hierarchical_path()
+            self._process_sparse_optimizations(full_path, node.sparse_optimizations)
+    
+    def _process_constraints(self, node_name: str, target_name: str, constraints: Dict):
+        """Process and collect constraints from a node."""
+        for constraint_type, constraint_value in constraints.items():
+            if constraint_value is None:
+                continue
+            constraint_entry = deepcopy(constraint_value)
+            constraint_entry['type'] = constraint_type
+            constraint_entry['target'] = target_name.split('[')[0]  # Remove instance suffix
             
-            #Add mesh information to attributes
-            merged_attrs['meshX'] = meshX
-            merged_attrs['meshY'] = meshY
+            # Convert permutation list to string if needed
+            if 'permutation' in constraint_entry and isinstance(constraint_entry['permutation'], list):
+                constraint_entry['permutation'] = ''.join(str(p) for p in constraint_entry['permutation'])
             
-            #Build component entry
-            comp_entry = OrderedDict([
-                ('name', full_name_with_instances),
-                ('class', node.comp_class)
-            ])
+            # Convert factors list to string if needed
+            if 'factors' in constraint_entry and isinstance(constraint_entry['factors'], list):
+                constraint_entry['factors'] = ' '.join(str(f) for f in constraint_entry['factors'])
             
-            if node.subclass:
-                comp_entry['subclass'] = node.subclass
-            
-            comp_entry['attributes'] = merged_attrs
-            
-            #Only add required_actions if specified in the input YAML
-            if node.required_actions is not None and len(node.required_actions) > 0:
-                comp_entry['required_actions'] = node.required_actions
-            
-            #Only add constraints if specified
-            if node.constraints is not None:
-                comp_entry['constraints'] = node.constraints
-            
-            comp_entry['enabled'] = True
-            
-            self.flat_components.append(comp_entry)
+            self.constraint_list.append(constraint_entry)
+    
+    def _process_sparse_optimizations(self, target_name: str, sparse_opts: Dict):
+        """Process and collect sparse optimizations from a node."""
+        sparse_entry = deepcopy(sparse_opts)
+        sparse_entry['name'] = target_name.split('[')[0]  # Remove instance suffix
+        self.sparse_opt_list.append(sparse_entry)
     
     def print_tree(self):
         """Print the hierarchy tree from input YAML using ASCII box-drawing characters."""
         if not self.tree_root:
-            print("No tree to display")
+            print("[WARNING] No tree to display")
             return
         
         print("[INFO] Architecture Hierarchy Tree:")
@@ -362,11 +515,15 @@ class AccelergyV04Flattener:
         """Recursively print tree node with proper connectors."""
         meshX, meshY = node.calculate_accumulated_mesh()
         
+        # Determine instance string based on node type
         if node.node_type == 'Component':
             base_name, list_suffix, list_length = self.interpret_component_list(node.name)
             list_instances = list_length if list_length else 1
             total_instances = meshX * meshY * list_instances
             instance_str = f" [×{total_instances}]" if total_instances > 1 else ""
+        elif node.node_type == 'Nothing':
+            own_fanout = node.get_own_fanout()
+            instance_str = f" [×{own_fanout}]" if own_fanout > 1 else ""
         else:
             spatial_info = []
             if node.spatial:
@@ -376,6 +533,7 @@ class AccelergyV04Flattener:
                     spatial_info.append(f"meshY={node.spatial['meshY']}")
             instance_str = f" ({', '.join(spatial_info)})" if spatial_info else ""
         
+        # Determine connector
         if is_root:
             connector = ""
             new_prefix = ""
@@ -383,21 +541,32 @@ class AccelergyV04Flattener:
             connector = "└── " if is_last else "├── "
             new_prefix = prefix + ("    " if is_last else "│   ")
         
-        #Format node info
+        # Build status indicators
+        status_parts = []
+        if not node.enabled:
+            status_parts.append("DISABLED")
+        
+        status_str = f" [{', '.join(status_parts)}]" if status_parts else ""
+        
+        # Format node info based on type
         if node.node_type == 'Component':
             if node.subclass:
                 type_info = f"(class: {node.comp_class}/{node.subclass})"
             else:
                 type_info = f"(class: {node.comp_class})"
-            print(f"{prefix}{connector}{node.name}{instance_str} {type_info}")
+            print(f"{prefix}{connector}{node.name}{instance_str} {type_info}{status_str}")
         elif node.node_type == 'Container':
-            print(f"{prefix}{connector}{node.name} (container){instance_str}")
-        elif node.node_type in ['Parallel', 'Hierarchical']:
+            print(f"{prefix}{connector}{node.name} (container){instance_str}{status_str}")
+        elif node.node_type in ['Parallel', 'Hierarchical', 'Pipelined']:
             print(f"{prefix}{connector}{node.name}")
         elif node.node_type == 'Nothing':
-            print(f"{prefix}{connector}{node.name} (nothing)")
+            # Show constraints info for Nothing nodes if present
+            constraint_info = ""
+            if node.constraints:
+                constraint_info = f" [has constraints]"
+            print(f"{prefix}{connector}{node.name} (nothing){instance_str}{constraint_info}{status_str}")
         
-        #Print children
+        # Print children
         for i, child in enumerate(node.children):
             is_last_child = (i == len(node.children) - 1)
             self._print_tree_node(child, new_prefix, is_last_child, False)
