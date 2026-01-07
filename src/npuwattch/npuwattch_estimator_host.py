@@ -63,9 +63,10 @@ class EstimatorHost:
     ESTIMATOR_SPEC during scanning (AST parse; no import/exec).
     """
 
-    def __init__(self, estimator_root: Optional[Path] = None) -> None:
+    def __init__(self, estimator_root: Optional[Path] = None, verbose: int = 0) -> None:
         self.estimator_root = estimator_root or _resolve_estimator_root()
         self._modules: Dict[str, EstimatorModuleInfo] = {}
+        self.verbose = verbose
 
     def scan_estimators(self) -> Dict[str, EstimatorModuleInfo]:
         """
@@ -116,7 +117,7 @@ class EstimatorHost:
             return
 
         print("[INFO] Modules found:")
-        print("=" * 80)
+        print("=" * 100)
         for name in self.list_modules():
             info = self._modules[name]
             rel_entry = info.entry_file.relative_to(self.estimator_root)
@@ -130,10 +131,11 @@ class EstimatorHost:
                 req_names = [p.get("name", "?") for p in required]
                 print(f"      required_params: {req_names}")
 
-            for src in info.python_sources:
-                rel = src.relative_to(self.estimator_root)
-                print(f"      * {rel}")
-        print("=" * 80)
+            if self.verbose >= 2:
+                for src in info.python_sources:
+                    rel = src.relative_to(self.estimator_root)
+                    print(f"      * {rel}")
+        print("=" * 100)
 
     def has_module(self, name: str) -> bool:
         return name in self._modules

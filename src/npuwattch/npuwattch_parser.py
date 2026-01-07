@@ -78,7 +78,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-v", "--verbose",
         type=int,
-        default=0,
+        default=1,
         help="Verbosity level (0=quiet).",
     )
 
