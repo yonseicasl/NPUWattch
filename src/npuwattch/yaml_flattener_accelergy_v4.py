@@ -505,11 +505,11 @@ class AccelergyV04Flattener:
             return
         
         print("[INFO] Architecture Hierarchy Tree:")
-        print("=" * 80)
+        print("=" * 100)
         if self.tree_root.children:
             for child in self.tree_root.children:
                 self._print_tree_node(child, "", True, True)
-        print("=" * 80)
+        print("=" * 100)
     
     def _print_tree_node(self, node: TreeNode, prefix: str, is_last: bool, is_root: bool):
         """Recursively print tree node with proper connectors."""
@@ -605,8 +605,11 @@ def flatten_accelergy_v04_yaml(
     Raises:
         Exception: Propagates YAML parsing / flattening errors.
     """
+
     in_path = Path(input_yaml)
     out_path = Path(output_yaml)
+
+    print(f"[INFO] Flattening {in_path} for estimator mode...")
 
     flattener = AccelergyV04Flattener()
     content = flattener.parse_yaml(str(in_path))
