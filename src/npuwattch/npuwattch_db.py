@@ -260,13 +260,14 @@ class DatabaseBuilder:
     
     def _print_database_contents(self, db: NPUWattchDatabase) -> None:
         """Print detailed database contents to console."""
+        print("[INFO] Registered Components List:")
         print("=" * 100)
-        print(f"{'NAME':<60} {'CLASS':<20} {'SUBCLASS':<15} {'INSTANCES':>10}")
+        print(f"{'NAME':<60} {'CLASS':<20} {'INSTANCES':>10}")
         print("-" * 100)
         
         for comp in db.components:
             subclass_str = comp.subclass if comp.subclass else "-"
-            print(f"{comp.base_name:<60} {comp.comp_class:<20} {subclass_str:<15} {comp.instance_count:>10}")
+            print(f"{comp.base_name:<60} {comp.comp_class:<20} {comp.instance_count:>10}")
         
         print("=" * 100)
         print(f"Total: {len(db)} components, {db.total_instances()} instances")
