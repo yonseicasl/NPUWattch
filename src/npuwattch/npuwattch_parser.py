@@ -1,3 +1,11 @@
+"""NPUWattch Argument Parser Module.
+
+This module handles command-line argument parsing for NPUWattch, supporting:
+- Flatten mode: Convert Accelergy v0.4 YAML to flattened format
+- Estimator mode: Run energy/area/timing estimation on architecture
+- Training mode: Train MLP models for estimation
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -9,12 +17,10 @@ from typing import List, Optional
 import yaml
 
 
-
 class NPUWattchArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that prepends a consistent banner before argparse's default error output."""
 
     def error(self, message: str) -> None:
-        # Print the requested line first, then defer to argparse's default formatting.
         self._print_message(
             "[ERROR] Incomplete argument. Please refer to the error message below:\n",
             sys.stderr,
@@ -24,14 +30,25 @@ class NPUWattchArgumentParser(argparse.ArgumentParser):
 
 @dataclass(frozen=True)
 class NPUWattchArgs:
-    # Normal execution mode (existing behavior)
+    """Parsed command-line arguments."""
+    # Normal execution mode
     description_files: List[Path]
     activity_logs: List[Path]
 
-    # Flatten mode (new behavior)
+    # Flatten mode
     flatten: bool
     input_yaml: Optional[Path]
     output_yaml: Optional[Path]
+
+    # Training mode
+    train: bool
+    train_estimator: Optional[str]
+    train_model_type: Optional[str]
+    train_csv: Optional[Path]
+    train_output: Optional[Path]
+    train_epochs: int
+    train_batch_size: int
+    train_lr: float
 
     verbose: int
 
@@ -39,79 +56,176 @@ class NPUWattchArgs:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = NPUWattchArgumentParser(
         prog="npuwattch",
-        description="NPUWattch CLI arguments description",
+        description="NPUWattch - Neural Processing Unit Power/Area/Timing Estimator",
     )
 
-    # Mode selector: flatten an Accelergy v0.4 architecture YAML into 'architecture.local'.
-    parser.add_argument(
-        "-f",
-        "--flatten",
+    # =========================================================================
+    # Mode selectors
+    # =========================================================================
+    mode_group = parser.add_argument_group("Mode Selection")
+
+    mode_group.add_argument(
+        "-f", "--flatten",
         action="store_true",
         help="Flatten an Accelergy v0.4 architecture YAML (use with -i/-o).",
     )
-    parser.add_argument(
-        "-i",
-        "--input_yaml",
+
+    mode_group.add_argument(
+        "-t", "--train",
+        action="store_true",
+        help="Train an estimator model (use with --train-estimator, --train-type, --train-csv).",
+    )
+
+    # =========================================================================
+    # Flatten mode arguments
+    # =========================================================================
+    flatten_group = parser.add_argument_group("Flatten Mode Options")
+
+    flatten_group.add_argument(
+        "-i", "--input_yaml",
         dest="input_yaml",
         help="Input YAML to flatten (used with -f).",
     )
-    parser.add_argument(
-        "-o",
-        "--output_yaml",
+
+    flatten_group.add_argument(
+        "-o", "--output_yaml",
         dest="output_yaml",
-        help="Output path for flattened YAML (used with -f). If not specified, defaults to <input>_flattened.yaml in the same directory.",
+        help="Output path for flattened YAML (used with -f). Defaults to <input>_flattened.yaml.",
     )
 
-    parser.add_argument(
+    # =========================================================================
+    # Estimator mode arguments
+    # =========================================================================
+    estimator_group = parser.add_argument_group("Estimator Mode Options")
+
+    estimator_group.add_argument(
         "-d", "--description",
         dest="description_files",
         help="YAML description file (e.g., architecture_description.yaml).",
     )
-    parser.add_argument(
+
+    estimator_group.add_argument(
         "-l", "--log",
         dest="activity_logs",
         nargs="+",
         help="One or more activity log files (e.g., activity_log.txt).",
     )
 
-    # Keep the CLI light: ~three options total.
-    parser.add_argument(
+    # =========================================================================
+    # Training mode arguments
+    # =========================================================================
+    train_group = parser.add_argument_group("Training Mode Options")
+
+    train_group.add_argument(
+        "--train-estimator",
+        dest="train_estimator",
+        help="Name of the estimator to train (e.g., 'regfile').",
+    )
+
+    train_group.add_argument(
+        "--train-type",
+        dest="train_model_type",
+        choices=["energy", "area", "timing"],
+        help="Type of model to train: 'energy', 'area', or 'timing'.",
+    )
+
+    train_group.add_argument(
+        "--train-csv",
+        dest="train_csv",
+        help="Path to training data CSV file.",
+    )
+
+    train_group.add_argument(
+        "--train-output",
+        dest="train_output",
+        help="Output path for trained model (.pth file).",
+    )
+
+    train_group.add_argument(
+        "--epochs",
+        dest="train_epochs",
+        type=int,
+        default=500,
+        help="Number of training epochs (default: 500).",
+    )
+
+    train_group.add_argument(
+        "--batch-size",
+        dest="train_batch_size",
+        type=int,
+        default=10,
+        help="Training batch size (default: 10).",
+    )
+
+    train_group.add_argument(
+        "--lr",
+        dest="train_lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate (default: 0.001).",
+    )
+
+    # =========================================================================
+    # Common arguments
+    # =========================================================================
+    common_group = parser.add_argument_group("Common Options")
+
+    common_group.add_argument(
         "-v", "--verbose",
         type=int,
         default=1,
-        help="Verbosity level (0=quiet).",
+        help="Verbosity level (0=quiet, 1=normal, 2=detailed).",
     )
 
     return parser
 
 
 def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
+    """Parse command-line arguments and return validated NPUWattchArgs."""
     parser = build_arg_parser()
     ns = parser.parse_args(argv)
 
-    # Validate mode-specific required arguments.
+    # Initialize defaults
+    desc: List[Path] = []
+    logs: List[Path] = []
+    in_yaml: Optional[Path] = None
+    out_yaml: Optional[Path] = None
+    train_csv: Optional[Path] = None
+    train_output: Optional[Path] = None
+
+    # Validate mode-specific required arguments
     if ns.flatten:
+        # Flatten mode
         if not ns.input_yaml:
-            parser.error("Flattener mode -f/--flatten requires -i/--input_yaml")
-        desc: List[Path] = []
-        logs: List[Path] = []
+            parser.error("Flattener mode (-f/--flatten) requires -i/--input_yaml")
+
         in_yaml = Path(ns.input_yaml)
-        
-        # If -o is not specified, create default output filename
+
         if ns.output_yaml:
             out_yaml = Path(ns.output_yaml)
         else:
-            # Generate default output filename: input_flattened.yaml
-            input_path = Path(ns.input_yaml)
-            out_yaml = input_path.parent / f"{input_path.stem}_flattened{input_path.suffix}"
+            out_yaml = in_yaml.parent / f"{in_yaml.stem}_flattened{in_yaml.suffix}"
+
+    elif ns.train:
+        # Training mode
+        if not ns.train_estimator:
+            parser.error("Training mode (-t/--train) requires --train-estimator")
+        if not ns.train_model_type:
+            parser.error("Training mode (-t/--train) requires --train-type")
+        if not ns.train_csv:
+            parser.error("Training mode (-t/--train) requires --train-csv")
+
+        train_csv = Path(ns.train_csv)
+        if ns.train_output:
+            train_output = Path(ns.train_output)
+
     else:
+        # Estimator mode (default)
         if not ns.description_files:
             parser.error("Estimator mode requires -d/--description")
-        # Wrap single description file in a list for consistency
+
         desc = [Path(ns.description_files)]
         logs = [Path(p) for p in (ns.activity_logs or [])]
-        in_yaml = None
-        out_yaml = None
 
     return NPUWattchArgs(
         description_files=desc,
@@ -119,12 +233,20 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         flatten=bool(ns.flatten),
         input_yaml=in_yaml,
         output_yaml=out_yaml,
+        train=bool(ns.train),
+        train_estimator=ns.train_estimator,
+        train_model_type=ns.train_model_type,
+        train_csv=train_csv,
+        train_output=train_output,
+        train_epochs=ns.train_epochs,
+        train_batch_size=ns.train_batch_size,
+        train_lr=ns.train_lr,
         verbose=ns.verbose,
     )
 
 
 def load_description_files(paths: List[Path]) -> list[dict]:
-    """Skeleton loader for YAML description files."""
+    """Load YAML description files."""
     loaded: list[dict] = []
     for p in paths:
         with p.open("r", encoding="utf-8") as f:
@@ -133,7 +255,7 @@ def load_description_files(paths: List[Path]) -> list[dict]:
 
 
 def load_activity_logs(paths: List[Path]) -> list[str]:
-    """Skeleton loader for text activity logs."""
+    """Load text activity log files."""
     lines: list[str] = []
     for p in paths:
         with p.open("r", encoding="utf-8") as f:
