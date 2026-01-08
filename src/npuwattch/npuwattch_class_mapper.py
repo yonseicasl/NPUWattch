@@ -17,24 +17,21 @@ import re
 # Component class/subclass -> estimator module mapping
 # -----------------------------------------------------------------------------
 
+REGFILE_TO_SRAM_THRESHOLD: int = 32768
+
 CLASS_TO_ESTIMATOR: Dict[str, str] = {
     # Register files and storage
     "regfile": "regfile",
     "register_file": "regfile",
+    r".*_rf$": "regfile",
     "rf": "regfile",
-    "smartbuffer_rf": "regfile",
-    "smartbuffer_sram": "regfile",
-    "sram": "regfile",
-    "dram": "regfile",
 
     # Crossbar
     "crossbar": "crossbar",
     "xbar": "crossbar",
     
     # Compute units
-    "intmac": "regfile",
-    "mac": "regfile",
-    "compute": "regfile",
+    "intmac": "intmac",
 }
 
 # -----------------------------------------------------------------------------
@@ -93,12 +90,21 @@ def extract_features_from_attributes(attributes: Dict[str, Any]) -> Dict[str, An
 
 def map_class_to_estimator(comp_class: str, subclass: Optional[str] = None) -> Optional[str]:
     """Resolve estimator module name from class/subclass strings."""
-    if comp_class:
-        key = comp_class.lower()
-        if key in CLASS_TO_ESTIMATOR:
-            return CLASS_TO_ESTIMATOR[key]
-    if subclass:
-        key = subclass.lower()
-        if key in CLASS_TO_ESTIMATOR:
-            return CLASS_TO_ESTIMATOR[key]
+    for candidate in (comp_class, subclass):
+        if candidate:
+            key = candidate.lower()
+            for pattern, estimator in CLASS_TO_ESTIMATOR.items():
+                if re.fullmatch(pattern, key):
+                    return estimator
     return None
+
+def reclassify_estimator(estimator: Optional[str], features: Dict[str, Any]) -> Optional[str]:
+    """Reclassify regfile to sram if total size exceeds threshold."""
+    if estimator != "regfile":
+        return estimator
+    n_banks = features.get("n_banks", 1)
+    depth = features.get("depth", 64)
+    bw = features.get("bw", 32)
+    if n_banks * depth * bw > REGFILE_TO_SRAM_THRESHOLD:
+        return "sram"
+    return estimator
