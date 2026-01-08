@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from npuwattch.npuwattch_db import ComponentEntry, NPUWattchDatabase
-from npuwattch.npuwattch_class_mapper import map_class_to_estimator, extract_features_from_attributes
+from npuwattch.npuwattch_class_mapper import map_class_to_estimator, extract_features_from_attributes, reclassify_estimator
+from npuwattch.npuwattch_custom_lib import lookup_custom_component
 
 import ast
 import importlib.util
@@ -76,10 +77,11 @@ class EstimatorHost:
     Provides safe estimation methods that return None on error instead of terminating.
     """
 
-    def __init__(self, estimator_root: Optional[Path] = None, verbose: int = 0) -> None:
+    def __init__(self, estimator_root: Optional[Path] = None, verbose: int = 0, custom_lib_path: Optional[str] = None) -> None:
         self.estimator_root = estimator_root or _resolve_estimator_root()
         self._modules: Dict[str, EstimatorModuleInfo] = {}
         self.verbose = verbose
+        self.custom_lib_path = custom_lib_path
 
     def scan_estimators(self) -> Dict[str, EstimatorModuleInfo]:
         """
@@ -136,12 +138,6 @@ class EstimatorHost:
             info = self._modules[name]
             rel_entry = info.entry_file.relative_to(self.estimator_root)
             print(f"  - {name} (entry: {rel_entry})")
-
-            # Report entrypoints (if available)
-            if info.spec:
-                entrypoints = info.spec.get("entrypoints", {})
-                if entrypoints:
-                    print(f"      entrypoints: {list(entrypoints.keys())}")
 
             # Report required params (if available)
             required = []
@@ -341,24 +337,34 @@ class EstimatorHost:
         Returns:
             A dict containing estimator name, features, and estimated values.
         """
-        estimator_name = _map_component_to_estimator(comp)
+        estimator_name = map_class_to_estimator(comp.comp_class, comp.subclass)
 
         if estimator_name is None:
-            if self.verbose >= 1:
-                print(
-                    f"[WARNING] No estimator mapping for component '{comp.base_name}' (class: {comp.comp_class})"
-                )
-            comp.energy = None
-            comp.area = None
-            comp.timing = None
-            return {
-                "component": comp.base_name,
-                "estimator": None,
-                "features": None,
-                "energy": None,
-                "area": None,
-                "timing": None,
-            }
+            # Try custom component library lookup
+            print(f"[INFO] Searching custom component library for component '{comp.base_name}' (class: {comp.comp_class})")
+            custom_features = lookup_custom_component(
+                comp.comp_class, comp.subclass, self.custom_lib_path
+            )
+            if custom_features is not None:
+                estimator_name = "custom"
+                features = custom_features
+            else:
+                if self.verbose >= 1:
+                    print(f"[WARNING] No estimator mapping for component '{comp.base_name}' (class: {comp.comp_class})")
+                comp.energy = None
+                comp.area = None
+                comp.timing = None
+                return {
+                    "component": comp.base_name,
+                    "estimator": None,
+                    "features": None,
+                    "energy": None,
+                    "area": None,
+                    "timing": None,
+                }
+        else:
+            features = extract_features_from_attributes(comp.attributes)
+            estimator_name = reclassify_estimator(estimator_name, features)
 
         if not self.has_module(estimator_name):
             print(
@@ -376,7 +382,6 @@ class EstimatorHost:
                 "timing": None,
             }
 
-        features = extract_features_from_component(comp)
         estimates = self.estimate_all(estimator_name, features)
 
         comp.energy = estimates.get("energy")
@@ -524,15 +529,3 @@ class EstimatorHost:
         if error:
             return None
         return result
-
-################################################################################
-# Component mapping + feature extraction (moved from console)
-################################################################################
-
-def _map_component_to_estimator(comp: ComponentEntry) -> Optional[str]:
-    """Map a database component entry to an estimator module name."""
-    return map_class_to_estimator(comp.comp_class, comp.subclass)
-
-def extract_features_from_component(comp: ComponentEntry) -> Dict[str, Any]:
-    """Extract estimator features from a database component entry."""
-    return extract_features_from_attributes(comp.attributes)
