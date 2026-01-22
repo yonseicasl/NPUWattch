@@ -15,7 +15,7 @@ npuwattch -d description_file.yaml -l activity_log.txt -v 1
 
 ## TODO
 
-**v0.0** - This is a growing project, and more features will be added gradually.
+**v0.0** -  Now we are refactoring all sources and workflows to be user-friendly.
 - Add more NN modules
 - Add scripts for dataset batch generation
 - Add sample datasets and training support tools
