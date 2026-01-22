@@ -14,11 +14,10 @@ npuwattch -d description_file.yaml -l activity_log.txt -v 1
 ```
 
 ## TODO
-
-**v0.0** -  Now we are refactoring all sources and workflows to be user-friendly.
+**v0.0** -  Now we are refactoring all sources and workflows to be user-friendly. We plan to support Timeloop and gem5 logs as-is.
 - Add more NN modules
 - Add scripts for dataset batch generation
-- Add sample datasets and training support tools
+- Add dataset and training support tools
 - Add Timeloop and gem5 harnesses
 
 ## Citation
