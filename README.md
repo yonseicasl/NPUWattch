@@ -3,6 +3,14 @@
 
 NPUWattch is an ML-based power, area, and timing (PAT) modeling tool.
 
+## Roadmap
+**v0.0** (Current)
+Ongoing refactoring to improve usability, with native support for Timeloop and gem5 logs.
+- Mar. 2026: Component HDL models and dataset-generation scripts
+- May 2026: Dataset and training support tools
+- Jun. 2026: Additional neural network modules
+- Aug. 2026: Timeloop and gem5 harnesses
+
 ## Install
 ```bash
 pip install -e .
@@ -12,13 +20,6 @@ pip install -e .
 ```bash
 npuwattch -d description_file.yaml -l activity_log.txt -v 1
 ```
-
-## TODO
-**v0.0** -  Now we are refactoring all sources and workflows to be user-friendly. We plan to support Timeloop and gem5 logs as-is.
-- Add more NN modules
-- Add scripts for dataset batch generation
-- Add dataset and training support tools
-- Add Timeloop and gem5 harnesses
 
 ## Citation
 NPUWattch :
