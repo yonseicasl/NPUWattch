@@ -57,7 +57,7 @@ Related technology libraries :
 
 
 ## Related Links
-[Technology Libraries](about:blank) from 20nm to 2nm
+[Technology Libraries](https://i3dvlsi.wordpress.com/i3d-predictive-pdks/) from 20nm to 2nm
 
 
 
