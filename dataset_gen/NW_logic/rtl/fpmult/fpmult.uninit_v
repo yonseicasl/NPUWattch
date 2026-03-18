@@ -1,0 +1,197 @@
+module fpmult #(
+    parameter integer EXPONENT_BITS = MyParam0, 
+    parameter integer MANTISSA_BITS = MyParam1,
+    parameter integer PIPELINE_STAGES = MyParam2 // Valid options: 3, 4, 5
+) (
+    input wire [EXPONENT_BITS+MANTISSA_BITS:0] i_A,  
+    input wire [EXPONENT_BITS+MANTISSA_BITS:0] i_B,  
+    input wire i_CLK,
+    output reg [EXPONENT_BITS+MANTISSA_BITS:0] o_PRODUCT,
+    output reg o_OVFL, o_UDFL
+);
+
+    function integer clogb2 (input integer bit_depth);
+        begin
+            for(clogb2=0; bit_depth>0; clogb2=clogb2+1)
+                bit_depth = bit_depth >> 1;
+        end
+    endfunction // [cite: 41-43]
+
+    localparam integer FP_MSB = EXPONENT_BITS + MANTISSA_BITS;
+    localparam integer SHIFT_COUNTER_BITS = clogb2(MANTISSA_BITS+MANTISSA_BITS+2); // [cite: 43]
+
+    // ==========================================
+    // STAGE 1: Input Registration
+    // ==========================================
+    reg [FP_MSB:0] a_r1, b_r1;
+    always @(posedge i_CLK) begin
+        a_r1 <= i_A;
+        b_r1 <= i_B; // 
+    end
+
+    // ==========================================
+    // BLOCK A: Unpack & Fraction Multiplication
+    // ==========================================
+    wire sign_a = a_r1[FP_MSB];
+    wire sign_b = b_r1[FP_MSB]; // [cite: 47]
+    wire [EXPONENT_BITS-1 : 0] exp_a = a_r1[FP_MSB-1 : MANTISSA_BITS];
+    wire [EXPONENT_BITS-1 : 0] exp_b = b_r1[FP_MSB-1 : MANTISSA_BITS]; // [cite: 48]
+    
+    wire is_subnormal_a = (exp_a == {(EXPONENT_BITS){1'b0}});
+    wire is_subnormal_b = (exp_b == {(EXPONENT_BITS){1'b0}}); // [cite: 49-50]
+    
+    wire [MANTISSA_BITS : 0] frac_a = is_subnormal_a ? {1'b0, a_r1[MANTISSA_BITS-1 : 0]} : {1'b1, a_r1[MANTISSA_BITS-1 : 0]}; // [cite: 51-52]
+    wire [MANTISSA_BITS : 0] frac_b = is_subnormal_b ? {1'b0, b_r1[MANTISSA_BITS-1 : 0]} : {1'b1, b_r1[MANTISSA_BITS-1 : 0]}; // [cite: 52-53]
+    
+    wire a_mantissa_zero = (a_r1[MANTISSA_BITS-1 : 0] == 0);
+    wire b_mantissa_zero = (b_r1[MANTISSA_BITS-1 : 0] == 0); // [cite: 53-54]
+    
+    wire zero_a_c1 = is_subnormal_a && a_mantissa_zero;
+    wire zero_b_c1 = is_subnormal_b && b_mantissa_zero; // [cite: 54]
+    wire a_exp_is_oflow = (exp_a == {(EXPONENT_BITS){1'b1}});
+    wire b_exp_is_oflow = (exp_b == {(EXPONENT_BITS){1'b1}}); // [cite: 55]
+    
+    wire inf_a_c1 = a_exp_is_oflow && a_mantissa_zero;
+    wire inf_b_c1 = b_exp_is_oflow && b_mantissa_zero; // [cite: 55-56]
+    wire nan_a_c1 = a_exp_is_oflow && (!a_mantissa_zero);
+    wire nan_b_c1 = b_exp_is_oflow && (!b_mantissa_zero); // [cite: 56]
+    
+    wire sign_product_c1 = sign_a ^ sign_b; // [cite: 57]
+    wire [MANTISSA_BITS+MANTISSA_BITS+1 : 0] frac_full_product_c1 = frac_a * frac_b; // 
+    wire signed [EXPONENT_BITS+1 : 0] exp_sum_c1 = exp_a - {{(EXPONENT_BITS-2){1'b1}}, 1'b0} + exp_b; // [cite: 59]
+
+    // --- STAGE 2 REGISTERS (Always Present to isolate multiplier) ---
+    wire [MANTISSA_BITS+MANTISSA_BITS+1:0] eff2_frac_full_product;
+    wire signed [EXPONENT_BITS+1:0] eff2_exp_sum;
+    wire eff2_sign_product, eff2_nan_a, eff2_nan_b, eff2_inf_a, eff2_inf_b, eff2_zero_a, eff2_zero_b;
+    wire [FP_MSB:0] eff2_a, eff2_b;
+
+    reg [MANTISSA_BITS+MANTISSA_BITS+1:0] r2_frac_full_product;
+    reg signed [EXPONENT_BITS+1:0] r2_exp_sum;
+    reg r2_sp, r2_na, r2_nb, r2_ia, r2_ib, r2_za, r2_zb;
+    reg [FP_MSB:0] r2_a, r2_b;
+
+    always @(posedge i_CLK) begin
+        r2_frac_full_product <= frac_full_product_c1; r2_exp_sum <= exp_sum_c1;
+        r2_sp <= sign_product_c1; r2_na <= nan_a_c1; r2_nb <= nan_b_c1;
+        r2_ia <= inf_a_c1; r2_ib <= inf_b_c1; r2_za <= zero_a_c1; r2_zb <= zero_b_c1;
+        r2_a <= a_r1; r2_b <= b_r1;
+    end
+
+    assign eff2_frac_full_product = r2_frac_full_product; assign eff2_exp_sum = r2_exp_sum;
+    assign eff2_sign_product = r2_sp; assign eff2_nan_a = r2_na; assign eff2_nan_b = r2_nb;
+    assign eff2_inf_a = r2_ia; assign eff2_inf_b = r2_ib; assign eff2_zero_a = r2_za; assign eff2_zero_b = r2_zb;
+    assign eff2_a = r2_a; assign eff2_b = r2_b;
+
+    // ==========================================
+    // BLOCK B: Shift Calculation
+    // ==========================================
+    wire [SHIFT_COUNTER_BITS-1 : 0] frac_prod_shift_gen [MANTISSA_BITS+MANTISSA_BITS : 0]; // [cite: 60]
+    assign frac_prod_shift_gen[MANTISSA_BITS+MANTISSA_BITS] = eff2_frac_full_product[1] ? MANTISSA_BITS+MANTISSA_BITS : MANTISSA_BITS+MANTISSA_BITS+1; // [cite: 61]
+    genvar i;
+    generate
+        for (i = MANTISSA_BITS+MANTISSA_BITS; i > 0; i=i-1) begin
+            assign frac_prod_shift_gen[i-1] = eff2_frac_full_product[MANTISSA_BITS+MANTISSA_BITS+2-i] ? i-1 : frac_prod_shift_gen[i]; // [cite: 62-63]
+        end
+    endgenerate
+    
+    wire [SHIFT_COUNTER_BITS-1:0] shift_amt_c2 = frac_prod_shift_gen[0]; // [cite: 63]
+
+    // --- STAGE 3 REGISTERS (Bypassed if PIPES < 5) ---
+    wire [SHIFT_COUNTER_BITS-1:0] eff3_shift_amt;
+    wire [MANTISSA_BITS+MANTISSA_BITS+1:0] eff3_frac_full_product;
+    wire signed [EXPONENT_BITS+1:0] eff3_exp_sum;
+    wire eff3_sign_product, eff3_nan_a, eff3_nan_b, eff3_inf_a, eff3_inf_b, eff3_zero_a, eff3_zero_b;
+    wire [FP_MSB:0] eff3_a, eff3_b;
+
+    generate
+        if (PIPELINE_STAGES == 5) begin : gen_stg3_reg
+            reg [SHIFT_COUNTER_BITS-1:0] r3_shift_amt; reg [MANTISSA_BITS+MANTISSA_BITS+1:0] r3_frac_full_product;
+            reg signed [EXPONENT_BITS+1:0] r3_exp_sum; reg r3_sp, r3_na, r3_nb, r3_ia, r3_ib, r3_za, r3_zb; reg [FP_MSB:0] r3_a, r3_b;
+            always @(posedge i_CLK) begin
+                r3_shift_amt <= shift_amt_c2; r3_frac_full_product <= eff2_frac_full_product; r3_exp_sum <= eff2_exp_sum;
+                r3_sp <= eff2_sign_product; r3_na <= eff2_nan_a; r3_nb <= eff2_nan_b; r3_ia <= eff2_inf_a; r3_ib <= eff2_inf_b;
+                r3_za <= eff2_zero_a; r3_zb <= eff2_zero_b; r3_a <= eff2_a; r3_b <= eff2_b;
+            end
+            assign eff3_shift_amt = r3_shift_amt; assign eff3_frac_full_product = r3_frac_full_product; assign eff3_exp_sum = r3_exp_sum;
+            assign eff3_sign_product = r3_sp; assign eff3_nan_a = r3_na; assign eff3_nan_b = r3_nb; assign eff3_inf_a = r3_ia; assign eff3_inf_b = r3_ib;
+            assign eff3_zero_a = r3_za; assign eff3_zero_b = r3_zb; assign eff3_a = r3_a; assign eff3_b = r3_b;
+        end else begin : gen_stg3_byp
+            assign eff3_shift_amt = shift_amt_c2; assign eff3_frac_full_product = eff2_frac_full_product; assign eff3_exp_sum = eff2_exp_sum;
+            assign eff3_sign_product = eff2_sign_product; assign eff3_nan_a = eff2_nan_a; assign eff3_nan_b = eff2_nan_b;
+            assign eff3_inf_a = eff2_inf_a; assign eff3_inf_b = eff2_inf_b; assign eff3_zero_a = eff2_zero_a; assign eff3_zero_b = eff2_zero_b;
+            assign eff3_a = eff2_a; assign eff3_b = eff2_b;
+        end
+    endgenerate
+
+    // ==========================================
+    // BLOCK C: Normalization Shifter
+    // ==========================================
+    wire limit_left_shift_c3 = (eff3_exp_sum <= eff3_shift_amt); // [cite: 63]
+    wire [EXPONENT_BITS : 0] exp_sum_nonneg_c3 = limit_left_shift_c3 ? 0 : (eff3_exp_sum - eff3_shift_amt); // [cite: 64]
+    
+    wire [MANTISSA_BITS+MANTISSA_BITS+1 : 0] frac_prod_shifted_c3 = (eff3_exp_sum > 0) ? 
+        (eff3_frac_full_product << (limit_left_shift_c3 ? eff3_exp_sum : eff3_shift_amt)) : 
+        (eff3_frac_full_product >> -eff3_exp_sum); // 
+        
+    wire [MANTISSA_BITS-1 : 0] frac_product_c3 = frac_prod_shifted_c3[MANTISSA_BITS+MANTISSA_BITS : MANTISSA_BITS+1]; // [cite: 66]
+    
+    wire [EXPONENT_BITS : 0] exp_prod_prerounding_c3 = (!frac_prod_shifted_c3[MANTISSA_BITS+MANTISSA_BITS+1]) ? 0 : 
+        ((exp_sum_nonneg_c3 == 0) && frac_prod_shifted_c3[MANTISSA_BITS+MANTISSA_BITS+1]) ? 1 : exp_sum_nonneg_c3; // 
+
+    // --- STAGE 4 REGISTERS (Bypassed if PIPES < 4) ---
+    wire [MANTISSA_BITS+MANTISSA_BITS+1:0] eff4_frac_prod_shifted;
+    wire [MANTISSA_BITS-1:0] eff4_frac_product;
+    wire [EXPONENT_BITS:0] eff4_exp_prod_prerounding;
+    wire eff4_sign_product, eff4_nan_a, eff4_nan_b, eff4_inf_a, eff4_inf_b, eff4_zero_a, eff4_zero_b;
+    wire [FP_MSB:0] eff4_a, eff4_b;
+
+    generate
+        if (PIPELINE_STAGES >= 4) begin : gen_stg4_reg
+            reg [MANTISSA_BITS+MANTISSA_BITS+1:0] r4_fps; reg [MANTISSA_BITS-1:0] r4_fp; reg [EXPONENT_BITS:0] r4_epp;
+            reg r4_sp, r4_na, r4_nb, r4_ia, r4_ib, r4_za, r4_zb; reg [FP_MSB:0] r4_a, r4_b;
+            always @(posedge i_CLK) begin
+                r4_fps <= frac_prod_shifted_c3; r4_fp <= frac_product_c3; r4_epp <= exp_prod_prerounding_c3;
+                r4_sp <= eff3_sign_product; r4_na <= eff3_nan_a; r4_nb <= eff3_nan_b; r4_ia <= eff3_inf_a; r4_ib <= eff3_inf_b;
+                r4_za <= eff3_zero_a; r4_zb <= eff3_zero_b; r4_a <= eff3_a; r4_b <= eff3_b;
+            end
+            assign eff4_frac_prod_shifted = r4_fps; assign eff4_frac_product = r4_fp; assign eff4_exp_prod_prerounding = r4_epp;
+            assign eff4_sign_product = r4_sp; assign eff4_nan_a = r4_na; assign eff4_nan_b = r4_nb; assign eff4_inf_a = r4_ia; assign eff4_inf_b = r4_ib;
+            assign eff4_zero_a = r4_za; assign eff4_zero_b = r4_zb; assign eff4_a = r4_a; assign eff4_b = r4_b;
+        end else begin : gen_stg4_byp
+            assign eff4_frac_prod_shifted = frac_prod_shifted_c3; assign eff4_frac_product = frac_product_c3; assign eff4_exp_prod_prerounding = exp_prod_prerounding_c3;
+            assign eff4_sign_product = eff3_sign_product; assign eff4_nan_a = eff3_nan_a; assign eff4_nan_b = eff3_nan_b;
+            assign eff4_inf_a = eff3_inf_a; assign eff4_inf_b = eff3_inf_b; assign eff4_zero_a = eff3_zero_a; assign eff4_zero_b = eff3_zero_b;
+            assign eff4_a = eff3_a; assign eff4_b = eff3_b;
+        end
+    endgenerate
+
+    // ==========================================
+    // BLOCK D: Rounding & Assembly
+    // ==========================================
+    wire guard = eff4_frac_prod_shifted[MANTISSA_BITS]; // [cite: 68-69]
+    wire round = eff4_frac_prod_shifted[MANTISSA_BITS-1]; // [cite: 69]
+    wire sticky = eff4_frac_prod_shifted[MANTISSA_BITS-2]; // [cite: 69]
+    
+    wire round_up = (guard && (round || sticky || eff4_frac_product[0])); // [cite: 70-71]
+    wire [FP_MSB : 0] rounded_prod_no_sign = {eff4_exp_prod_prerounding, eff4_frac_product} + round_up; // [cite: 71]
+    
+    wire [FP_MSB:0] product_c4 = (eff4_nan_a || eff4_nan_b) ? { eff4_sign_product, {eff4_a[FP_MSB-1:0] | eff4_b[FP_MSB-1:0]} } : // [cite: 72-73]
+                                 (eff4_inf_a || eff4_inf_b) ? ((eff4_zero_a || eff4_zero_b) ? { 1'b0, {(EXPONENT_BITS){1'b1}}, 1'b1, {(MANTISSA_BITS-1){1'b0}} } : { eff4_sign_product, {(EXPONENT_BITS){1'b1}}, {(MANTISSA_BITS){1'b0}} }) : // [cite: 73-74]
+                                 (eff4_zero_a || eff4_zero_b) ? {eff4_sign_product, {(EXPONENT_BITS+MANTISSA_BITS){1'b0}}} : // [cite: 74-75]
+                                 (rounded_prod_no_sign[FP_MSB : MANTISSA_BITS] >= {(EXPONENT_BITS){1'b1}}) ? { eff4_sign_product, {(EXPONENT_BITS){1'b1}}, {(MANTISSA_BITS){1'b0}} } : // [cite: 75-76]
+                                 {eff4_sign_product, rounded_prod_no_sign[FP_MSB-1 : 0]}; // [cite: 76]
+
+    wire overflow_c4 = &(product_c4[FP_MSB-1 : MANTISSA_BITS]); // [cite: 77]
+    wire underflow_c4 = !(|(product_c4[FP_MSB-1 : MANTISSA_BITS])); // [cite: 77]
+
+    // ==========================================
+    // STAGE 5: Output Registers (Always Present)
+    // ==========================================
+    always @(posedge i_CLK) begin
+        o_PRODUCT <= product_c4; // 
+        o_OVFL <= overflow_c4; // 
+        o_UDFL <= underflow_c4; // 
+    end
+
+endmodule

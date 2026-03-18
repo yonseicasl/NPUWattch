@@ -1,0 +1,23 @@
+NDM_DATABASE: ./../../02_pnr/ICC2_MyDesign/MyDesign
+BLOCK: MyDesign/route_opt
+*TOP_DEF_FILE : ./../../02_pnr/ICC2_MyDesign/MyDesign.def
+*LEF_FILE : ./../techfiles/MyLEFFile
+*****************************
+*COUPLING OPTIONS
+*****************************
+COUPLE_TO_GROUND: NO
+OPERATING_TEMPERATURE: STRC_TEMPERATURE
+TCAD_GRD_FILE: ./../MyGRDFile
+MAPPING_FILE: ./../MyMapFile
+REMOVE_DANGLING_NETS: YES
+NETLIST_FORMAT: SPEF
+*****************************
+*SETTINGS FOR PHYSICAL ECO
+*****************************
+REDUCTION: NO_EXTRA_LOOPS
+NETLIST_NODE_SECTION: YES
+*****************************
+*OUTPUT DATA:
+*******************************
+NETLIST_FILE: MyDesign.spef
+STAR_DIRECTORY: STAR

@@ -1,0 +1,14 @@
+.lib ptm16
+
+.subckt nfet d g s x l=lg nfin=1
+.include '16nfet.pm'
+mnfet d g s x nfet L=l NFIN=nfin
+.ends nfet
+
+.subckt pfet d g s x l=lg nfin=1
+.include '16pfet.pm'
+mpfet d g s x pfet L=l NFIN=nfin
+.ends pfet
+
+
+.endl ptm16
