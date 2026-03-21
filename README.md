@@ -28,8 +28,9 @@ NPUWattch :
     title       = {NPUWattch: ML-based Power, Area, and Timing Modeling for Neural Accelerators},
     author      = {Kim, Sehyeon and Kim, Minkwan and Park, Chanho and Park, Hanmok and Kim, Seonghoon and Song, Taigon and Song, William J.},
     booktitle   = {IEEE International Symposium on High-Performance Computer Architecture},
+    month       = {Jan.}
     year        = {2026},
-    pages       = {1--14},
+    pages       = {1-14},
 }
 ```
 Technology libraries :
