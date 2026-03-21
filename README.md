@@ -5,11 +5,11 @@ NPUWattch is an ML-based power, area, and timing (PAT) modeling tool.
 
 ## Roadmap
 **v0.0** (Current)
-Ongoing refactoring to improve usability, with native support for Timeloop and gem5 logs.
+Ongoing refactoring to improve usability, with native support for Timeloop.
 - Mar. 2026: Component HDL models and dataset-generation scripts
 - May 2026: Dataset and training support tools
 - Jun. 2026: Additional neural network modules
-- Aug. 2026: Timeloop and gem5 harnesses
+- Aug. 2026: Timeloop support
 
 ## Install
 ```bash
