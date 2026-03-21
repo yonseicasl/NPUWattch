@@ -32,7 +32,7 @@ NPUWattch :
     pages       = {1--14},
 }
 ```
-Related technology libraries :
+Technology libraries :
 ```
 @inproceedings{shin_iscas2024,
     title       = {FS2K: A Forksheet FET Technology Library and a Study of VLSI Prediction for 2nm and Beyond}, 
@@ -56,8 +56,8 @@ Related technology libraries :
 ```
 
 
-## Links to Technology Libraries
-[Technology Libraries](https://i3dvlsi.wordpress.com/i3d-predictive-pdks/) from 20nm to 2nm
+## Technology Libraries
+[Link to Technology Libraries](https://i3dvlsi.wordpress.com/i3d-predictive-pdks/) from 20nm to 2nm
 
 
 
