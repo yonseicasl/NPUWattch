@@ -23,18 +23,28 @@ link_block MyDesign
 # ==============================================================================
 # 2. Metal Layer Routing Direction
 # ==============================================================================
-set_attribute [get_layers M1] routing_direction horizontal
-set_attribute [get_layers M3] routing_direction horizontal
-set_attribute [get_layers M5] routing_direction horizontal
-set_attribute [get_layers M7] routing_direction horizontal
-set_attribute [get_layers M9] routing_direction horizontal
-set_attribute [get_layers M11] routing_direction horizontal
-set_attribute [get_layers M2] routing_direction vertical
-set_attribute [get_layers M4] routing_direction vertical
-set_attribute [get_layers M6] routing_direction vertical
-set_attribute [get_layers M8] routing_direction vertical
-set_attribute [get_layers M10] routing_direction vertical
-set_attribute [get_layers M12] routing_direction vertical
+# Detect layer naming convention: "M1" vs "metal1"
+sizeof [get_layers -quiet M1]
+
+if { [sizeof [get_layers -quiet metal1]] == 1 } {
+    set m1_layer  "metal1"
+    set horizontal_layers {metal1  metal3  metal5  metal7  metal9  metal11}
+    set vertical_layers   {metal2  metal4  metal6  metal8  metal10 metal12}
+
+}
+
+if { [sizeof [get_layers -quiet M1]] == 1 } {
+    set m1_layer  "M1"
+    set horizontal_layers {M1  M3  M5  M7  M9  M11}
+    set vertical_layers   {M2  M4  M6  M8  M10 M12}
+}
+
+foreach layer $horizontal_layers {
+    set_attribute [get_layers $layer] routing_direction horizontal
+}
+foreach layer $vertical_layers {
+    set_attribute [get_layers $layer] routing_direction vertical
+}
 
 # ==============================================================================
 # 3. Floorplan Initialization
@@ -90,7 +100,7 @@ connect_pg_net -net VSS [get_pins -physical_context *VSS]
 # ==============================================================================
 # 7. Power Planning ? Standard Cell Rails and Via Rules
 # ==============================================================================
-create_pg_std_cell_conn_pattern rail_pattern -layers M1
+create_pg_std_cell_conn_pattern rail_pattern -layers $m1_layer
 
 set_pg_strategy M1_rails -core \
     -pattern {{name: rail_pattern} {nets: VDD VSS}} \
