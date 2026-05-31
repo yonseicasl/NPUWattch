@@ -23,21 +23,8 @@ link_block MyDesign
 # ==============================================================================
 # 2. Metal Layer Routing Direction
 # ==============================================================================
-# Detect layer naming convention: "M1" vs "metal1"
-sizeof [get_layers -quiet M1]
-
-if { [sizeof [get_layers -quiet metal1]] == 1 } {
-    set m1_layer  "metal1"
-    set horizontal_layers {metal1  metal3  metal5  metal7  metal9  metal11}
-    set vertical_layers   {metal2  metal4  metal6  metal8  metal10 metal12}
-
-}
-
-if { [sizeof [get_layers -quiet M1]] == 1 } {
-    set m1_layer  "M1"
-    set horizontal_layers {M1  M3  M5  M7  M9  M11}
-    set vertical_layers   {M2  M4  M6  M8  M10 M12}
-}
+#START_OF_PNR_LAYER_SCRIPT
+#END_OF_PNR_LAYER_SCRIPT
 
 foreach layer $horizontal_layers {
     set_attribute [get_layers $layer] routing_direction horizontal

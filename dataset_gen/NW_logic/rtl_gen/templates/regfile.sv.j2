@@ -1,0 +1,49 @@
+module {{ module_name }} #(
+    parameter int WIDTH = {{ width }},
+    parameter int DEPTH = {{ depth }},
+    parameter int ADDR_WIDTH = {{ addr_width }},
+    parameter int NUM_READ_PORTS = {{ num_read_ports }},
+    parameter int NUM_WRITE_PORTS = {{ num_write_ports }},
+    parameter int W_PORT_WIDTH = {{ w_port_width }},
+    parameter int W_ADDR_BITS = {{ w_addr_bits }},
+    parameter int W_DATA_BITS = {{ w_data_bits }},
+    parameter int R_ADDR_BITS = {{ r_addr_bits }},
+    parameter int R_DATA_BITS = {{ r_data_bits }}
+) (
+    input  logic                                i_clk,
+    input  logic                                i_rst_n,
+    input  logic [W_PORT_WIDTH-1:0]             i_w_en,
+    input  logic [W_ADDR_BITS-1:0]              i_w_addr,
+    input  logic [W_DATA_BITS-1:0]              i_w_data,
+    input  logic [R_ADDR_BITS-1:0]               i_r_addr,
+    output logic [R_DATA_BITS-1:0]               o_r_data
+);
+
+    logic [WIDTH-1:0] mem [0:DEPTH-1];
+
+    always_ff @(posedge i_clk) begin
+        automatic int addr;
+        /* verilator lint_off SELRANGE */
+        for (int port = 0; port < NUM_WRITE_PORTS; port = port + 1) begin
+            addr = int'(i_w_addr[port*ADDR_WIDTH +: ADDR_WIDTH]);
+            if (i_w_en[port] && (addr < DEPTH)) begin
+                mem[addr] <= i_w_data[port*WIDTH +: WIDTH];
+            end
+        end
+        /* verilator lint_on SELRANGE */
+    end
+
+    always_comb begin
+        automatic int addr;
+        o_r_data = '0;
+        /* verilator lint_off SELRANGE */
+        for (int port = 0; port < NUM_READ_PORTS; port = port + 1) begin
+            addr = int'(i_r_addr[port*ADDR_WIDTH +: ADDR_WIDTH]);
+            if (addr < DEPTH) begin
+                o_r_data[port*WIDTH +: WIDTH] = mem[addr];
+            end
+        end
+        /* verilator lint_on SELRANGE */
+    end
+
+endmodule

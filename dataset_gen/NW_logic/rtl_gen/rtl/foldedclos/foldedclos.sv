@@ -1,0 +1,49 @@
+module foldedclos #(
+    parameter int DATA_WIDTH = 32,
+    parameter int TERMINALS_PER_LEAF = 4,
+    parameter int NUM_LEAVES = 4,
+    parameter int NUM_SPINES = 4,
+    parameter int SWITCH_RADIX = 8,
+    parameter int OVERSUBSCRIPTION_NUM = 1,
+    parameter int OVERSUBSCRIPTION_DEN = 1,
+    parameter int NUM_NODES = 16,
+    parameter int NODE_ID_WIDTH = (NUM_NODES <= 1) ? 1 : $clog2(NUM_NODES)
+) (
+    input  logic [NUM_NODES*DATA_WIDTH-1:0]     i_node_data,
+    input  logic [NUM_NODES-1:0]                i_node_valid,
+    input  logic [NUM_NODES*NODE_ID_WIDTH-1:0]  i_node_dest,
+    output logic [NUM_NODES*DATA_WIDTH-1:0]     o_node_data,
+    output logic [NUM_NODES-1:0]                o_node_valid,
+    output logic [NUM_NODES*NODE_ID_WIDTH-1:0]  o_node_src,
+    output logic [NUM_NODES-1:0]                o_node_grant
+);
+
+    localparam int ACTIVE_SPINES_RAW = (TERMINALS_PER_LEAF * OVERSUBSCRIPTION_NUM + OVERSUBSCRIPTION_DEN - 1) / OVERSUBSCRIPTION_DEN;
+    localparam int ACTIVE_SPINES = (ACTIVE_SPINES_RAW < 1) ? 1 : ((ACTIVE_SPINES_RAW > NUM_SPINES) ? NUM_SPINES : ACTIVE_SPINES_RAW);
+    localparam int REQUIRED_LEAF_RADIX = TERMINALS_PER_LEAF + ACTIVE_SPINES;
+    localparam bit TOPO_ACTIVE =
+        (SWITCH_RADIX >= REQUIRED_LEAF_RADIX) &&
+        (OVERSUBSCRIPTION_NUM <= OVERSUBSCRIPTION_DEN);
+
+    always_comb begin
+        o_node_data = '0;
+        o_node_valid = '0;
+        o_node_src = '0;
+        o_node_grant = '0;
+        for (int dst = 0; dst < NUM_NODES; dst = dst + 1) begin
+            for (int src = 0; src < NUM_NODES; src = src + 1) begin
+                if (TOPO_ACTIVE &&
+                    ((src / TERMINALS_PER_LEAF) < NUM_LEAVES) &&
+                    i_node_valid[src] &&
+                    (i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] == NODE_ID_WIDTH'(dst)) &&
+                    !o_node_valid[dst]) begin
+                    o_node_data[dst*DATA_WIDTH +: DATA_WIDTH] = i_node_data[src*DATA_WIDTH +: DATA_WIDTH];
+                    o_node_valid[dst] = 1'b1;
+                    o_node_src[dst*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'(src);
+                    o_node_grant[src] = 1'b1;
+                end
+            end
+        end
+    end
+
+endmodule

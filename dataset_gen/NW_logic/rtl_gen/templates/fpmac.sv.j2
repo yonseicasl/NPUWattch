@@ -1,0 +1,104 @@
+module {{ module_name }} #(
+    parameter int EXPONENT_BITS = {{ exp_bits }},
+    parameter int MANTISSA_BITS = {{ mantissa_bits }},
+    parameter int PIPELINE_STAGES = {{ pipeline_stages }}
+) (
+    input  logic [EXPONENT_BITS+MANTISSA_BITS:0] i_a,
+    input  logic [EXPONENT_BITS+MANTISSA_BITS:0] i_b,
+    input  logic [EXPONENT_BITS+MANTISSA_BITS:0] i_c,
+    input  logic                                 i_clk,
+    input  logic                                 i_rst_n,
+    output logic [EXPONENT_BITS+MANTISSA_BITS:0] o_result,
+    output logic                                 o_ovfl,
+    output logic                                 o_udfl
+);
+
+    localparam int FP_WIDTH = EXPONENT_BITS + MANTISSA_BITS + 1;
+    localparam int EXTRA_STAGES = PIPELINE_STAGES - 2;
+
+    logic [FP_WIDTH-1:0] c_pipe0;
+    logic [FP_WIDTH-1:0] c_pipe1;
+
+    logic [FP_WIDTH-1:0] mul_product;
+    logic                mul_ovfl;
+    logic                mul_udfl;
+    logic [FP_WIDTH-1:0] add_result;
+    logic                add_ovfl;
+    logic                add_udfl;
+
+    logic [FP_WIDTH-1:0] result_pipe [0:EXTRA_STAGES];
+    logic                ovfl_pipe   [0:EXTRA_STAGES];
+    logic                udfl_pipe   [0:EXTRA_STAGES];
+
+    integer idx;
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            c_pipe0 <= '0;
+            c_pipe1 <= '0;
+        end else begin
+            c_pipe0 <= i_c;
+            c_pipe1 <= c_pipe0;
+        end
+    end
+
+    fpmul #(
+        .EXPONENT_BITS(EXPONENT_BITS),
+        .MANTISSA_BITS(MANTISSA_BITS),
+        .PIPELINE_STAGES(2)
+    ) u_mul (
+        .i_a(i_a),
+        .i_b(i_b),
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n),
+        .o_product(mul_product),
+        .o_ovfl(mul_ovfl),
+        .o_udfl(mul_udfl)
+    );
+
+    fpadd #(
+        .EXPONENT_BITS(EXPONENT_BITS),
+        .MANTISSA_BITS(MANTISSA_BITS),
+        .PIPELINE_STAGES(2)
+    ) u_add (
+        .i_a(mul_product),
+        .i_b(c_pipe1),
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n),
+        .o_sum(add_result),
+        .o_ovfl(add_ovfl),
+        .o_udfl(add_udfl)
+    );
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            for (idx = 0; idx < EXTRA_STAGES; idx = idx + 1) begin
+                result_pipe[idx] <= '0;
+                ovfl_pipe[idx] <= 1'b0;
+                udfl_pipe[idx] <= 1'b0;
+            end
+        end else begin
+            if (EXTRA_STAGES > 0) begin
+                result_pipe[0] <= add_result;
+                ovfl_pipe[0] <= mul_ovfl | add_ovfl;
+                udfl_pipe[0] <= mul_udfl | add_udfl;
+                for (idx = 1; idx < EXTRA_STAGES; idx = idx + 1) begin
+                    result_pipe[idx] <= result_pipe[idx-1];
+                    ovfl_pipe[idx] <= ovfl_pipe[idx-1];
+                    udfl_pipe[idx] <= udfl_pipe[idx-1];
+                end
+            end
+        end
+    end
+
+    assign o_result = (EXTRA_STAGES == 0) ? add_result : result_pipe[EXTRA_STAGES-1];
+    assign o_ovfl = (EXTRA_STAGES == 0) ? (mul_ovfl | add_ovfl) : ovfl_pipe[EXTRA_STAGES-1];
+    assign o_udfl = (EXTRA_STAGES == 0) ? (mul_udfl | add_udfl) : udfl_pipe[EXTRA_STAGES-1];
+
+endmodule
+
+/* verilator lint_off DECLFILENAME */
+{{ embedded_fpmul }}
+
+{{ embedded_fpadd }}
+/* verilator lint_on DECLFILENAME */

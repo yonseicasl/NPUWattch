@@ -1,0 +1,80 @@
+/* verilator lint_off UNUSEDPARAM */
+module {{ module_name }} #(
+    parameter int BLOCK_ELEMS = {{ block_elems }},
+    parameter int NUM_BLOCKS = {{ num_blocks }},
+    parameter int ELEM_WIDTH = {{ elem_width }},
+    parameter int ELEM_EXP_BITS = {{ elem_exp_bits }},
+    parameter int ELEM_MANT_BITS = {{ elem_mant_bits }},
+    parameter int ELEM_BIAS = {{ elem_bias }},
+    parameter int SCALE_EXP_BITS = {{ scale_exp_bits }},
+    parameter int SCALE_BIAS = {{ scale_bias }},
+    parameter int USE_SCALE = {{ use_scale }},
+    parameter int ACC_WIDTH = {{ acc_width }},
+    parameter int DECODE_WIDTH = {{ decode_width }},
+    parameter int DECODE_FRAC_BITS = {{ decode_frac_bits }},
+    parameter int PRODUCT_WIDTH = {{ product_width }},
+    parameter int TOTAL_ELEMS = {{ total_elems }}
+) (
+    input  logic                                      i_clk,
+    input  logic                                      i_rst_n,
+    input  logic                                      i_valid,
+    input  logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]         i_a,
+    input  logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]         i_b,
+    input  logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0]      i_scale_a,
+    input  logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0]      i_scale_b,
+    output logic                                      o_valid,
+    output logic signed [ACC_WIDTH-1:0]               o_result
+);
+/* verilator lint_on UNUSEDPARAM */
+
+    logic signed [ACC_WIDTH-1:0] block_sum [0:NUM_BLOCKS-1];
+    logic signed [ACC_WIDTH-1:0] mac_comb;
+
+    {{ decode_function }}
+
+    always_comb begin
+        for (int block = 0; block < NUM_BLOCKS; block = block + 1) begin
+            block_sum[block] = '0;
+        end
+
+        for (int block = 0; block < NUM_BLOCKS; block = block + 1) begin
+            for (int elem = 0; elem < BLOCK_ELEMS; elem = elem + 1) begin
+                automatic int flat = block * BLOCK_ELEMS + elem;
+                automatic logic signed [DECODE_WIDTH-1:0] a_dec;
+                automatic logic signed [DECODE_WIDTH-1:0] b_dec;
+                automatic logic signed [PRODUCT_WIDTH-1:0] product;
+                /* verilator lint_off UNUSEDSIGNAL */
+                automatic logic signed [PRODUCT_WIDTH-1:0] aligned;
+                /* verilator lint_on UNUSEDSIGNAL */
+                a_dec = decode_elem(
+                    i_a[flat*ELEM_WIDTH +: ELEM_WIDTH],
+                    i_scale_a[block*SCALE_EXP_BITS +: SCALE_EXP_BITS]
+                );
+                b_dec = decode_elem(
+                    i_b[flat*ELEM_WIDTH +: ELEM_WIDTH],
+                    i_scale_b[block*SCALE_EXP_BITS +: SCALE_EXP_BITS]
+                );
+                product = a_dec * b_dec;
+                aligned = product >>> DECODE_FRAC_BITS;
+                block_sum[block] = block_sum[block] + ACC_WIDTH'(aligned);
+            end
+        end
+
+        {{ block_accum_code }}
+    end
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            o_valid <= 1'b0;
+            o_result <= '0;
+        end else begin
+            o_valid <= i_valid;
+            if (i_valid) begin
+                o_result <= mac_comb;
+            end else begin
+                o_result <= '0;
+            end
+        end
+    end
+
+endmodule

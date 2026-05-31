@@ -1,0 +1,63 @@
+module fifo #(
+    parameter int WIDTH = 32,
+    parameter int DEPTH = 16,
+    parameter int PTR_WIDTH = 5,
+    parameter int MEM_ADDR_WIDTH = 4
+) (
+    input  logic                  i_clk,
+    input  logic                  i_rst_n,
+    input  logic                  i_push,
+    input  logic [WIDTH-1:0]      i_push_data,
+    input  logic                  i_pop,
+    output logic [WIDTH-1:0]      o_pop_data,
+    output logic                  o_pop_valid,
+    output logic                  o_full,
+    output logic                  o_empty
+);
+
+    logic [WIDTH-1:0] mem [0:DEPTH-1];
+    logic [PTR_WIDTH-1:0] rd_ptr;
+    logic [PTR_WIDTH-1:0] wr_ptr;
+    logic [PTR_WIDTH:0] count;
+    wire [MEM_ADDR_WIDTH-1:0] rd_idx = rd_ptr[MEM_ADDR_WIDTH-1:0];
+    wire [MEM_ADDR_WIDTH-1:0] wr_idx = wr_ptr[MEM_ADDR_WIDTH-1:0];
+
+    wire push_fire = i_push && !o_full;
+    wire pop_fire = i_pop && !o_empty;
+
+    assign o_full = (count == (PTR_WIDTH+1)'(DEPTH));
+    assign o_empty = (count == '0);
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            rd_ptr <= '0;
+            wr_ptr <= '0;
+            count <= '0;
+            o_pop_valid <= 1'b0;
+            o_pop_data <= '0;
+        end else begin
+            o_pop_valid <= pop_fire;
+            o_pop_data <= pop_fire ? mem[rd_idx] : '0;
+            if (push_fire) begin
+                mem[wr_idx] <= i_push_data;
+                if (wr_ptr == PTR_WIDTH'(DEPTH - 1)) begin
+                    wr_ptr <= '0;
+                end else begin
+                    wr_ptr <= wr_ptr + 1'b1;
+                end
+            end
+            if (pop_fire) begin
+                if (rd_ptr == PTR_WIDTH'(DEPTH - 1)) begin
+                    rd_ptr <= '0;
+                end else begin
+                    rd_ptr <= rd_ptr + 1'b1;
+                end
+            end
+            case ({push_fire, pop_fire})
+                2'b10: count <= count + 1'b1;
+                2'b01: count <= count - 1'b1;
+                default: count <= count;
+            endcase
+        end
+    end
+
+endmodule

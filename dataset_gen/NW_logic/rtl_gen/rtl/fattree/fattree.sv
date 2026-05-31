@@ -1,0 +1,43 @@
+module fattree #(
+    parameter int DATA_WIDTH = 32,
+    parameter int RADIX = 2,
+    parameter int NUM_LEVELS = 3,
+    parameter int OVERSUBSCRIPTION_NUM = 1,
+    parameter int OVERSUBSCRIPTION_DEN = 1,
+    parameter int NUM_NODES = 8,
+    parameter int NODE_ID_WIDTH = (NUM_NODES <= 1) ? 1 : $clog2(NUM_NODES)
+) (
+    input  logic [NUM_NODES*DATA_WIDTH-1:0]     i_node_data,
+    input  logic [NUM_NODES-1:0]                i_node_valid,
+    input  logic [NUM_NODES*NODE_ID_WIDTH-1:0]  i_node_dest,
+    output logic [NUM_NODES*DATA_WIDTH-1:0]     o_node_data,
+    output logic [NUM_NODES-1:0]                o_node_valid,
+    output logic [NUM_NODES*NODE_ID_WIDTH-1:0]  o_node_src,
+    output logic [NUM_NODES-1:0]                o_node_grant
+);
+
+    localparam int UP_PORTS_RAW = (RADIX * OVERSUBSCRIPTION_NUM + OVERSUBSCRIPTION_DEN - 1) / OVERSUBSCRIPTION_DEN;
+    localparam int UP_PORTS = (UP_PORTS_RAW < 1) ? 1 : ((UP_PORTS_RAW > RADIX) ? RADIX : UP_PORTS_RAW);
+    localparam bit TOPO_ACTIVE = (RADIX > 1) && (NUM_LEVELS > 0) && (OVERSUBSCRIPTION_NUM <= OVERSUBSCRIPTION_DEN) && (UP_PORTS > 0);
+
+    always_comb begin
+        o_node_data = '0;
+        o_node_valid = '0;
+        o_node_src = '0;
+        o_node_grant = '0;
+        for (int dst = 0; dst < NUM_NODES; dst = dst + 1) begin
+            for (int src = 0; src < NUM_NODES; src = src + 1) begin
+                if (TOPO_ACTIVE &&
+                    i_node_valid[src] &&
+                    (i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] == NODE_ID_WIDTH'(dst)) &&
+                    !o_node_valid[dst]) begin
+                    o_node_data[dst*DATA_WIDTH +: DATA_WIDTH] = i_node_data[src*DATA_WIDTH +: DATA_WIDTH];
+                    o_node_valid[dst] = 1'b1;
+                    o_node_src[dst*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'(src);
+                    o_node_grant[src] = 1'b1;
+                end
+            end
+        end
+    end
+
+endmodule

@@ -1,0 +1,31 @@
+from .generator import (
+    gen_crossbar,
+    gen_fattree,
+    gen_fifo,
+    gen_foldedclos,
+    gen_fpadd,
+    gen_fpmac,
+    gen_fpmul,
+    gen_intadd,
+    gen_intmac,
+    gen_intmul,
+    gen_mxfpmac,
+    gen_regfile,
+    gen_simplemux,
+)
+
+__all__ = [
+    "gen_fpadd",
+    "gen_fpmul",
+    "gen_fpmac",
+    "gen_intadd",
+    "gen_intmul",
+    "gen_intmac",
+    "gen_mxfpmac",
+    "gen_regfile",
+    "gen_fifo",
+    "gen_simplemux",
+    "gen_crossbar",
+    "gen_fattree",
+    "gen_foldedclos",
+]

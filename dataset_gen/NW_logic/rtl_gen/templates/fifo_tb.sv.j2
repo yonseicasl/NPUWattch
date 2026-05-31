@@ -1,0 +1,84 @@
+module {{ module_name }}_tb;
+    localparam int WIDTH = {{ width }};
+    localparam int NUM_CASES = {{ test_vectors|length }};
+
+    logic i_clk;
+    logic i_rst_n;
+    logic i_push;
+    logic [WIDTH-1:0] i_push_data;
+    logic i_pop;
+    logic [WIDTH-1:0] o_pop_data;
+    logic o_pop_valid;
+    logic o_full;
+    logic o_empty;
+
+    logic vec_push [0:NUM_CASES-1];
+    logic vec_pop [0:NUM_CASES-1];
+    logic [WIDTH-1:0] vec_push_data [0:NUM_CASES-1];
+    logic vec_expected_valid [0:NUM_CASES-1];
+    logic [WIDTH-1:0] vec_expected_data [0:NUM_CASES-1];
+    logic vec_expected_full [0:NUM_CASES-1];
+    logic vec_expected_empty [0:NUM_CASES-1];
+    int errors;
+
+    fifo dut (
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n),
+        .i_push(i_push),
+        .i_push_data(i_push_data),
+        .i_pop(i_pop),
+        .o_pop_data(o_pop_data),
+        .o_pop_valid(o_pop_valid),
+        .o_full(o_full),
+        .o_empty(o_empty)
+    );
+
+    always #5 i_clk <= ~i_clk;
+
+    initial begin
+        i_clk = 1'b0;
+        i_rst_n = 1'b0;
+        i_push = 1'b0;
+        i_push_data = '0;
+        i_pop = 1'b0;
+        errors = 0;
+{% for vec in test_vectors %}
+        vec_push[{{ vec.index }}] = 1'b{{ vec.push }};
+        vec_pop[{{ vec.index }}] = 1'b{{ vec.pop }};
+        vec_push_data[{{ vec.index }}] = {{ width }}'h{{ vec.push_data_hex }};
+        vec_expected_valid[{{ vec.index }}] = 1'b{{ vec.expected_valid }};
+        vec_expected_data[{{ vec.index }}] = {{ width }}'h{{ vec.expected_data_hex }};
+        vec_expected_full[{{ vec.index }}] = 1'b{{ vec.expected_full }};
+        vec_expected_empty[{{ vec.index }}] = 1'b{{ vec.expected_empty }};
+{% endfor %}
+        repeat (2) @(posedge i_clk);
+        i_rst_n = 1'b1;
+
+        for (int n = 0; n < NUM_CASES; n = n + 1) begin
+            @(negedge i_clk);
+            i_push = vec_push[n];
+            i_pop = vec_pop[n];
+            i_push_data = vec_push_data[n];
+            @(posedge i_clk);
+            #1;
+            $display("fifo case=%0d push=%0b pop=%0b valid=%0b exp_valid=%0b data=%h exp=%h full=%0b empty=%0b",
+                n, i_push, i_pop, o_pop_valid, vec_expected_valid[n],
+                o_pop_data, vec_expected_data[n], o_full, o_empty);
+            if ((o_pop_valid !== vec_expected_valid[n]) ||
+                (o_pop_data !== vec_expected_data[n]) ||
+                (o_full !== vec_expected_full[n]) ||
+                (o_empty !== vec_expected_empty[n])) begin
+                errors = errors + 1;
+                $display("fifo mismatch at case %0d", n);
+            end
+        end
+
+        if (errors == 0) begin
+            $display("fifo_tb PASS");
+        end else begin
+            $display("fifo_tb FAIL errors=%0d", errors);
+            $fatal(1);
+        end
+        $finish;
+    end
+endmodule
