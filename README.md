@@ -4,9 +4,8 @@
 NPUWattch is an ML-based power, area, and timing (PAT) modeling tool.
 
 ## Roadmap
-**v0.3** (Current)
+**v0.4** (Current)
 Add i3d's 20nm–2nm technology libraries. They can be used with the Synopsys toolchain.
-- May 2026: Dataset and training support tools
 - Jun. 2026: Additional neural network modules
 - Aug. 2026: Timeloop and gem5 harnesses
 
