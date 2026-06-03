@@ -115,6 +115,7 @@ def run_pnr_job(job: dict[str, str], job_index: int, *, verbose: bool = False) -
     rtl_name = job["rtl_name"].strip()
     log_path = run_dir / "pnr.log"
     netlist_path = run_dir / f"{rtl_name}_icc2.v"
+    sdf_path = run_dir / f"{rtl_name}.sdf"
     gds_path = run_dir / f"{rtl_name}.gds"
     def_path = run_dir / f"{rtl_name}.def"
     if returncode != 0:
@@ -141,6 +142,7 @@ def run_pnr_job(job: dict[str, str], job_index: int, *, verbose: bool = False) -
         details={
             "log": str(log_path),
             "netlist": str(netlist_path),
+            "sdf": str(sdf_path),
             "gds": str(gds_path),
             "def": str(def_path),
         },

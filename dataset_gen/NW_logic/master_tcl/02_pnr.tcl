@@ -149,6 +149,7 @@ report_qor
 # 13. Outputs
 # ==============================================================================
 write_verilog ./MyDesign_icc2.v
+write_sdf ./MyDesign.sdf
 write_gds -hierarchy all_design_libs -lib_cell_view layout ./MyDesign.gds
 write_def ./MyDesign.def
 save_block -as MyDesign:MyDesign/route_opt.design

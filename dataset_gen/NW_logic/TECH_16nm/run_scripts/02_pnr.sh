@@ -158,14 +158,19 @@ if [ ! -f "${TOP_MODULE}_icc2.v" ]; then
     exit 3
 fi
 
+if [ ! -f "${TOP_MODULE}.sdf" ]; then
+    echo "Error: missing output ${TOP_MODULE}.sdf"
+    exit 4
+fi
+
 if [ ! -f "${TOP_MODULE}.gds" ]; then
     echo "Error: missing output ${TOP_MODULE}.gds"
-    exit 4
+    exit 5
 fi
 
 if [ ! -f "${TOP_MODULE}.def" ]; then
     echo "Error: missing output ${TOP_MODULE}.def"
-    exit 5
+    exit 6
 fi
 
 echo "PnR completed successfully: $RUN_DIR"
