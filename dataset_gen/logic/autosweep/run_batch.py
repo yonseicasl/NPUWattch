@@ -7,7 +7,7 @@ import sys
 
 
 if sys.version_info < (3, 9):
-    raise SystemExit("autosweep.py requires Python 3.9 or newer. Try python3.11 autosweep.py.")
+    raise SystemExit("run_batch.py requires Python 3.9 or newer. Try python3.11 run_batch.py.")
 
 
 from autocommon import summarize_scoreboard  # noqa: E402
@@ -20,7 +20,7 @@ from autosynth import run_synthesis_from_manifest  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Manage NW_logic autosweep workflow.")
+    parser = argparse.ArgumentParser(description="Manage the logic autosweep workflow.")
     parser.add_argument(
         "-verbose",
         action="store_true",

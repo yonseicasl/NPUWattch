@@ -14,10 +14,12 @@ from typing import Any
 AUTOSWEEP_DIR = Path(__file__).resolve().parent
 NW_LOGIC_DIR = AUTOSWEEP_DIR.parent
 PROJECT_ROOT = NW_LOGIC_DIR.parents[1]
-JOB_LIST = AUTOSWEEP_DIR / "job_list"
+JOB_LIST = AUTOSWEEP_DIR / "jobs"
 SCOREBOARD = AUTOSWEEP_DIR / "scoreboard.jsonl"
 MASTER_TCL_DIR = NW_LOGIC_DIR / "master_tcl"
-TECH_LIBS_DIR = NW_LOGIC_DIR / "tech_libs"
+# shared by the logic and SRAM flows; per-node collateral lives in
+# tech_libs/techlib_NNnm/ (db/ndm/tf/tluplus/nxtgrd/map + gds/), see catalog.json
+TECH_LIBS_DIR = NW_LOGIC_DIR.parent / "tech_libs"
 CATALOG_FILE = TECH_LIBS_DIR / "catalog.json"
 
 STAGE_RTL_GEN = "rtl-gen"
@@ -285,7 +287,7 @@ def group_jobs_by_node(jobs: list[dict[str, str]]) -> dict[str, list[dict[str, s
     for job in jobs:
         node = job.get("node", "").strip()
         if not node:
-            raise ValueError("job_list row is missing required node value")
+            raise ValueError("jobs row is missing required node value")
         grouped.setdefault(node, []).append(job)
     return grouped
 
