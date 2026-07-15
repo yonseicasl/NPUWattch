@@ -270,5 +270,5 @@ MT0="tb_${TOP}${SUFFIX}.mt0"
 [ -f "$MT0" ] || die "no $MT0 produced -- see $RUN_DIR/sim.log"
 echo
 PYTHONPATH="$SRAM_DIR/array/scripts" python3 "$SCRIPTS/dec_measures.py" \
-    "$MT0" --vdd "$VDD" -o "measures.csv"
+    "$MT0" --vdd "$VDD" --rows "$ROWS" -o "measures.csv"
 echo "Results: $RUN_DIR"

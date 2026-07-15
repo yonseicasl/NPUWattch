@@ -21,6 +21,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mt0")
     ap.add_argument("--vdd", type=float, required=True)
+    ap.add_argument("--rows", type=int, default=0,
+                    help="bitcells per column; with --cols enables the "
+                         "cell-scaled leakage ceiling (bound A2)")
+    ap.add_argument("--cols", type=int, default=0)
     ap.add_argument("-o", "--out", default="measures.csv")
     a = ap.parse_args()
     m = parse_mt0(a.mt0)
@@ -106,12 +110,55 @@ def main():
                   % (k, "FAILED" if v is None else "%.4f V" % v, lo,
                      "ok" if ok else "** FAIL **"))
 
+    # ── value-level sanity bounds (autosweep/sanity_bounds.md §B) ───────
+    # FAIL bounds append to problems (-> verdict FAIL); WARN bounds only
+    # print.  Calibrated on the 2026-07-13/14 sheets.
+    warns = []
+    temper = m.get("temper")
+    hot = temper is not None and temper > 50  # leakage grows ~10-30x hot
+    if leak is not None:
+        if leak <= 0:
+            problems.append("A1: p_leak_w=%.4g W not positive" % leak)
+        elif a.rows and a.cols:
+            cap = 10e-9 * (a.rows * a.cols / 4.0 + 1) * (30 if hot else 1)
+            if leak >= cap:
+                problems.append("A2: p_leak_w=%.4g W >= %.3g W ceiling "
+                                "(resistive short?)" % (leak, cap))
+    for key, _label in energies:
+        v = m.get(key)
+        if v is not None and v <= 0:
+            problems.append("A5: %s=%.4g J not positive" % (key, v))
+    e_ws, e_wt = m.get("e_wr_same_j"), m.get("e_wr_toggle_j")
+    if None not in (e_ws, e_wt) and e_ws > 0 and "bl_wrt_c0" in m \
+            and e_wt < 0.9 * e_ws:  # bl_wrt_c0 exists only when n_toggle>0
+        problems.append("A3: e_wr_toggle=%.4g < 0.9*e_wr_same=%.4g with "
+                        "toggling columns" % (e_wt, e_ws))
+    e_r1, e_r0 = m.get("e_rd_1to1_j"), m.get("e_rd_1to0_j")
+    if None not in (e_r1, e_r0) and e_r1 > 0 and e_r0 < e_r1:
+        problems.append("A4: e_rd_1to0=%.4g < e_rd_1to1=%.4g (full BL "
+                        "discharge must cost more)" % (e_r0, e_r1))
+    t_sense = m.get("t_rd_sense")
+    if t_sense is not None:
+        if t_sense <= -4e-9:
+            warns.append("A7: t_rd_sense=%.4g s more negative than the "
+                         "wl->sen_en gap (wrong edge?)" % t_sense)
+        elif t_sense > 0:
+            warns.append("A8: t_rd_sense=%.4g s > 0 — rd_delay is "
+                         "sense-schedule-limited, not array-limited"
+                         % t_sense)
+    for w in warns:
+        print("array_measures: WARN %s" % w)
+
+    # all measured values are kept even on FAIL; the verdict row lets
+    # collect_array.py drop the run from the sheet without losing data
     with open(a.out, "w") as f:
         w = csv.writer(f)
         w.writerow(["measure", "value_si"])
         for k, v in sorted(m.items()):
             if k not in ("temper", "alter#"):
                 w.writerow([k, "" if v is None else repr(v)])
+        w.writerow(["verdict", "PASS" if not problems
+                    else ("FAIL: " + "; ".join(problems))[:300]])
     print("\narray_measures: wrote %s" % a.out)
 
     if problems:

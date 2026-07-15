@@ -160,5 +160,6 @@ hspice "$TB_FILE" -o "tb_${CELLNAME}${SUFFIX}" 2>&1 | tee "sim.log" \
 MT0="tb_${CELLNAME}${SUFFIX}.mt0"
 [ -f "$MT0" ] || die "no $MT0 produced — see $RUN_DIR/sim.log"
 echo
-PYTHONPATH="$SCRIPT_DIR/scripts" python3 "$MEASURES" "$MT0" --vdd "$VDD" -o "measures.csv"
+PYTHONPATH="$SCRIPT_DIR/scripts" python3 "$MEASURES" "$MT0" --vdd "$VDD" \
+    --rows "$ROWS" --cols "$COLS" -o "measures.csv"
 echo "Results: $RUN_DIR"

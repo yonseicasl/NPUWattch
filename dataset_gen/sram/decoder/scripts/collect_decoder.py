@@ -39,7 +39,10 @@ def read_measures(path):
     with open(path) as f:
         for row in csv.DictReader(f):
             v = row["value_si"]
-            m[row["measure"]] = float(v) if v else None
+            try:
+                m[row["measure"]] = float(v) if v else None
+            except ValueError:
+                m[row["measure"]] = v  # non-numeric row, e.g. verdict
     return m
 
 
@@ -65,6 +68,13 @@ def main():
         meta = json.load(open(need[0]))
         area = json.load(open(need[1]))
         m = read_measures(need[2])
+        # runs whose functional/range checks failed carry a FAIL verdict
+        # from dec_measures.py (values kept for debugging, never collected)
+        verdict = m.get("verdict")
+        if isinstance(verdict, str) and verdict.startswith("FAIL"):
+            print("skip (verdict %s): %s" % (verdict.split(";")[0][:60], run))
+            skipped += 1
+            continue
         e = {k: m.get(k) for k in
              ("e_act_same_j", "e_act_same2_j", "e_act_flip_j",
               "e_act_back_j", "e_idle_clk_j", "p_leak_w",

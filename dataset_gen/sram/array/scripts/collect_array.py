@@ -64,7 +64,10 @@ def load_measures(path):
     with open(path) as f:
         for rec in csv.DictReader(f):
             v = rec["value_si"]
-            out[rec["measure"]] = float(v) if v else None
+            try:
+                out[rec["measure"]] = float(v) if v else None
+            except ValueError:
+                out[rec["measure"]] = v  # non-numeric row, e.g. verdict
     return out
 
 
@@ -76,6 +79,14 @@ def collect_run(run_dir, problems):
         return None  # not a completed array run (old col run, crashed, ...)
     meta = json.load(open(meta_p))
     meas = load_measures(meas_p)
+
+    # runs whose functional/range checks failed carry a FAIL verdict from
+    # array_measures.py (values are kept for debugging, never collected)
+    verdict = meas.get("verdict")
+    if isinstance(verdict, str) and verdict.startswith("FAIL"):
+        print("collect_array: skip (verdict %s): %s"
+              % (verdict.split(";")[0][:60], run_dir), file=sys.stderr)
+        return None
 
     row = {
         "node": meta["node"], "transistor": meta.get("transistor", "hp"),

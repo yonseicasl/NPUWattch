@@ -20,6 +20,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mt0")
     ap.add_argument("--vdd", type=float, required=True)
+    ap.add_argument("--rows", type=int, default=0,
+                    help="wordline count; enables the row-scaled leakage "
+                         "ceiling (bound D2 in sanity_bounds.md)")
     ap.add_argument("-o", "--out", default="measures.csv")
     a = ap.parse_args()
     m = parse_mt0(a.mt0)
@@ -80,12 +83,58 @@ def main():
               % (key, "FAILED" if v is None else "%.4f V" % v, op, lim,
                  "ok" if ok else "** FAIL **"))
 
+    # ── value-level sanity bounds (autosweep/sanity_bounds.md §A) ───────
+    # FAIL bounds append to problems (-> verdict FAIL); WARN bounds only
+    # print.  Calibrated on the 2026-07-13/14 healthy vs broken builds.
+    warns = []
+    temper = m.get("temper")
+    hot = temper is not None and temper > 50  # leakage grows ~10-30x hot
+    if leak is not None:
+        if leak <= 0:
+            problems.append("D1: p_leak_w=%.4g W not positive" % leak)
+        elif a.rows:
+            cap = 10e-9 * a.rows * (30 if hot else 1)
+            if leak >= cap:
+                problems.append("D2: p_leak_w=%.4g W >= %.3g W ceiling "
+                                "(resistive short?)" % (leak, cap))
+    e_keys = ("e_act_same_j", "e_act_same2_j", "e_act_flip_j",
+              "e_act_back_j", "e_idle_clk_j")
+    ev = [m.get(k) for k in e_keys]
+    if all(v is not None and v > 0 for v in ev):
+        e_s, e_s2, e_f, e_b, e_i = ev
+        if e_s >= e_f:
+            problems.append("D3: e_act_same=%.4g >= e_act_flip=%.4g"
+                            % (e_s, e_f))
+        if abs(e_s - e_s2) > 0.25 * max(e_s, e_s2):
+            problems.append("D4: e_act_same=%.4g vs same2=%.4g mismatch "
+                            "> 25%%" % (e_s, e_s2))
+        if abs(e_f - e_b) > 0.25 * max(e_f, e_b):
+            problems.append("D5: e_act_flip=%.4g vs back=%.4g mismatch "
+                            "> 25%%" % (e_f, e_b))
+        if e_i >= e_s:
+            problems.append("D6: e_idle_clk=%.4g >= e_act_same=%.4g"
+                            % (e_i, e_s))
+        if leak is not None and leak > 0 and e_i <= leak * 10e-9:
+            warns.append("D7: e_idle_clk=%.4g J below its own leakage "
+                         "share %.4g J" % (e_i, leak * 10e-9))
+    t_c, t_w = m.get("t_clk_wl"), m.get("t_wlen_wl")
+    if t_c is not None and t_w is not None \
+            and abs(t_c - 2e-9 - t_w) >= 0.3e-9:
+        warns.append("D8: t_clk_wl-2ns-t_wlen_wl=%.4g s (slow decode "
+                     "path?)" % (t_c - 2e-9 - t_w))
+    for w in warns:
+        print("dec_measures: WARN %s" % w)
+
+    # all measured values are kept even on FAIL; the verdict row lets
+    # collect_decoder.py drop the run from the sheet without losing data
     with open(a.out, "w") as f:
         w = csv.writer(f)
         w.writerow(["measure", "value_si"])
         for k, v in sorted(m.items()):
             if k not in ("temper", "alter#"):
                 w.writerow([k, "" if v is None else repr(v)])
+        w.writerow(["verdict", "PASS" if not problems
+                    else ("FAIL: " + "; ".join(problems))[:300]])
     print("\ndec_measures: wrote %s" % a.out)
 
     if problems:
