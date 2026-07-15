@@ -82,6 +82,33 @@ RTL ratio encoding:
 - `oversubscription` is accepted as a Python float.
 - Generated RTL emits `OVERSUBSCRIPTION_NUM` and `OVERSUBSCRIPTION_DEN`.
 
+## Testbench structure
+
+Every generated TB has two phases (shared blocks in
+`templates/_power_stim.sv.j2`):
+
+1. **Functional phase** — the self-checking directed vectors (golden values
+   from the Python models). On any mismatch the TB prints `FAIL` and
+   `$fatal`s; the power phase never runs for a broken design.
+2. **Power phase** — full-rate uniform-random stimulus (one vector per
+   clock/pacing period, protocol-legal per module: bounded mux selects,
+   guarded FIFO push/pop, written-address regfile reads, all-valid NoC
+   injection). Marked by `nw_power_phase` and by
+   `power phase start/end` log lines.
+
+Under `+define+NW_LOGIC_GATE_SIM` (set by the autosweep gate-sim filelist)
+the TB also opens a VCS toggle window over exactly the power phase and writes
+`sim.saif` — the activity input for vectored PrimeTime power. The SAIF
+duration therefore covers only defined, reproducible random activity, never
+the reset or the directed vectors. Note VCS toggle monitoring covers wires,
+so an RTL sim of a logic-only module yields a header-only SAIF; gate-level
+netlists (all wires) always populate it.
+
+Runtime plusargs (all optional): `+nw_clock_period_ps` (TB clock / pacing
+period, default 10000; the autosweep sim stage passes the job's clock),
+`+nw_power_cycles` (default 2000, baked in from
+`generator.DEFAULT_POWER_CYCLES`), `+nw_power_seed` (default 42).
+
 ## Rules
 
 - Use Python and Jinja2-style templates for generation.

@@ -16,6 +16,12 @@ autosweep/
 ├── autopex.py        # stage: pex       (StarRC)
 ├── autosim.py        # stage: logic-sim (gate-level sim of the PnR netlist)
 ├── autopwr.py        # stage: pwr       (PrimeTime PX power)
+├── autocollect.py    # stage: collect   (reports → ../datasets/logic_<rtl>.csv)
+├── sweep_spec.py     # THE sweep specification: every arch config (pin-capped)
+├── autoprobe.py      # stage: probe (T_min per config×node) + gen-jobs (manifest)
+├── autosweeprun.py   # stage: sweep (storage-bounded per-job pipeline, resumable)
+├── probe_results.tsv # probe output; ok rows are skipped on probe re-runs
+├── sweep_failures.tsv# sweep failures (run_id, stage, error); sweep continues past them
 └── scoreboard.jsonl  # append-only event log (one JSON object per line)
 ```
 
@@ -35,7 +41,7 @@ clock columns.
 | `temp` | syn+ | corner temperature in °C — catalog match |
 | `clock_period_ns` | one of the two | clock constraint; takes precedence when both are set |
 | `clock_freq_mhz` | one of the two | alternative clock spec (period = 1000/f) |
-| `clock_port` | no (default `i_clk`) | clock port name for `create_clock` |
+| `clock_port` | no (default `i_clk`) | clock port name for `create_clock`; if the design has no such port (combinational NoC blocks), synthesis uses a virtual clock with zero I/O delays instead |
 | `reset_port` | no | when set, a `set_false_path -from` is added on it |
 | `reset_active` | no | reset polarity, consumed by the generated TB |
 
@@ -48,9 +54,11 @@ stage's run directory.
 
 ```bash
 python3.11 run_batch.py                 # all stages, whole manifest
-python3.11 run_batch.py syn             # one stage: rtl|syn|pnr|pex|sim|pwr
+python3.11 run_batch.py syn             # one stage: rtl|syn|pnr|pex|sim|pwr|collect
 python3.11 run_batch.py -verbose pnr    # stream tool output while logging
 python3.11 run_batch.py -vectored pwr   # power from gate-sim activity
+python3.11 run_batch.py -jobs-per-node 2 syn  # 2 concurrent jobs per node worker
+python3.11 run_batch.py collect         # parse reports into ../datasets/
 python3.11 run_batch.py scoreboard      # stage × status summary (JSON)
 ```
 
@@ -66,34 +74,156 @@ job-specific values injected, (3) recreates the run directory
 `TECH_<NN>nm/<stage>/<run_id>/` (a re-run wipes the old one), and
 (4) executes `TECH_<NN>nm/run_scripts/<stage>.sh <run_id>`, teeing the
 tool output to a log in the run directory. Jobs for **different nodes run
-in parallel** (one worker per node); jobs within a node run sequentially.
+in parallel** (one worker per node); within a node, jobs run sequentially
+by default, or `-jobs-per-node N` at a time. Concurrency is safe (each job
+owns its run directory and RTL variant directory); size N by the EDA
+license pool — total concurrent tools = nodes × N — and by host cores
+(each ICC2 run claims up to 16).
 
 1. **rtl-gen** (`autortl.py`) — deduplicates the manifest by
    `(rtl_name, arch_params)` and calls the `gen_<rtl_name>` generator from
-   `../rtl_gen/`, emitting `rtl_gen/rtl/<name>/<name>.sv` + self-checking
-   `<name>_tb.sv`. No EDA tools needed.
+   `../rtl_gen/`, emitting `rtl_gen/rtl/<variant>/<name>/<name>.sv` + the
+   self-checking `<name>_tb.sv`, where `<variant>` is `<name>_<arch tokens>`
+   (e.g. `intmac_32_32_64_64_3`). One directory per arch variant — a shared
+   per-module directory would let manifests with several configurations of
+   one module silently synthesize only the last-generated RTL. No EDA tools
+   needed.
 2. **syn** (`autosynth.py`, `01_syn.tcl`) — injects `create_clock`
-   (+ 0.2 ns uncertainty, reset false path) into the master script.
+   (+ 0.2 ns uncertainty, reset false path) into the master script, plus one
+   `set_dont_use` per cell in the node's catalog `dontuse` list (5nm excludes
+   `MUX_X1`/`MUX_X2` to stay uniform with the 44-cell 20–7nm libraries).
+   Clock handling is data-driven, not per-module: when the job's clock port
+   does not exist on the design (the combinational NoC blocks), the injected
+   snippet falls back to a **virtual clock with zero input/output delays**,
+   so every in→out path must fit in one cycle and the job's frequency axis
+   keeps its meaning. The virtual clock flows to ICC2/PT through the SDC.
    Keepers: `<rtl>_syn.v`, `<rtl>.sdc`, `synthesis.log` (the QoR/area
    reports feed `comb/seq_cells`, `comb/seq_area` → SCR/SAR).
 3. **pnr** (`autopnr.py`, `02_pnr.tcl`) — ICC2 place & route of the
-   synthesized netlist. Keeper: `<rtl>_icc2.v` (+ layout artifacts and the
-   post-layout area report in the run dir).
+   synthesized netlist. CTS and the clock-tree reports are gated on
+   register presence: a purely combinational block (virtual clock only)
+   has no clock sinks and `synthesize_clock_trees` would error (CTS-036),
+   so it is skipped and placeholder clock reports are written. Keeper:
+   `<rtl>_icc2.v` (+ layout artifacts and the post-layout area report in
+   the run dir).
 4. **pex** (`autopex.py`, `03_pex.strc`) — StarRC extraction on the PnR
    result. Keeper: `<rtl>.spef`.
-5. **logic-sim** (`autosim.py`) — gate-level simulation of the PnR netlist
-   against the generated TB; builds a `04_sim.f` filelist (point
+5. **logic-sim** (`autosim.py`) — SDF-annotated gate-level simulation of the
+   PnR netlist against the generated TB; builds a `04_sim.f` filelist (point
    `STD_CELL_MODELS_F`/`STD_CELL_MODELS` at the cell models when invoking
-   `04_sim.sh`). Produces `sim.vcd` (or `sim.saif`) — the activity input
-   for vectored power. Optional for the default dataset flow.
+   `04_sim.sh`). The TB runs its self-checking functional phase, then (only
+   on PASS) a seeded random-stimulus **power phase** (full-rate operands,
+   2000 vectors / seed 42 by default — see `../rtl_gen/SUMMARY.md`). autosim
+   passes `+nw_clock_period_ps=<job clock>` so the activity toggles at the
+   frequency the power row claims; extra plusargs (`+nw_power_cycles`,
+   `+nw_power_seed`) can be appended to `04_sim.sh <run_id> [plusargs...]`.
+   Outputs: `sim.saif` (toggle window = exactly the power phase; the
+   vectored-power activity input) and `sim.vcd` (functional-phase debug
+   trace only — dumping stops when the power phase starts). The job clock
+   must be timing-clean for the netlist: an SDF gate sim of a WNS < 0 design
+   corrupts its own functional checks and the run aborts before writing
+   activity — fix the design point, don't relax the sim clock, or the
+   activity no longer matches the row's frequency.
 6. **pwr** (`autopwr.py`, `05_pwr.tcl`) — PrimeTime PX on the PnR netlist
    with the PEX SPEF back-annotated. Default is **unvectored** (vectorless
-   activity, the project-wide 10 % convention); `-vectored` instead points
-   it at the logic-sim `sim.saif`/`sim.vcd`. Keeper: `power.rpt`.
+   activity, the project-wide 10 % convention); `-vectored` instead reads
+   the logic-sim `sim.saif` (preferred — its duration covers exactly the
+   TB power phase; `sim.vcd` is only a fallback). Keeper: `power.rpt`.
 
-Data collection into `datasets/logic.csv` is not wired into `run_batch.py`
-yet (the `data-collection` stage id is reserved in `autocommon.py`); the
-report extractors consume the run directories above.
+7. **collect** (`autocollect.py`) — parses the report files the stages above
+   write and appends one row per design point to
+   `../datasets/logic_<rtl_name>.csv` (one CSV per component class, mirroring
+   `dataset_gen/sram/datasets/`). Rows are keyed by `flow_run_id`; re-collecting
+   a run id replaces its row. No EDA tools needed.
+
+## Reports the collector reads
+
+Each EDA stage redirects its reports to fixed file names so the collector parses
+report files rather than scraping the interleaved tool log.
+
+| stage | file | supplies |
+|---|---|---|
+| syn | `synthesis.log` (`Report : qor` section) | total/comb/seq cell count + area, SCR/SAR, WNS/TNS |
+| pnr | `qor.rpt` | post-route total/comb/seq cell count + area, WNS/TNS |
+| pnr | `utilization.rpt` | core area, utilization ratio |
+| pnr | `clock_qor.rpt`, `clock_timing.rpt` | clock-tree insertion delay, skew, repeater count (not yet in the CSV) |
+| pex | `*.star_sum` | StarRC version |
+| pwr | `power_summary.rpt` | internal/switching/leakage/total power + per-power-group split |
+| pwr | `power_hier.rpt` | power unit header (report values are scaled to mW), per-instance tree |
+| pwr | `global_timing.rpt`, `constraint.rpt` | signoff WNS/TNS, all violators (not yet in the CSV) |
+| pwr | `switching_activity.rpt` | activity annotation coverage — sanity check that a vectored run actually consumed the SAIF (not yet in the CSV) |
+
+ICC2 has no `report_area` (unlike DC and PT), so post-route cell areas come from
+`report_qor` and the physical area from `report_utilization`.
+
+Every row records the tool version that produced it (`dc_version`,
+`icc2_version`, `starrc_version`, `pt_version`) plus `power_activity_mode` and
+`collector_schema`. Synopsys report labels are stable across releases, but if one
+ever moves, the parser raises rather than writing a blank cell — and the version
+columns identify which rows a format change would affect.
+
+Areas are library units (um2); power is converted to mW from whatever unit the
+PrimeTime report declares. `dyn_energy_pJ` is `dyn_power_mW * clock_period_ns`.
+
+## Dataset sweep (probe → gen-jobs → sweep)
+
+The full dataset run is three commands, each safe to interrupt and re-run
+(designed for a shared server, e.g. inside tmux):
+
+```bash
+python3 run_batch.py probe -jobs-per-node 2    # overnight: T_min per config×node
+python3 run_batch.py gen-jobs                  # seconds: writes the jobs manifest
+python3 run_batch.py sweep -jobs-per-node 2    # days: the storage-bounded sweep
+```
+
+1. **probe** synthesizes every `sweep_spec.py` configuration once per node at
+   an unreachable 0.5 ns clock; the achieved critical path approximates the
+   minimum period T_min. Results append to `probe_results.tsv` (ok rows are
+   skipped on re-run, error rows retried); each probe run directory is
+   deleted right after parsing.
+2. **gen-jobs** derives two clocks per (config, node) — tight = 1.2×T_min,
+   relaxed = 2×T_min, ceil'd to a 0.25 ns grid — and writes the manifest
+   (backing up the previous one to `jobs.prev`). The 1.2× margin absorbs the
+   observed syn→PnR timing degradation so vectored rows stay timing-clean.
+3. **sweep** pipelines each job through
+   syn→pnr→pex→sim→pwr(unvectored)→CSV→pwr(vectored)→CSV, then archives the
+   report texts to `../sweep_reports/<run_id>.reports.tar.gz` and deletes the
+   run directories. Disk at any moment holds only the jobs in flight
+   (nodes × `-jobs-per-node`), not the whole sweep (~350 GB unpruned).
+   **Crash resume**: a job whose dataset CSV already has both activity-mode
+   rows is skipped, so re-running the same command continues where it
+   stopped. A failing job is recorded in `sweep_failures.tsv` (its report
+   texts still archived) and the sweep moves on.
+
+### Adding a node later (incremental sweep)
+
+All three stages take `-nodes` (comma-separated, e.g. `-nodes 3` or
+`-nodes 20,16`), so a newly characterized node can be brought up without
+re-running the finished ones. Module-level parallelism (`-jobs-per-node`)
+still applies within the node:
+
+```bash
+python3 run_batch.py probe -nodes 3 -jobs-per-node 4   # probe the new node only
+python3 run_batch.py gen-jobs -nodes 3                 # manifest = that node's rows only
+python3 run_batch.py sweep -nodes 3 -jobs-per-node 4   # sweep those rows
+```
+
+- The node must already be in the technology catalog; probe/gen-jobs fail
+  fast with "no TT/25C corners in the catalog" otherwise.
+- `gen-jobs -nodes ...` writes a manifest holding ONLY those nodes (the
+  previous manifest is backed up to `jobs.prev` as usual). For a permanent
+  addition, also append the node to `SWEEP_NODES` in `sweep_spec.py` so
+  future unfiltered runs cover it.
+- With a single node the license/core budget is undivided, so
+  `-jobs-per-node` can go higher than in the full run (total concurrent
+  tools = nodes × jobs-per-node).
+- Finished nodes are protected even without the filter: probe skips ok
+  rows of `probe_results.tsv` and sweep skips jobs whose CSV already has
+  both activity-mode rows — `-nodes` just avoids scanning them at all and
+  keeps the manifest scoped.
+
+To re-examine a collected row, start from its report archive; to reproduce
+it fully, re-run that single design point with the per-stage commands above.
 
 ## Scoreboard
 

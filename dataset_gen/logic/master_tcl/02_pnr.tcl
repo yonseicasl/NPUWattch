@@ -127,7 +127,16 @@ place_opt
 # ==============================================================================
 # 10. CTS / Post-CTS Optimization
 # ==============================================================================
-synthesize_clock_trees
+# A purely combinational block carries only the virtual clock from synthesis:
+# it has no clock sinks and synthesize_clock_trees errors out (CTS-036), so
+# CTS and the clock-tree reports below are data-driven on register presence.
+set hasClockSinks [expr {[sizeof_collection [all_registers]] > 0}]
+
+if {$hasClockSinks} {
+    synthesize_clock_trees
+} else {
+    puts "Info: no registers in this block (virtual clock only) - skipping CTS."
+}
 
 #clock_opt
 
@@ -143,7 +152,28 @@ route_auto -max_detail_route_iterations 7
 # ==============================================================================
 # 12. Reporting
 # ==============================================================================
-report_qor
+# Reports are redirected to stable file names so the data-collection stage parses
+# report files instead of scraping the interleaved tool log. ICC2 has no
+# report_area (unlike DC/PT) ? cell areas come from report_qor, physical area
+# from report_utilization.
+
+# Post-CTS/post-route cell counts (leaf/comb/seq), cell areas, timing, net length.
+redirect -file ./qor.rpt {report_qor}
+
+# Die/core bounding box and placement utilization ? the physical area figure.
+redirect -file ./utilization.rpt {report_utilization}
+
+# Clock tree after CTS: insertion delay, skew, clock cell count/area.
+if {$hasClockSinks} {
+    redirect -file ./clock_qor.rpt {report_clock_qor}
+    redirect -file ./clock_timing.rpt {report_clock_timing -type summary}
+} else {
+    redirect -file ./clock_qor.rpt {puts "No clock tree: combinational block (virtual clock)."}
+    redirect -file ./clock_timing.rpt {puts "No clock tree: combinational block (virtual clock)."}
+}
+
+# Post-route worst paths, with the clock tree propagated.
+redirect -file ./timing.rpt {report_timing -max_paths 10 -nosplit}
 
 # ==============================================================================
 # 13. Outputs

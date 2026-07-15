@@ -1,3 +1,4 @@
+{% import "_power_stim.sv.j2" as pwr %}
 module {{ module_name }}_tb;
     localparam int DATA_WIDTH = {{ data_width }};
     localparam int TERMINALS_PER_LEAF = {{ terminals_per_leaf }};
@@ -39,6 +40,16 @@ module {{ module_name }}_tb;
         .o_node_grant(o_node_grant)
     );
 
+{{ pwr.decls("DATA_WIDTH") }}
+    task automatic nw_drive_random();
+        for (int src = 0; src < NUM_NODES; src = src + 1) begin
+            i_node_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+            i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'($urandom_range(0, NUM_NODES - 1));
+            i_node_valid[src] = 1'b1;
+        end
+    endtask
+
+{{ pwr.pace_init() }}
     initial begin
         i_node_data = '0;
         i_node_valid = '0;
@@ -98,6 +109,9 @@ module {{ module_name }}_tb;
             $display("foldedclos_tb FAIL errors=%0d", errors);
             $fatal(1);
         end
+{{ pwr.run_comb(module_name ~ "_tb", power_cycles) }}
         $finish;
     end
+
+{{ pwr.saif_hook(module_name ~ "_tb") }}
 endmodule

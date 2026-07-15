@@ -51,11 +51,12 @@ link
 # preventing naming conflicts during hierarchical write-out.
 uniquify
 
-# Standard compile ? balances runtime and QoR for most designs.
-# compile_ultra (commented below) provides higher effort at longer runtime;
-# enable it for timing-critical blocks once basic flow is verified.
-compile
-#compile_ultra -no_autoungroup -no_boundary_optimization
+# compile_ultra: DesignWare arithmetic architectures + boundary optimization.
+# A/B on intmac 32x32 @20nm (2026-07-14): plain compile saturates at a ~6.0 ns
+# critical path (ripple-like, 61-65 logic levels); compile_ultra meets 2.5 ns
+# (26-30 levels) at 20-24% less area, ~2-5x compile runtime. The dataset must
+# not mix netlists from both modes - this flow is compile_ultra everywhere.
+compile_ultra
 
 # ==============================================================================
 # 5. Write Outputs

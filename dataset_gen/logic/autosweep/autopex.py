@@ -21,6 +21,7 @@ from autocommon import (
     read_jobs,
     recreate_run_dir,
     run_id_for_job,
+    run_jobs_for_node,
     run_logged_command,
 )
 
@@ -136,26 +137,35 @@ def run_pex_job(job: dict[str, str], job_index: int, *, verbose: bool = False) -
     )
 
 
-def run_pex_for_node(node: str, jobs: list[dict[str, str]], *, verbose: bool = False) -> None:
+def run_pex_for_node(
+    node: str, jobs: list[dict[str, str]], *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     log_event(stage=STAGE_PEX, status=STATUS_START, message="node PEX worker started", node=node)
-    for index, job in enumerate(jobs, start=1):
-        run_pex_job(job, index, verbose=verbose)
+    run_jobs_for_node(
+        jobs,
+        lambda job, index: run_pex_job(job, index, verbose=verbose),
+        jobs_per_node=jobs_per_node,
+    )
     log_event(stage=STAGE_PEX, status=STATUS_DONE, message="node PEX worker complete", node=node)
 
 
-def run_pex_from_manifest(path: Path = JOB_LIST, *, verbose: bool = False) -> None:
+def run_pex_from_manifest(
+    path: Path = JOB_LIST, *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     jobs = read_jobs(path)
     grouped = group_jobs_by_node(jobs)
     log_event(
         stage=STAGE_PEX,
         status=STATUS_START,
         message="PEX stage started",
-        details={"nodes": sorted(grouped)},
+        details={"nodes": sorted(grouped), "jobs_per_node": jobs_per_node},
     )
 
     with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
         futures = {
-            executor.submit(run_pex_for_node, node, node_jobs, verbose=verbose): node
+            executor.submit(
+                run_pex_for_node, node, node_jobs, verbose=verbose, jobs_per_node=jobs_per_node
+            ): node
             for node, node_jobs in grouped.items()
         }
         for future in as_completed(futures):

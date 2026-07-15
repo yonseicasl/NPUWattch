@@ -1,13 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <run_dir_or_run_name>"
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <run_dir_or_run_name> [simv-plusargs...]"
     exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_ARG="$1"
+shift
+SIMV_EXTRA_ARGS=("$@")
 
 if [[ "$RUN_ARG" = /* ]] || [[ "$RUN_ARG" == */* ]]; then
     RUN_DIR="$RUN_ARG"
@@ -94,7 +96,7 @@ if grep -Eq '^[[:space:]]*(Error-|Error:|Fatal:)' vcs_compile.log; then
 fi
 
 set +e
-./simv -l sim.log
+./simv -l sim.log "${SIMV_EXTRA_ARGS[@]}"
 SIM_STATUS="$?"
 set -e
 
@@ -115,6 +117,13 @@ fi
 
 if [ ! -f sim.vcd ]; then
     echo "Error: missing output sim.vcd"
+    exit 6
+fi
+
+# The TB's power-phase toggle window; this is the activity file the vectored
+# PrimeTime run consumes (autopwr prefers sim.saif over sim.vcd).
+if [ ! -f sim.saif ]; then
+    echo "Error: missing output sim.saif"
     exit 6
 fi
 

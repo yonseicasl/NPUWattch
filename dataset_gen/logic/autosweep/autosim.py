@@ -14,13 +14,16 @@ from autocommon import (
     STATUS_RUNNING,
     STATUS_START,
     STATUS_TERMINATED,
+    clock_period_ns,
     find_tech_corner,
     group_jobs_by_node,
     log_event,
     normalize_node,
     read_jobs,
     recreate_run_dir,
+    rtl_variant_dir_name,
     run_id_for_job,
+    run_jobs_for_node,
     run_logged_command,
 )
 from rtl_gen import generator
@@ -29,14 +32,20 @@ from rtl_gen import generator
 SIM_MODEL_EXTENSIONS = {".v", ".sv", ".vg", ".vlog", ".verilog"}
 
 
-def discover_std_cell_models(directory: Path) -> list[Path]:
-    if not directory.exists():
+def discover_std_cell_models(directory: Path | None) -> list[Path]:
+    """Verilog std-cell models for gate-level sim, from the catalog's verilogdir.
+
+    UDP primitives must be compiled before the cells that instantiate them, so the
+    *_udp.v file is listed first rather than in plain sorted order.
+    """
+    if directory is None or not directory.exists():
         return []
-    return sorted(
+    files = sorted(
         file_path
         for file_path in directory.rglob("*")
         if file_path.is_file() and file_path.suffix.lower() in SIM_MODEL_EXTENSIONS
     )
+    return sorted(files, key=lambda path: (0 if "udp" in path.stem.lower() else 1, path.name))
 
 
 def _find_matching_paren(text: str, open_index: int) -> int:
@@ -84,14 +93,18 @@ def _gate_level_testbench_text(text: str, rtl_name: str, sdf_name: str) -> str:
         $sdf_annotate("{sdf_name}", {instance_name},, "sdf_annotate.log", "MAXIMUM");
         $dumpfile("sim.vcd");
         $dumpvars(0, {tb_module});
+        // The VCD is the functional-phase debug trace; power activity comes
+        // from the SAIF whose window the TB opens over the power phase.
+        @(posedge nw_power_phase);
+        $dumpoff;
     end
 `endif
 
 """
-    always_match = re.search(r"(?m)^\s*always\b", text)
-    if not always_match:
-        raise ValueError("could not find insertion point before the testbench clock generator")
-    return text[: always_match.start()] + gate_hook + text[always_match.start() :]
+    anchor_match = re.search(r"(?m)^\s*initial\b", text)
+    if not anchor_match:
+        raise ValueError("could not find an initial block to insert the gate-sim hook before")
+    return text[: anchor_match.start()] + gate_hook + text[anchor_match.start() :]
 
 
 def prepare_simulation_run(job: dict[str, str], run_dir: Path) -> Path:
@@ -104,7 +117,7 @@ def prepare_simulation_run(job: dict[str, str], run_dir: Path) -> Path:
 
     pnr_netlist = pnr_dir / f"{rtl_name}_icc2.v"
     pnr_sdf = pnr_dir / f"{rtl_name}.sdf"
-    rtl_tb = generator.RTL_DIR / rtl_name / f"{rtl_name}_tb.sv"
+    rtl_tb = generator.RTL_DIR / rtl_variant_dir_name(job) / rtl_name / f"{rtl_name}_tb.sv"
     if not pnr_netlist.exists():
         raise FileNotFoundError(f"missing post-PnR netlist: {pnr_netlist}")
     if not pnr_sdf.exists():
@@ -126,15 +139,17 @@ def prepare_simulation_run(job: dict[str, str], run_dir: Path) -> Path:
         encoding="utf-8",
     )
 
-    model_files = discover_std_cell_models(corner.directory)
+    model_files = discover_std_cell_models(corner.verilog_dir)
     with models_path.open("w", encoding="utf-8") as fp:
         fp.write(f"// DB reference for this corner: {corner.db_file}\n")
         if model_files:
             for model_file in model_files:
                 fp.write(f"{model_file}\n")
         else:
-            fp.write("// No Verilog standard-cell simulation models were found under the tech library directory.\n")
-            fp.write("// Add model paths here, or set STD_CELL_MODELS_F / STD_CELL_MODELS when running 04_sim.sh.\n")
+            fp.write("// No Verilog standard-cell simulation models for this node.\n")
+            fp.write("// Add a \"verilogdir\" to the node's catalog.json entry (PrimeLib 'model -verilog'\n")
+            fp.write("// emits them from the same characterization as the .lib), or set\n")
+            fp.write("// STD_CELL_MODELS_F / STD_CELL_MODELS when running 04_sim.sh.\n")
 
     with filelist_path.open("w", encoding="utf-8") as fp:
         fp.write("+define+NW_LOGIC_GATE_SIM\n")
@@ -170,18 +185,27 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
     if not sim_runner.exists():
         raise FileNotFoundError(f"missing simulation runner: {sim_runner}")
 
+    # Run the TB at the job's clock so the captured activity toggles at the
+    # frequency the power row claims (the TB default is 10 ns).
+    period_ps = int(round(clock_period_ns(job) * 1000.0))
+    simv_args = [f"+nw_clock_period_ps={period_ps}"]
+
     log_event(
         stage=STAGE_LOGIC_SIM,
         status=STATUS_RUNNING,
         message="launching 04_sim.sh",
         job=job,
         run_id=run_id,
-        details={"command": f"{sim_runner} {run_id}", "run_dir": str(run_dir), "filelist": str(filelist_path)},
+        details={
+            "command": f"{sim_runner} {run_id} {' '.join(simv_args)}",
+            "run_dir": str(run_dir),
+            "filelist": str(filelist_path),
+        },
     )
 
     runner_log_path = run_dir / "04_sim.sh.log"
     returncode = run_logged_command(
-        [str(sim_runner), run_id],
+        [str(sim_runner), run_id, *simv_args],
         cwd=sim_runner.parent,
         log_path=runner_log_path,
         verbose=verbose,
@@ -218,26 +242,35 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
     )
 
 
-def run_simulation_for_node(node: str, jobs: list[dict[str, str]], *, verbose: bool = False) -> None:
+def run_simulation_for_node(
+    node: str, jobs: list[dict[str, str]], *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     log_event(stage=STAGE_LOGIC_SIM, status=STATUS_START, message="node simulation worker started", node=node)
-    for index, job in enumerate(jobs, start=1):
-        run_simulation_job(job, index, verbose=verbose)
+    run_jobs_for_node(
+        jobs,
+        lambda job, index: run_simulation_job(job, index, verbose=verbose),
+        jobs_per_node=jobs_per_node,
+    )
     log_event(stage=STAGE_LOGIC_SIM, status=STATUS_DONE, message="node simulation worker complete", node=node)
 
 
-def run_simulation_from_manifest(path: Path = JOB_LIST, *, verbose: bool = False) -> None:
+def run_simulation_from_manifest(
+    path: Path = JOB_LIST, *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     jobs = read_jobs(path)
     grouped = group_jobs_by_node(jobs)
     log_event(
         stage=STAGE_LOGIC_SIM,
         status=STATUS_START,
         message="gate-level simulation stage started",
-        details={"nodes": sorted(grouped)},
+        details={"nodes": sorted(grouped), "jobs_per_node": jobs_per_node},
     )
 
     with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
         futures = {
-            executor.submit(run_simulation_for_node, node, node_jobs, verbose=verbose): node
+            executor.submit(
+                run_simulation_for_node, node, node_jobs, verbose=verbose, jobs_per_node=jobs_per_node
+            ): node
             for node, node_jobs in grouped.items()
         }
         for future in as_completed(futures):

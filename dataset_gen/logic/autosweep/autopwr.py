@@ -22,6 +22,7 @@ from autocommon import (
     read_jobs,
     recreate_run_dir,
     run_id_for_job,
+    run_jobs_for_node,
     run_logged_command,
 )
 
@@ -173,26 +174,47 @@ def run_power_for_node(
     *,
     verbose: bool = False,
     vectored: bool = False,
+    jobs_per_node: int = 1,
 ) -> None:
     log_event(stage=STAGE_POWER_SIM, status=STATUS_START, message="node power worker started", node=node)
-    for index, job in enumerate(jobs, start=1):
-        run_power_job(job, index, verbose=verbose, vectored=vectored)
+    run_jobs_for_node(
+        jobs,
+        lambda job, index: run_power_job(job, index, verbose=verbose, vectored=vectored),
+        jobs_per_node=jobs_per_node,
+    )
     log_event(stage=STAGE_POWER_SIM, status=STATUS_DONE, message="node power worker complete", node=node)
 
 
-def run_power_from_manifest(path: Path = JOB_LIST, *, verbose: bool = False, vectored: bool = False) -> None:
+def run_power_from_manifest(
+    path: Path = JOB_LIST,
+    *,
+    verbose: bool = False,
+    vectored: bool = False,
+    jobs_per_node: int = 1,
+) -> None:
     jobs = read_jobs(path)
     grouped = group_jobs_by_node(jobs)
     log_event(
         stage=STAGE_POWER_SIM,
         status=STATUS_START,
         message="PrimeTime power stage started",
-        details={"nodes": sorted(grouped), "mode": "vectored" if vectored else "unvectored"},
+        details={
+            "nodes": sorted(grouped),
+            "mode": "vectored" if vectored else "unvectored",
+            "jobs_per_node": jobs_per_node,
+        },
     )
 
     with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
         futures = {
-            executor.submit(run_power_for_node, node, node_jobs, verbose=verbose, vectored=vectored): node
+            executor.submit(
+                run_power_for_node,
+                node,
+                node_jobs,
+                verbose=verbose,
+                vectored=vectored,
+                jobs_per_node=jobs_per_node,
+            ): node
             for node, node_jobs in grouped.items()
         }
         for future in as_completed(futures):

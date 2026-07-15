@@ -1,3 +1,4 @@
+{% import "_power_stim.sv.j2" as pwr %}
 module intmac_tb;
     localparam int A_WIDTH = {{ a_width }};
     localparam int B_WIDTH = {{ b_width }};
@@ -32,10 +33,14 @@ module intmac_tb;
         .o_result(o_result)
     );
 
-    always #5 i_clk <= ~i_clk;
+{{ pwr.decls("(A_WIDTH > B_WIDTH) ? A_WIDTH : B_WIDTH") }}
+    task automatic nw_drive_random();
+        i_a = A_WIDTH'(nw_rand_bits(A_WIDTH));
+        i_b = B_WIDTH'(nw_rand_bits(B_WIDTH));
+    endtask
 
+{{ pwr.clock_gen("i_clk") }}
     initial begin
-        i_clk = 1'b0;
         i_rst_n = 1'b0;
         i_a = '0;
         i_b = '0;
@@ -66,6 +71,9 @@ module intmac_tb;
             $display("intmac_tb FAIL errors=%0d", errors);
             $fatal(1);
         end
+{{ pwr.run_clocked("intmac_tb", "i_clk", power_cycles) }}
         $finish;
     end
+
+{{ pwr.saif_hook("intmac_tb") }}
 endmodule

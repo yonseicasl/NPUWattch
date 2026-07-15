@@ -58,8 +58,13 @@ for {set i 0} {$i <= 9} {incr i} {
 # keep top-level routing off M1: the frames under-model cell-internal M1
 # (no blockages), so M1 routes can short cell internals (seen at 5nm --
 # OAI21 B1 route crossed internal M1 and shorted D/QN).  Pins are still
-# reached by via drops from M2.
-set_ignored_layers -min_routing_layer [mlayer 2]
+# reached by via drops from M2.  DEC_ALLOW_M1=1 lifts the restriction (for
+# testing NDMs that carry real M1 frame obstructions).
+if {[info exists env(DEC_ALLOW_M1)] && $env(DEC_ALLOW_M1) == "1"} {
+    puts "DECFP M1 top-level routing ALLOWED (min-layer rule lifted)"
+} else {
+    set_ignored_layers -min_routing_layer [mlayer 2]
+}
 # ...and (only where needed) force via landings fully inside the pin shape:
 # with an off-pin via the M1 pad can clip an adjacent internal wire (seen at
 # 5nm -- the via at the DFF D pin also touched the cell's clock-inverter
@@ -127,18 +132,23 @@ initialize_floorplan -control_type die -boundary \
     [list [list 0 0] [list 0 $H] [list $W $H] [list $W 0]]
 
 # -- pin constraints: wl east at row pitch, controls west -----------------
+# All pins are pinned to M2: at >=64 pins the placer otherwise spreads them
+# over M2..M8, and the GDS text pipeline (text_layer_map.sed + LVS text
+# layers) only handles the low pin layers -- higher-layer pin texts lose
+# their ports and stray labels merge nets in extraction.
 set pitch [expr {double($H) / $nrows}]
 for {set i 0} {$i < $nrows} {incr i} {
     set y [expr {($i + 0.5) * $pitch}]
     set_individual_pin_constraints -ports [get_ports "wl\[$i\]"] \
-        -location [list $W $y]
+        -location [list $W $y] -allowed_layers [list [mlayer 2]]
 }
 set ins [remove_from_collection [all_inputs] [get_ports wl*]]
 set nin [sizeof_collection $ins]
 set k 0
 foreach_in_collection p $ins {
     set y [expr {($k + 0.5) * double($H) / $nin}]
-    set_individual_pin_constraints -ports $p -location [list 0 $y]
+    set_individual_pin_constraints -ports $p -location [list 0 $y] \
+        -allowed_layers [list [mlayer 2]]
     incr k
 }
 

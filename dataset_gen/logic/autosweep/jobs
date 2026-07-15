@@ -1,2 +1,8 @@
 rtl_name	arch_params	node	process	voltage	temp	clock_period_ns	clock_freq_mhz	clock_port	reset_port	reset_active
-intmac	a_width=32;b_width=32;out_width=64;acc_width=64;pipeline_stages=3	20	TT	0.9	25	5.0	200	i_clk	i_rst_n	low
+# 8.0 ns (125 MHz): timing-clean at 20nm TT 0.9V (the 5.0 ns/200 MHz point had
+# WNS -0.83, and an SDF gate sim of a timing-violating netlist cannot produce
+# valid vectored power activity at that clock).
+intmac	a_width=32;b_width=32;out_width=64;acc_width=64;pipeline_stages=3	20	TT	0.9	25	8.0	125	i_clk	i_rst_n	low
+# Combinational NoC block: no i_clk port, so synthesis falls back to a virtual
+# clock with zero I/O delays (in->out must fit one cycle) and PnR skips CTS.
+simplemux	data_width=32;num_inputs=4	20	TT	0.9	25	8.0	125	i_clk

@@ -22,21 +22,40 @@ from autocommon import (
     normalize_node,
     read_jobs,
     recreate_run_dir,
+    rtl_variant_dir_name,
     run_id_for_job,
+    run_jobs_for_node,
     run_logged_command,
 )
 from rtl_gen import generator
 
 
-def dc_append_script(job: dict[str, str]) -> str:
+def dc_append_script(job: dict[str, str], dont_use: tuple[str, ...] = ()) -> str:
     period = clock_period_ns(job)
     half_period = period / 2.0
     clock_port = job.get("clock_port", "").strip() or "i_clk"
     reset_port = job.get("reset_port", "").strip()
 
-    lines = [
-        f"set clockPorts [get_ports {{{clock_port}}}]",
-        f"create_clock -name clk $clockPorts -period {period:g} -waveform {{0 {half_period:g}}}",
+    lines = []
+    # Node-level cell exclusions from tech_libs/catalog.json ("dontuse"). Keeps
+    # the mapped cell set uniform across nodes; a typo'd cell name makes
+    # get_lib_cells return nothing and DC error out, which is the right failure.
+    for cell in dont_use:
+        lines.append(f"set_dont_use [get_lib_cells */{cell}]")
+    # One uniform snippet for every module: a design that has the clock port
+    # gets a real clock; a purely combinational one (the NoC blocks) gets a
+    # virtual clock with zero I/O delays, so every in->out path must fit in
+    # one cycle and the job's frequency axis keeps its meaning.
+    lines += [
+        f"set clockPorts [get_ports -quiet {{{clock_port}}}]",
+        "if {[sizeof_collection $clockPorts] > 0} {",
+        f"    create_clock -name clk $clockPorts -period {period:g} -waveform {{0 {half_period:g}}}",
+        "} else {",
+        "    # Combinational block: virtual clock constrains the in->out paths.",
+        f"    create_clock -name clk -period {period:g} -waveform {{0 {half_period:g}}}",
+        "    set_input_delay 0 -clock clk [all_inputs]",
+        "    set_output_delay 0 -clock clk [all_outputs]",
+        "}",
         "set_clock_uncertainty 0.2 [get_clocks clk]",
     ]
     if reset_port:
@@ -56,7 +75,7 @@ def prepare_synthesis_script(job: dict[str, str], run_dir: Path) -> Path:
     if not master_script.exists():
         raise FileNotFoundError(f"missing synthesis template: {master_script}")
 
-    rtl_dir = generator.RTL_DIR / rtl_name
+    rtl_dir = generator.RTL_DIR / rtl_variant_dir_name(job) / rtl_name
     if not rtl_dir.exists():
         raise FileNotFoundError(f"missing generated RTL directory: {rtl_dir}")
 
@@ -90,7 +109,7 @@ def prepare_synthesis_script(job: dict[str, str], run_dir: Path) -> Path:
         text,
         "#START_OF_DC_APPENDED_SCRIPT",
         "#END_OF_DC_APPENDED_SCRIPT",
-        dc_append_script(job),
+        dc_append_script(job, corner.dont_use),
     )
     script_path.write_text(text, encoding="utf-8")
     return script_path
@@ -170,26 +189,35 @@ def run_synthesis_job(job: dict[str, str], job_index: int, *, verbose: bool = Fa
     )
 
 
-def run_synthesis_for_node(node: str, jobs: list[dict[str, str]], *, verbose: bool = False) -> None:
+def run_synthesis_for_node(
+    node: str, jobs: list[dict[str, str]], *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     log_event(stage=STAGE_SYN, status=STATUS_START, message="node synthesis worker started", node=node)
-    for index, job in enumerate(jobs, start=1):
-        run_synthesis_job(job, index, verbose=verbose)
+    run_jobs_for_node(
+        jobs,
+        lambda job, index: run_synthesis_job(job, index, verbose=verbose),
+        jobs_per_node=jobs_per_node,
+    )
     log_event(stage=STAGE_SYN, status=STATUS_DONE, message="node synthesis worker complete", node=node)
 
 
-def run_synthesis_from_manifest(path: Path = JOB_LIST, *, verbose: bool = False) -> None:
+def run_synthesis_from_manifest(
+    path: Path = JOB_LIST, *, verbose: bool = False, jobs_per_node: int = 1
+) -> None:
     jobs = read_jobs(path)
     grouped = group_jobs_by_node(jobs)
     log_event(
         stage=STAGE_SYN,
         status=STATUS_START,
         message="synthesis stage started",
-        details={"nodes": sorted(grouped)},
+        details={"nodes": sorted(grouped), "jobs_per_node": jobs_per_node},
     )
 
     with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
         futures = {
-            executor.submit(run_synthesis_for_node, node, node_jobs, verbose=verbose): node
+            executor.submit(
+                run_synthesis_for_node, node, node_jobs, verbose=verbose, jobs_per_node=jobs_per_node
+            ): node
             for node, node_jobs in grouped.items()
         }
         for future in as_completed(futures):

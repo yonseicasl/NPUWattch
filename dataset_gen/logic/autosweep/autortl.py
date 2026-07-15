@@ -14,6 +14,7 @@ from autocommon import (
     log_event,
     parse_arch_params,
     read_jobs,
+    rtl_variant_dir_name,
     rtl_variant_key,
 )
 from rtl_gen import generator
@@ -63,15 +64,18 @@ def generate_rtl_from_manifest(path: Path = JOB_LIST) -> list[dict[str, Path]]:
             raise ValueError(f"job {index}: unsupported rtl_name {rtl_name!r}; valid names: {valid}")
 
         params = parse_arch_params(job.get("arch_params", ""))
+        # One output directory per arch variant, so multiple configurations of
+        # the same module never overwrite each other's RTL/TB.
+        variant_root = generator.RTL_DIR / rtl_variant_dir_name(job)
         log_event(
             stage=STAGE_RTL_GEN,
             status=STATUS_RUNNING,
             message="generating RTL",
             job=job,
-            details={"job_index": index, "params": params},
+            details={"job_index": index, "params": params, "output_root": str(variant_root)},
         )
         try:
-            generated = gens[rtl_name](**params)
+            generated = gens[rtl_name](**params, output_root=variant_root)
         except Exception as exc:
             log_event(
                 stage=STAGE_RTL_GEN,

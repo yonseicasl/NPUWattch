@@ -1,3 +1,4 @@
+{% import "_power_stim.sv.j2" as pwr %}
 module {{ module_name }}_tb;
     localparam int WIDTH = {{ width }};
     localparam int NUM_CASES = {{ test_vectors|length }};
@@ -33,10 +34,17 @@ module {{ module_name }}_tb;
         .o_empty(o_empty)
     );
 
-    always #5 i_clk <= ~i_clk;
+{{ pwr.decls("WIDTH") }}
+    task automatic nw_drive_random();
+        // Push/pop toss a coin each cycle; the DUT's own full/empty guards
+        // bound occupancy, giving a random walk around half-full operation.
+        i_push = 1'($urandom_range(0, 1));
+        i_pop = 1'($urandom_range(0, 1));
+        i_push_data = WIDTH'(nw_rand_bits(WIDTH));
+    endtask
 
+{{ pwr.clock_gen("i_clk") }}
     initial begin
-        i_clk = 1'b0;
         i_rst_n = 1'b0;
         i_push = 1'b0;
         i_push_data = '0;
@@ -44,7 +52,8 @@ module {{ module_name }}_tb;
         errors = 0;
 {% for vec in test_vectors %}
         vec_push[{{ vec.index }}] = 1'b{{ vec.push }};
-        vec_pop[{{ vec.index }}] = 1'b{{ vec.pop }};
+{# vec["pop"] because dot lookup on a dict resolves to the .pop() method #}
+        vec_pop[{{ vec.index }}] = 1'b{{ vec["pop"] }};
         vec_push_data[{{ vec.index }}] = {{ width }}'h{{ vec.push_data_hex }};
         vec_expected_valid[{{ vec.index }}] = 1'b{{ vec.expected_valid }};
         vec_expected_data[{{ vec.index }}] = {{ width }}'h{{ vec.expected_data_hex }};
@@ -79,6 +88,9 @@ module {{ module_name }}_tb;
             $display("fifo_tb FAIL errors=%0d", errors);
             $fatal(1);
         end
+{{ pwr.run_clocked(module_name ~ "_tb", "i_clk", power_cycles) }}
         $finish;
     end
+
+{{ pwr.saif_hook(module_name ~ "_tb") }}
 endmodule

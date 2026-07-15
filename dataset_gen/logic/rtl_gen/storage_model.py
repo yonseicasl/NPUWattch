@@ -21,6 +21,9 @@ def _pack(values: list[int], width: int) -> str:
 def emit_regfile_vectors(width: int, depth: int, num_r: int, num_w: int, cycles: int = 96) -> list[dict[str, int | str]]:
     rng = random.Random(20260601)
     mem = [0] * depth
+    # The RTL register file does not reset its storage, so reads of
+    # never-written entries return X. Only read written addresses.
+    written: list[int] = []
     vectors: list[dict[str, int | str]] = []
     addr_width = max(1, (depth - 1).bit_length())
     for cycle in range(cycles):
@@ -40,11 +43,16 @@ def emit_regfile_vectors(width: int, depth: int, num_r: int, num_w: int, cycles:
         for port in range(num_w):
             if w_en[port]:
                 mem[w_addr[port]] = w_data[port]
+                if w_addr[port] not in written:
+                    written.append(w_addr[port])
 
         r_addr = []
         r_expected = []
         for port in range(num_r):
-            addr = hot_addr if cycle % 6 == 0 else rng.randrange(depth)
+            if cycle % 6 == 0 and hot_addr in written:
+                addr = hot_addr
+            else:
+                addr = rng.choice(written)
             r_addr.append(addr)
             r_expected.append(mem[addr])
 

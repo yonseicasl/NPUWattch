@@ -10,7 +10,11 @@
 #                    [--util 0.70] [--clk 10] [--vdd <V>] [--temp <C>]
 #                    [--no-pex] [--reuse-gds] [--height-um <H>]
 #
-#   --util       floorplan target utilization (width = cell_area/(util*H))
+#   --util       floorplan target utilization (width = cell_area/(util*H)).
+#                Default is auto: a row/node-aware value that keeps the
+#                tall-narrow decoder die routable at any wordline count
+#                (min(cap,C/rows); see the auto-util block below). Pass a
+#                value to override.
 #   --clk        DC clock period ns (default 10 = SRAM flow op cadence)
 #   --reuse-gds  skip RTL/DC/ICC2/edit if TECH_<N>nm/dec_<R>x<C>/03_gds/
 #                already holds the merged GDS (+ sidecar)
@@ -39,7 +43,7 @@ normalize_node() {
     printf "%02dnm" "$n"
 }
 
-NODE="" ROWS="" COLS="" UTIL=0.70 CLK_NS=10 PEX=1 REUSE=0
+NODE="" ROWS="" COLS="" UTIL="" CLK_NS=10 PEX=1 REUSE=0
 VDD_OVR="" TEMP_OVR="" H_OVR=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -65,6 +69,27 @@ SPICE_DIR="$SRAM_DIR/spice"
 SCRIPTS="$DEC_DIR/scripts"
 NN="$(normalize_node "$NODE")"
 TECH_NODE_DIR="$SRAM_DIR/TECH_$NN"
+
+# ── row/node-aware default utilization ───────────────────────────────────────
+# The pitch-matched decoder die grows tall-and-narrow with wordline count (H is
+# fixed to the array pitch, so at fixed util the width barely changes and the
+# M3/M5/M7 vertical tracks starve -> router gives up -> merged nets -> a dead
+# short on wl0).  To keep it routable the utilization must fall ~1/rows.  The
+# constants below are the tightest (narrowest) util verified to route+sim clean
+# across an 8..512 WL sweep, backed off one step for margin (2026-07-14):
+#   20/10nm : min(0.70, 14/rows)      16/07nm : min(0.70, 12/rows)
+#   05nm    : min(0.45, 10/rows)      (5nm is the tightest; never start >0.45)
+# Override any time with --util; an explicit value is honored verbatim.
+if [ -z "$UTIL" ]; then
+    case "$NN" in
+        05nm)       ucap=0.45; ucon=10 ;;
+        16nm|07nm)  ucap=0.70; ucon=12 ;;
+        *)          ucap=0.70; ucon=14 ;;
+    esac
+    UTIL="$(awk -v r="$ROWS" -v c="$ucon" -v cap="$ucap" \
+        'BEGIN{u=c/r; if(u>cap)u=cap; printf "%.4g", u}')"
+    UTIL_AUTO=1
+fi
 
 # ── library collateral from the shared tech_libs catalog ─────────────────────
 eval "$(python3 "$SPICE_DIR/scripts/tech_paths.py" --node "$NODE")" \
@@ -94,7 +119,7 @@ GDS_OUT="$WORK/03_gds"
 SIDColl="$GDS_OUT/${TOP}.json"
 
 echo "Node    : $NODE_NAME  (VDD=${VDD}V, TEMP=${TEMP}C)"
-echo "Decoder : $TOP  (util target $UTIL, clk ${CLK_NS} ns)"
+echo "Decoder : $TOP  (util target $UTIL${UTIL_AUTO:+ auto:row-aware}, clk ${CLK_NS} ns)"
 
 # ── WL load + array height from the array flow ──────────────────────────────
 WLJSON="$WORK/wl_load.json"
@@ -137,9 +162,16 @@ else
     export DEC_NDM="$TECH_NDM" DEC_TECHFILE="$TECH_TF" DEC_TLUP="$TECH_TLUP"
     export DEC_LAYERMAP="$TECH_MAP" DEC_H_UM="$H_UM" DEC_UTIL="$UTIL"
     export DEC_ROWS="$ROWS"
-    # strict in-pin via landings: needed at 5nm (tiny pins, internal wires
-    # 8 nm away); harmful at 20nm (merged decode nets) -- see icc2.tcl
-    export DEC_PIN_VIA_STRICT="$([ "$NN" = "05nm" ] && echo 1 || echo 0)"
+    # strict in-pin via landings: was needed at 5nm ONLY while its NDM was
+    # frame-only (tiny pins, internal wires 8 nm away -> off-pin via pads
+    # shorted a DFF ckb wire); harmful at 20nm (merged decode nets).  The 5nm
+    # NDM now carries real M0/M1 obstructions, so the router avoids those
+    # landings natively -- strict is not only obsolete there but actively
+    # generates "Diff net spacing" DRCs (6-11 per config at 5nm; turning it
+    # off drops them to 0 with the sim result unchanged).  Default now OFF at
+    # every node; override with DEC_PIN_VIA_STRICT=1 if an old frame-only NDM
+    # is ever swapped back in.  See icc2.tcl.
+    export DEC_PIN_VIA_STRICT="${DEC_PIN_VIA_STRICT:-0}"
     echo "=== ICC2 PnR ($TOP) ==="
     ( cd "$WORK/02_pnr" && \
       csh -c "source $ICC2_ENV >& /dev/null; icc2_shell -f $SCRIPTS/icc2.tcl" \

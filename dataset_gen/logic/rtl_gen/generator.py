@@ -16,6 +16,11 @@ RTL_GEN_DIR = Path(__file__).resolve().parent
 RTL_DIR = RTL_GEN_DIR / "rtl"
 TEMPLATE_DIR = RTL_GEN_DIR / "templates"
 
+# Default length of the TB power-stimulus phase (random vectors after the
+# functional phase; see templates/_power_stim.sv.j2). Overridable at sim time
+# with +nw_power_cycles=<n> without regenerating the RTL.
+DEFAULT_POWER_CYCLES = 2000
+
 
 def _env() -> Environment:
     return Environment(
@@ -56,6 +61,7 @@ def _common_context(module_name: str, exp_bits: int, mantissa_bits: int, pipelin
         "pipeline_stages": int(pipeline_stages),
         "fp_width": int(exp_bits) + int(mantissa_bits) + 1,
         "mac_latency": int(pipeline_stages) + 2,
+        "power_cycles": DEFAULT_POWER_CYCLES,
     }
 
 
@@ -79,6 +85,7 @@ def _int_context(
         "out_width": int(out_width),
         "pipeline_stages": int(pipeline_stages),
         "int_latency": int(pipeline_stages),
+        "power_cycles": DEFAULT_POWER_CYCLES,
     }
     if acc_width is not None:
         if acc_width < 2:
@@ -89,7 +96,7 @@ def _int_context(
 
 
 def _noc_context(module_name: str, **params: int) -> dict[str, Any]:
-    ctx: dict[str, Any] = {"module_name": module_name}
+    ctx: dict[str, Any] = {"module_name": module_name, "power_cycles": DEFAULT_POWER_CYCLES}
     for name, value in params.items():
         if value < 1:
             raise ValueError(f"{name} must be >= 1")
@@ -194,6 +201,7 @@ def _storage_context(module_name: str, width: int, depth: int) -> dict[str, Any]
         "width": int(width),
         "depth": int(depth),
         "addr_width": max(1, (int(depth) - 1).bit_length()),
+        "power_cycles": DEFAULT_POWER_CYCLES,
     }
 
 
@@ -471,6 +479,7 @@ def gen_mxfpmac(
         "product_width": int(decode_width) * 2,
         "decode_function": _decode_function(fmt.is_int),
         "block_accum_code": _block_accum_code(int(num_blocks)),
+        "power_cycles": DEFAULT_POWER_CYCLES,
     }
     context["test_vectors"] = emit_mxfpmac_vectors(
         fmt,

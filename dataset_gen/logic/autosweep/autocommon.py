@@ -5,10 +5,11 @@ import json
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 AUTOSWEEP_DIR = Path(__file__).resolve().parent
@@ -54,6 +55,14 @@ class TechCorner:
     tech_file: Path
     map_file: Path
     grd_file: Path
+    # Verilog simulation models for the std cells (gate-level sim). PrimeLib emits
+    # them from the same characterization as the .lib/.db; None for nodes whose
+    # catalog entry has no "verilogdir" yet.
+    verilog_dir: Path | None
+    # Library cells synthesis must not map to (catalog "dontuse", node-level).
+    # Used to keep the usable cell set uniform across nodes: 5nm characterizes
+    # MUX_X1/MUX_X2 which the 20-7nm libraries have no layouts for.
+    dont_use: tuple[str, ...] = ()
 
 
 def utc_timestamp() -> str:
@@ -270,7 +279,12 @@ def read_jobs(path: Path = JOB_LIST) -> list[dict[str, str]]:
         missing_cols = ", ".join(sorted(missing))
         raise ValueError(f"TSV manifest is missing required column(s): {missing_cols}")
 
-    jobs = list(reader)
+    # A row may leave trailing optional columns off entirely; DictReader maps
+    # those to None, which downstream .strip() consumers must not see.
+    jobs = [
+        {key: (value if value is not None else "") for key, value in row.items() if key is not None}
+        for row in reader
+    ]
     if not jobs:
         raise ValueError(f"TSV manifest has no jobs: {path}")
     return jobs
@@ -280,6 +294,53 @@ def rtl_variant_key(job: dict[str, str]) -> tuple[str, str]:
     rtl_name = job["rtl_name"].strip()
     arch_params = job.get("arch_params", "").strip()
     return rtl_name, arch_params
+
+
+def rtl_variant_dir_name(job: dict[str, str]) -> str:
+    """Per-arch-config RTL output directory name (rtl_gen/rtl/<this>/<rtl>/).
+
+    One directory per (rtl_name, arch_params) variant. A shared per-module
+    directory would let the last generated config silently overwrite the
+    others, so every job of that module would synthesize the same RTL.
+    """
+    rtl_name = sanitize_name_token(job.get("rtl_name", "").strip())
+    arch_tokens = [
+        sanitize_name_token(value) for _, value in parse_arch_param_items(job.get("arch_params", ""))
+    ]
+    return "_".join([rtl_name, *arch_tokens])
+
+
+def run_jobs_for_node(
+    jobs: list[dict[str, str]],
+    job_runner: Callable[[dict[str, str], int], None],
+    *,
+    jobs_per_node: int = 1,
+) -> None:
+    """Run job_runner(job, index) over a node's jobs, jobs_per_node at a time.
+
+    Concurrency is safe because every stage works in its own run directory and
+    RTL lives in per-variant directories; the practical bound is EDA license
+    seats (total concurrent tools = nodes x jobs_per_node). On the first
+    failure, not-yet-started jobs are cancelled to match the sequential
+    fail-fast behavior; already-running jobs finish.
+    """
+    if jobs_per_node <= 1:
+        for index, job in enumerate(jobs, start=1):
+            job_runner(job, index)
+        return
+
+    with ThreadPoolExecutor(max_workers=jobs_per_node) as pool:
+        futures = {
+            pool.submit(job_runner, job, index): index
+            for index, job in enumerate(jobs, start=1)
+        }
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except Exception:
+            for future in futures:
+                future.cancel()
+            raise
 
 
 def group_jobs_by_node(jobs: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
@@ -332,6 +393,10 @@ def find_tech_corner(job: dict[str, str]) -> TechCorner:
                 and str(corner.get("temperature", "")).strip() == temp
             ):
                 directory = TECH_LIBS_DIR / str(corner["directory"])
+                # "verilogdir" lives on the node entry (like "gdsdir"), not the corner:
+                # the Verilog models are logic + UDPs, so they are corner-independent.
+                verilog_dir_name = entry.get("verilogdir")
+                dont_use = tuple(str(c) for c in entry.get("dontuse", []))
                 return TechCorner(
                     node=node,
                     process=process,
@@ -344,6 +409,8 @@ def find_tech_corner(job: dict[str, str]) -> TechCorner:
                     tech_file=directory / str(corner["techfile"]),
                     map_file=directory / str(corner["mapfile"]),
                     grd_file=directory / str(corner["grdfile"]),
+                    verilog_dir=directory / str(verilog_dir_name) if verilog_dir_name else None,
+                    dont_use=dont_use,
                 )
 
     raise ValueError(f"no catalog corner for node={node}, process={process}, voltage={voltage}, temp={temp}")
