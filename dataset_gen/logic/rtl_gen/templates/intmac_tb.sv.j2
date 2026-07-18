@@ -34,9 +34,32 @@ module intmac_tb;
     );
 
 {{ pwr.decls("(A_WIDTH > B_WIDTH) ? A_WIDTH : B_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random    both operands uniform random (legacy default)
+    //   hold_b    weight-stationary: b latched once (seeded), a random
+    //   sparse50  a zeroed with p=0.5 (activation sparsity), b random
+    //   idle      operands held at zero, clock running -> pipeline clock power
+    logic [B_WIDTH-1:0] nw_hold_b_val;
     task automatic nw_drive_random();
-        i_a = A_WIDTH'(nw_rand_bits(A_WIDTH));
-        i_b = B_WIDTH'(nw_rand_bits(B_WIDTH));
+        if (nw_power_mode == "random") begin
+            i_a = A_WIDTH'(nw_rand_bits(A_WIDTH));
+            i_b = B_WIDTH'(nw_rand_bits(B_WIDTH));
+        end else if (nw_power_mode == "hold_b") begin
+            if (!nw_mode_init) begin
+                nw_hold_b_val = B_WIDTH'(nw_rand_bits(B_WIDTH));
+                nw_mode_init = 1'b1;
+            end
+            i_a = A_WIDTH'(nw_rand_bits(A_WIDTH));
+            i_b = nw_hold_b_val;
+        end else if (nw_power_mode == "sparse50") begin
+            i_a = ($urandom_range(0, 1) != 0) ? A_WIDTH'(nw_rand_bits(A_WIDTH)) : '0;
+            i_b = B_WIDTH'(nw_rand_bits(B_WIDTH));
+        end else if (nw_power_mode == "idle") begin
+            i_a = '0;
+            i_b = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for intmac: %s", nw_power_mode);
+        end
     endtask
 
 {{ pwr.clock_gen("i_clk") }}

@@ -1,0 +1,43 @@
+{
+ "model": "area",
+ "version": "v1",
+ "arch": [
+  64,
+  64
+ ],
+ "n_in": 10,
+ "features": [
+  "log10_node_nm",
+  "log2_rows",
+  "log2_cols",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "array",
+  "dec"
+ ],
+ "one_hot": [
+  "array",
+  "dec"
+ ],
+ "target": "log10_um2",
+ "dataset_sha256": "a9cc5ba64949a33382ba370a7bfd3b402ba6f2620adcb6f374ab6f8a19148646",
+ "seed": 42,
+ "split": {
+  "train": 251,
+  "val": 32,
+  "test": 32
+ },
+ "epochs_run": 697,
+ "val_mape": 0.040574684739112854,
+ "test_mape": 0.03635412480100635,
+ "test_spearman": 0.9965158302509854,
+ "per_op_test_mape": {
+  "array": 0.023566904437306184,
+  "dec": 0.04914134516470653
+ },
+ "date": "2026-07-18T18:01:34",
+ "torch": "2.13.0+cpu"
+}

@@ -3,17 +3,22 @@
 Unlike the stage-wise run_batch stages (all jobs' syn, then all jobs' pnr,
 ...), this driver pipelines each job through
 
-    syn -> pnr -> pex -> sim -> pwr(unvectored) -> CSV row
-                              -> pwr(vectored)   -> CSV row
+    syn -> pnr -> pex -> sim (one gate-level run per stimulus mode)
+        -> pwr(unvectored)          -> CSV row
+        -> pwr(vectored, mode) x N  -> CSV row each   (N = power_modes(module))
     -> archive report texts -> delete the run directories
 
 so the heavy EDA artifacts on disk at any moment belong only to the jobs
 currently executing (nodes x jobs_per_node of them), not to the whole sweep.
 
-Crash resume: a job whose dataset CSV already holds both activity-mode rows
-for its run id is skipped, so re-running the same command continues where
-the previous invocation stopped. Failures are recorded in
-sweep_failures.tsv and do not stop the sweep.
+Crash resume: a job whose dataset CSV already holds the unvectored row AND
+one vectored row per stimulus mode of its module is skipped, so re-running
+the same command continues where the previous invocation stopped.  NOTE the
+flip side of the storage bounding: because run directories are deleted after
+collection, adding a NEW mode to POWER_MODES later re-runs the whole EDA
+chain for the affected jobs -- extend the mode list before a sweep, not
+after.  Failures are recorded in sweep_failures.tsv and do not stop the
+sweep.
 """
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ from autopnr import run_pnr_job
 from autopwr import run_power_job
 from autosim import run_simulation_job
 from autosynth import run_synthesis_job
+from sweep_spec import power_modes
 
 SWEEP_REPORTS_DIR = NW_LOGIC_DIR / "sweep_reports"
 SWEEP_FAILURES = NW_LOGIC_DIR / "autosweep" / "sweep_failures.tsv"
@@ -48,7 +54,10 @@ _KEEP = {
     "01_syn": ("synthesis.log",),
     "02_pnr": ("qor.rpt", "utilization.rpt", "clock_qor.rpt", "clock_timing.rpt", "timing.rpt"),
     "03_pex": ("*.star_sum",),
-    "04_sim": ("sim.log",),
+    # sim*.log covers both the per-mode stashed logs (sim_<mode>.log) and a
+    # bare sim.log left by a failed mode (stashing happens only on success);
+    # vcs_compile.log diagnoses compile-stage failures
+    "04_sim": ("sim*.log", "vcs_compile.log"),
     "05_pwr": (
         "power_summary.rpt",
         "power_hier.rpt",
@@ -70,17 +79,27 @@ def _tech_dir(job: dict[str, str]) -> Path:
     return NW_LOGIC_DIR / f"TECH_{int(normalize_node(job['node'])):02d}nm"
 
 
-def _collected_modes(job: dict[str, str]) -> set[str]:
+def _collected_modes(job: dict[str, str]) -> set[tuple[str, str]]:
+    """(power_activity_mode, stim_mode) pairs already in the dataset for this job."""
     dataset = dataset_path_for(job["rtl_name"].strip())
     if not dataset.exists():
         return set()
     run_id = run_id_for_job(job)
-    modes: set[str] = set()
+    modes: set[tuple[str, str]] = set()
     with _CSV_LOCK, dataset.open(newline="", encoding="utf-8") as fp:
         for row in csv.DictReader(fp):
             if row.get("flow_run_id") == run_id:
-                modes.add(str(row.get("power_activity_mode", "")))
+                modes.add(
+                    (str(row.get("power_activity_mode", "")), str(row.get("stim_mode", "")))
+                )
     return modes
+
+
+def _required_modes(job: dict[str, str]) -> set[tuple[str, str]]:
+    """Every (activity, stimulus) row a complete job must have in the dataset."""
+    required = {("unvectored", "none")}
+    required.update(("vectored", mode) for mode in power_modes(job["rtl_name"].strip()))
+    return required
 
 
 def _collect_row(job: dict[str, str]) -> None:
@@ -136,7 +155,7 @@ def _record_failure(job: dict[str, str], stage: str, error: Exception) -> None:
 def run_sweep_job(job: dict[str, str], job_index: int) -> str:
     """Full chain for one job; returns 'done' | 'skipped' | 'failed:<stage>'."""
     run_id = run_id_for_job(job)
-    if {"unvectored", "vectored"} <= _collected_modes(job):
+    if _required_modes(job) <= _collected_modes(job):
         return "skipped"
 
     staging = SWEEP_REPORTS_DIR / f".staging_{run_id}"
@@ -156,11 +175,12 @@ def run_sweep_job(job: dict[str, str], job_index: int) -> str:
         stage = "collect-unvectored"
         _collect_row(job)
         _stage_keepers(job, staging, "unvectored")
-        stage = "pwr-vectored"
-        run_power_job(job, job_index, vectored=True)
-        stage = "collect-vectored"
-        _collect_row(job)
-        _stage_keepers(job, staging, "vectored")
+        for mode in power_modes(job["rtl_name"].strip()):
+            stage = f"pwr-vectored-{mode}"
+            run_power_job(job, job_index, vectored=True, stim_mode=mode)
+            stage = f"collect-vectored-{mode}"
+            _collect_row(job)
+            _stage_keepers(job, staging, f"vectored_{mode}")
     except Exception as exc:  # noqa: BLE001 - a sweep must survive bad jobs
         _record_failure(job, stage, exc)
         _stage_keepers(job, staging, "failed")

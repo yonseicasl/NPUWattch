@@ -43,9 +43,10 @@ can be added without breaking older readers. Current schema per node:
 - `verilogdir` — subdirectory holding the PrimeLib-emitted Verilog simulation
   models (`verilog.v` + `verilog_udp.v`) for gate-level sim (20/16/10/7/5nm).
 - `dontuse` — optional list of lib cells synthesis must not map to; injected
-  as `set_dont_use` into `01_syn.tcl` by `logic/autosweep/autosynth.py`. Used
-  at 5nm to exclude `MUX_X1`/`MUX_X2` so the mapped cell set stays uniform
-  with the 44-cell 20–7nm libraries (those nodes have no MUX layouts).
+  as `set_dont_use` into `01_syn.tcl` by `logic/autosweep/autosynth.py`.
+  Currently unused: it existed only to mask the retired 5nm `MUX_X1`/`MUX_X2`,
+  which were removed from the 5nm db/NDM entirely on 2026-07-17 (all five
+  nodes now expose the identical 51-cell set).
 - `corners[]` — one entry per characterized PVT corner with `process`, `voltage`,
   `temperature`, `directory`, and the per-tool file names (`dbfile`, `ndmfile`,
   `techfile`, `tlufile`, `mapfile`, `grdfile`).
@@ -61,11 +62,10 @@ can be added without breaking older readers. Current schema per node:
   `../tech_libs_old.tar.gz`.
 - GDS↔db cell-name consistency is enforced as of 2026-07-13: every `.db` cell
   has a matching GDS structure at its node (the 5nm AND-family GDS was renamed
-  `AND2X1`→`AND2_X1` etc. to end the old naming quirk; `BUF_X32`, `INV_X32`,
-  `MUX_X1`, `MUX_X2` exist only at 5nm and were dropped from the 20/16/10/7nm
-  libraries, which have no such layouts). GDS-only extras (`MUX2_*`, `DFFR_X1`,
-  `DLH_X1`, `DL_*`, `NAND4_X1`, `NOR4_X1`, 5nm `SDFF_*`/`INV_X*_2`) have no
-  netlists/characterization data and are not in any `.db`.
+  `AND2X1`→`AND2_X1` etc. to end the old naming quirk). Since 2026-07-17 the
+  only GDS-only extras left are `DLH_X1` (all nodes) and the 5nm
+  `SDFF_*`/`INV_X*_2` strays; there are no db/NDM cells without GDS at any
+  node.
 - SPICE transistor model cards live in each node's `sram/models/` (moved here
   2026-07-13 when the SRAM per-node packs were consolidated into tech_libs;
   nothing library-like remains under `dataset_gen/sram/`).
@@ -82,3 +82,49 @@ can be added without breaking older readers. Current schema per node:
   removed via the icc2_lm edit-flow workspace; every NDM now contains exactly
   the cells of its node's db (42 at 20/16/10/7nm, 46 at 5nm), frame
   coverage re-audited PASS, frame+timing views intact.
+- 2026-07-17 refresh (7 new cells characterized + libraries recompiled):
+  `NAND4_X1`, `NOR4_X1`, `MUX2_X1`, `MUX2_X2`, `DFFR_X1`, `DL_X1`, `DL_X2`
+  were characterized at all 25 corners (2026_0617/2026_0717_char, same
+  PrimeLib flow/settings as 2026_0713) and merged into every corner db —
+  now exactly **51 cells at every node**. The retired 5nm `MUX_X1`/`MUX_X2`
+  were removed from the 5nm db/NDM (and the catalog `dontuse` entry dropped)
+  the same day, after verifying the 5nm `MUX2_X1`/`MUX2_X2` are the same
+  physical cells renamed (identical GDS polygons/labels, frames, and netlist
+  connectivity) — old gate-level netlists that still instantiate `MUX_X1`
+  will black-box in PT and must be resynthesized; the Verilog sim models for
+  the old names remain in `verilog/` as a compatibility superset (all nodes
+  keep sim models for cells outside their db, historical convention).
+  All five NDMs were rebuilt from the previous installed frames
+  + the release frames + the merged nominal dbs; db↔NDM cell parity and
+  db-area↔NDM-frame agreement verified 1285/1285, frame-vs-GDS coverage
+  audit PASS at every node (0 uncovered M0/M1 shapes). Two defects fixed on
+  the way: (a) BUF_X32/INV_X32 Liberty areas at 20/16/10/7nm still carried
+  the 5nm template values (the 07-14 area patch predated the X32 splice) —
+  now the real per-node frame areas; (b) the 2026_0716_cells 5nm LEF had
+  fragmented metal1 OBS for MUX2_X1/X2 (42-45% of drawn M1 uncovered →
+  router-short exposure) — OBS regenerated from GDS
+  (2026_0717_char/lef/primelib_cells_5nm_M1fix.lef). Per-node `verilog/`
+  packs gained PrimeLib-generated simulation models for the 7 cells
+  (behavior verified: NAND4/NOR4/2:1-MUX truth tables, DFFR posedge FF with
+  active-low async clear, DL transparent-high latch); the stale bodiless
+  10nm `DFFR_X1` shell from the Jan-2026 run was replaced. The previous
+  tree (incl. all `.bak_42cell` and `lvs.rs.bak_i3dhdd1` backups) is
+  archived in `../tech_libs_old_2.tar.gz`; catalog.json needed no changes
+  and re-validates (read_catalog + files-exist + find_tech_corner).
+- Known characterization quirk (pre-existing, affects old and new cells
+  equally): with `model -leakage_power_calc best`, `cell_leakage_power` is
+  the minimum-leakage state, and stacked-off states settle slowly at low
+  VDD, so that attribute is not always monotonic vs VDD (e.g. NAND3/NAND4,
+  DFF/DFFR at some nodes). Per-state `leakage_power` groups and the INV_X1
+  monotonicity gate are unaffected.
+- Extraction runsets made self-contained on 2026-07-17: every
+  `techlib_*/sram/lvs.rs` referenced two files on the now-unreachable
+  `/home/i3dhdd1/...` mount (`#define FINFET_PDK`, line 26), which makes ICV
+  abort with PXL fatal #913. Local copies now live in `pattmath_local/`
+  (see its README for provenance and equivalence proof), and each runset's
+  line 26 points there; the pre-patch runsets are kept as
+  `lvs.rs.bak_i3dhdd1`. Validated by re-extracting DL_X1 at 20/16/5nm with
+  the patched runsets — netlists byte-identical (outside comment headers)
+  to the references produced while the original mount was alive. No other
+  step of the characterization flow (PrimeLib, StarRC, 5nm DRC deck)
+  depends on files outside `/home/KNUEEhdd1`.

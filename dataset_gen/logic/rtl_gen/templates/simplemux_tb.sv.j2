@@ -27,10 +27,27 @@ module {{ module_name }}_tb;
     );
 
 {{ pwr.decls("DATA_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random   full traffic: every source valid, data random (legacy)
+    //   valid25  each source valid with p=0.25; invalid sources hold their
+    //            data -> partial-load power / valid-gating effectiveness
     task automatic nw_drive_random();
-        for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
-            i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
-            i_valid[src] = 1'b1;
+        if (nw_power_mode == "random") begin
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                i_valid[src] = 1'b1;
+            end
+        end else if (nw_power_mode == "valid25") begin
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                if ($urandom_range(0, 3) == 0) begin
+                    i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                    i_valid[src] = 1'b1;
+                end else begin
+                    i_valid[src] = 1'b0;  // data held: an idle source does not toggle
+                end
+            end
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for simplemux: %s", nw_power_mode);
         end
     endtask
 

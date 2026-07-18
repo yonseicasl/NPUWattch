@@ -1,0 +1,61 @@
+{
+ "model": "energy",
+ "version": "v1",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 17,
+ "features": [
+  "log10_node_nm",
+  "log2_rows",
+  "log2_cols",
+  "voltage_offset_V",
+  "temperature_C",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "rd_1to1",
+  "rd_1to0",
+  "wr_same",
+  "wr_toggle",
+  "dec_act",
+  "dec_flip",
+  "dec_idle"
+ ],
+ "one_hot": [
+  "rd_1to1",
+  "rd_1to0",
+  "wr_same",
+  "wr_toggle",
+  "dec_act",
+  "dec_flip",
+  "dec_idle"
+ ],
+ "target": "log10_pJ",
+ "dataset_sha256": "a9cc5ba64949a33382ba370a7bfd3b402ba6f2620adcb6f374ab6f8a19148646",
+ "seed": 42,
+ "split": {
+  "train": 2850,
+  "val": 354,
+  "test": 344
+ },
+ "epochs_run": 783,
+ "val_mape": 0.027290984988212585,
+ "test_mape": 0.03244937239996059,
+ "test_spearman": 0.9994146248857112,
+ "per_op_test_mape": {
+  "dec_act": 0.04681136895599917,
+  "dec_flip": 0.03937835087038393,
+  "dec_idle": 0.016402266813864495,
+  "rd_1to0": 0.025268000067265085,
+  "rd_1to1": 0.028946647336167503,
+  "wr_same": 0.034270627319733314,
+  "wr_toggle": 0.03551048698520792
+ },
+ "date": "2026-07-18T17:57:02",
+ "torch": "2.13.0+cpu"
+}

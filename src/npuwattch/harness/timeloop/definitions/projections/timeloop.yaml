@@ -1,0 +1,22 @@
+# ============================================================================
+#  Timeloop projection for the systolic_mac compound
+# ============================================================================
+# Timeloop's coarse 'Computes' maps to the SAME hold_b compute state as
+# PyTorchSim (the stim_mode is a hardware property). Timeloop has no separate
+# weight-push signal, so weight_load energy is simply absent here — honest lower
+# fidelity, same compound and same mode vocabulary. This shared mode axis is what
+# connects the two toolchains at the compound boundary.
+# See docs/COMPOUND_SCHEMA.md §4.
+
+tool: timeloop
+compounds:
+
+  systolic_mac:
+
+    Computes:
+      count_from:
+        stat: Computes_total
+        scale: 1
+      elements:
+        pe: hold_b
+        w_reg: idle

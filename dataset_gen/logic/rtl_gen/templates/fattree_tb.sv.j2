@@ -37,11 +37,25 @@ module {{ module_name }}_tb;
     );
 
 {{ pwr.decls("DATA_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random       full traffic, destination re-randomized every cycle
+    //   fixed_route  static rotation routing (dest = (src+1) % NUM_NODES),
+    //                data random -> steady-dataflow power, no route churn
     task automatic nw_drive_random();
-        for (int src = 0; src < NUM_NODES; src = src + 1) begin
-            i_node_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
-            i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'($urandom_range(0, NUM_NODES - 1));
-            i_node_valid[src] = 1'b1;
+        if (nw_power_mode == "random") begin
+            for (int src = 0; src < NUM_NODES; src = src + 1) begin
+                i_node_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'($urandom_range(0, NUM_NODES - 1));
+                i_node_valid[src] = 1'b1;
+            end
+        end else if (nw_power_mode == "fixed_route") begin
+            for (int src = 0; src < NUM_NODES; src = src + 1) begin
+                i_node_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                i_node_dest[src*NODE_ID_WIDTH +: NODE_ID_WIDTH] = NODE_ID_WIDTH'((src + 1) % NUM_NODES);
+                i_node_valid[src] = 1'b1;
+            end
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for fattree: %s", nw_power_mode);
         end
     endtask
 

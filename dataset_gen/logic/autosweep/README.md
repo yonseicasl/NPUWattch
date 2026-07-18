@@ -97,6 +97,14 @@ license pool — total concurrent tools = nodes × N — and by host cores
    snippet falls back to a **virtual clock with zero input/output delays**,
    so every in→out path must fit in one cycle and the job's frequency axis
    keeps its meaning. The virtual clock flows to ICC2/PT through the SDC.
+   Clocked designs get `set_input_delay (T/2 − uncertainty)` on the data
+   inputs and `set_output_delay 0`: the testbenches drive DUT inputs at the
+   falling edge, so port→flop cones only get half a cycle in gate-level sim.
+   The uncertainty is subtracted because that sim budget is exact — keeping
+   it would just floor T_min for every clocked module. Leaving the inputs
+   unconstrained lets slow nodes corrupt captures while STA looks clean
+   (2026-07-17 PDK pilot: regfile 20/16 nm failed their sim self-checks
+   this way; STA startpoints were all internal flops).
    Keepers: `<rtl>_syn.v`, `<rtl>.sdc`, `synthesis.log` (the QoR/area
    reports feed `comb/seq_cells`, `comb/seq_area` → SCR/SAR).
 3. **pnr** (`autopnr.py`, `02_pnr.tcl`) — ICC2 place & route of the
@@ -157,10 +165,63 @@ ICC2 has no `report_area` (unlike DC and PT), so post-route cell areas come from
 `report_qor` and the physical area from `report_utilization`.
 
 Every row records the tool version that produced it (`dc_version`,
-`icc2_version`, `starrc_version`, `pt_version`) plus `power_activity_mode` and
-`collector_schema`. Synopsys report labels are stable across releases, but if one
-ever moves, the parser raises rather than writing a blank cell — and the version
-columns identify which rows a format change would affect.
+`icc2_version`, `starrc_version`, `pt_version`) plus `power_activity_mode`,
+`stim_mode` and `collector_schema`. Synopsys report labels are stable across
+releases, but if one ever moves, the parser raises rather than writing a blank
+cell — and the version columns identify which rows a format change would affect.
+
+### Activity modes (`stim_mode`)
+
+Vectored power is measured once per **stimulus class** of the module
+(`sweep_spec.POWER_MODES`; e.g. regfile: `random`/`read`/`write`/`idle`,
+MACs: `random`/`hold_b`/`sparse50`/`idle`). The TB dispatches on the
+`+nw_power_mode` plusarg during the SAIF-windowed power phase; one gate-level
+sim runs per mode (shared VCS compile) producing `sim_<mode>.saif`, and one
+vectored PrimeTime run consumes each. Rows are keyed by
+`(flow_run_id, power_activity_mode, stim_mode)`; unvectored rows carry
+`stim_mode=none`. The sweep stage runs every mode automatically; stage-wise,
+`run_batch.py pwr -vectored -stim-mode <m>` runs one class. Full mode table
+and mechanics: `activity_modes.md`. **Add new modes before a sweep** — run
+dirs are pruned after collection, so a mode added later re-runs the whole EDA
+chain for the affected jobs.
+
+### How mode stimuli are generated, and when/how they are measured
+
+Stimuli are produced by the testbench **during the gate-level simulation**;
+power is computed afterwards by PrimeTime from the toggle statistics that
+simulation recorded. Nothing is measured per-operation (contrast the SRAM
+flow's per-op `.measure` windows) — each mode yields the **time-averaged
+power of one steady-state activity class**.
+
+1. **Stimulus generation (in the TB, at sim time).** Every generated TB runs
+   two phases: a self-checking functional phase (mode-independent), then the
+   power phase. At power-phase entry the TB seeds `$urandom` (default 42 —
+   fully reproducible) and reads `+nw_power_mode`. Each clock negedge
+   (combinational modules: each pacing period) `nw_drive_random()` drives one
+   input vector; the mode only decides **which port groups get fresh random
+   values and which are pinned** — e.g. regfile `read` holds `w_en=0` and
+   randomizes only read addresses; `hold_b` latches one seeded constant onto
+   the weight operand on the first cycle and randomizes the rest; `idle`
+   pins every input while the clock keeps running. An unknown mode string
+   `$fatal()`s — it can never silently fall back to random.
+2. **Toggle capture (still at sim time).** The SAIF window brackets exactly
+   the power phase: `$toggle_start()` at entry, `$toggle_stop()` at exit.
+   In between, VCS counts toggles and state-times of **every net of the
+   SDF-annotated post-PnR netlist**. One simulation runs per mode (the VCS
+   compile is shared; later modes re-run `./simv` directly) and its capture
+   is stashed as `sim_<mode>.saif`. The functional phase re-runs identically
+   in every mode and is excluded from the window.
+3. **Power computation (after sim, in PrimeTime PX, averaged mode).** Per
+   mode, one PT run reads netlist + SPEF parasitics + SDC + that mode's
+   SAIF, converts the toggle counts over the window duration into per-net
+   switching rates, and `update_power` produces internal/switching/leakage
+   power averaged over the phase. The collector converts to mW and derives
+   `dyn_energy_pJ = dyn_power_mW × clock_period_ns` — the per-cycle energy
+   of that activity class — writing one dataset row per
+   `(flow_run_id, power_activity_mode, stim_mode)`.
+
+Cost model: the physical implementation (syn/pnr/pex) is built once per job;
+each stimulus class adds only one simv re-run plus one PT run.
 
 Areas are library units (um2); power is converted to mW from whatever unit the
 PrimeTime report declares. `dyn_energy_pJ` is `dyn_power_mW * clock_period_ns`.
@@ -186,14 +247,16 @@ python3 run_batch.py sweep -jobs-per-node 2    # days: the storage-bounded sweep
    (backing up the previous one to `jobs.prev`). The 1.2× margin absorbs the
    observed syn→PnR timing degradation so vectored rows stay timing-clean.
 3. **sweep** pipelines each job through
-   syn→pnr→pex→sim→pwr(unvectored)→CSV→pwr(vectored)→CSV, then archives the
-   report texts to `../sweep_reports/<run_id>.reports.tar.gz` and deletes the
-   run directories. Disk at any moment holds only the jobs in flight
+   syn→pnr→pex→sim (one gate-level run per stimulus mode)→pwr(unvectored)→CSV
+   →[pwr(vectored, mode)→CSV per mode], then archives the report texts to
+   `../sweep_reports/<run_id>.reports.tar.gz` and deletes the run
+   directories. Disk at any moment holds only the jobs in flight
    (nodes × `-jobs-per-node`), not the whole sweep (~350 GB unpruned).
-   **Crash resume**: a job whose dataset CSV already has both activity-mode
-   rows is skipped, so re-running the same command continues where it
-   stopped. A failing job is recorded in `sweep_failures.tsv` (its report
-   texts still archived) and the sweep moves on.
+   **Crash resume**: a job is skipped when its dataset CSV already has the
+   unvectored row plus one vectored row per stimulus mode of its module, so
+   re-running the same command continues where it stopped. A failing job is
+   recorded in `sweep_failures.tsv` (its report texts still archived) and
+   the sweep moves on.
 
 ### Adding a node later (incremental sweep)
 
@@ -224,6 +287,34 @@ python3 run_batch.py sweep -nodes 3 -jobs-per-node 4   # sweep those rows
 
 To re-examine a collected row, start from its report archive; to reproduce
 it fully, re-run that single design point with the per-stage commands above.
+
+### Adding a module later (incremental sweep)
+
+A new primitive needs code in three places, then the ordinary three commands
+— no manual job-list surgery and no re-run of finished modules:
+
+1. **Generator + templates** (`rtl_gen/`): a `gen_<name>()` entry point and
+   the `<name>.sv.j2` / `<name>_tb.sv.j2` templates. The TB must follow the
+   shared power-stimulus contract (`_power_stim.sv.j2`): functional
+   self-check first, then `nw_drive_random()` driving the power phase.
+2. **Sweep spec** (`sweep_spec.py`): the module's configuration list in
+   `sweep_configs()`, membership in `CLOCKED_MODULES` if it has
+   `i_clk`/`i_rst_n`, and — if its ports have distinguishable operations —
+   its stimulus classes in `POWER_MODES` (**before** the sweep: run dirs are
+   pruned after collection, so a mode added afterwards re-runs the whole EDA
+   chain for the affected jobs). Modes must be dispatched in the TB template
+   in the same change; an un-dispatched TB `$fatal()`s on any non-random
+   mode rather than silently measuring random activity.
+3. **Run as usual**: `probe` → `gen-jobs` → `sweep`. Resume keys make the
+   addition incremental for free: probe skips every (config, node) already
+   `ok` in `probe_results.tsv` — only the new module's configurations run —
+   and sweep skips jobs whose dataset rows are complete, so only the new
+   module's manifest rows execute. The regenerated manifest covers old and
+   new modules alike; the old rows simply skip.
+
+The collector needs no changes: architectural parameters become columns
+automatically (`parse_arch_params`), and each module gets its own
+`datasets/logic_<name>.csv`, so new key sets never disturb existing files.
 
 ## Scoreboard
 

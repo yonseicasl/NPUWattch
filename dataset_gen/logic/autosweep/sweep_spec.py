@@ -18,6 +18,29 @@ CLOCKED_MODULES = {
     "regfile", "fifo",
 }
 
+# Power-phase stimulus classes per module (+nw_power_mode; see
+# activity_modes.md).  Each mode is one extra gate-level sim + one vectored
+# PrimeTime run per job — syn/pnr/pex are shared.  "random" must stay first:
+# it is the legacy full-random stimulus every module supports.  Modules not
+# listed have no distinguishable operations (their operation IS random data)
+# and run only "random".
+POWER_MODES = {
+    "regfile": ("random", "read", "write", "idle"),
+    "fifo": ("random", "stream", "idle"),
+    "intmac": ("random", "hold_b", "sparse50", "idle"),
+    "fpmac": ("random", "hold_b", "sparse50", "idle"),
+    "mxfpmac": ("random", "hold_scale", "sparse50", "idle"),
+    "simplemux": ("random", "valid25"),
+    "crossbar": ("random", "fixed_route", "valid25"),
+    "fattree": ("random", "fixed_route"),
+    "foldedclos": ("random", "fixed_route"),
+}
+
+
+def power_modes(rtl_name: str) -> tuple[str, ...]:
+    """Stimulus classes to measure for a module (always at least 'random')."""
+    return POWER_MODES.get(rtl_name, ("random",))
+
 # (exp_bits, mantissa_bits): the 7 industry formats plus synthetic points
 # that densify/extend both axes for interpolation and extrapolation.
 FP_FORMATS = [
@@ -103,7 +126,7 @@ def _mxfpmac():
 
 def _regfile():
     for w in (8, 16, 32, 64):
-        for d in (16, 32, 64, 128, 256):
+        for d in (1, 4, 8, 16, 32, 64, 128, 256):
             yield f"width={w};depth={d};num_read_ports=1;num_write_ports=1"
     for r, wr in ((2, 1), (2, 2), (4, 2), (4, 4)):
         for w, d in ((32, 64), (32, 128), (64, 64)):

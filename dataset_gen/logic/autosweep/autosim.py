@@ -27,6 +27,7 @@ from autocommon import (
     run_logged_command,
 )
 from rtl_gen import generator
+from sweep_spec import power_modes
 
 
 SIM_MODEL_EXTENSIONS = {".v", ".sv", ".vg", ".vlog", ".verilog"}
@@ -67,25 +68,36 @@ def _gate_level_testbench_text(text: str, rtl_name: str, sdf_name: str) -> str:
         raise ValueError("could not find testbench module declaration")
     tb_module = tb_match.group(1)
 
+    # Two generated instantiation styles exist: parameterized
+    # (`rtl_name #(...) dut (`) whose override list must be stripped because
+    # the gate netlist's module has its parameters baked in, and plain
+    # (`rtl_name dut (` -- regfile/fifo/mxfpmac templates, where the
+    # generator bakes the parameters into the RTL) which needs no rewrite,
+    # only the instance name for the SDF hook.
     inst_pattern = re.compile(rf"(?m)^(\s*){re.escape(rtl_name)}\s*#\s*\(")
     inst_match = inst_pattern.search(text)
-    if not inst_match:
-        raise ValueError(f"could not find parameterized DUT instantiation for {rtl_name}")
+    if inst_match:
+        open_index = text.find("(", inst_match.start())
+        close_index = _find_matching_paren(text, open_index)
+        tail_match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_$]*)\s*\(", text[close_index + 1 :])
+        if not tail_match:
+            raise ValueError("could not find DUT instance name after parameter override")
 
-    open_index = text.find("(", inst_match.start())
-    close_index = _find_matching_paren(text, open_index)
-    tail_match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_$]*)\s*\(", text[close_index + 1 :])
-    if not tail_match:
-        raise ValueError("could not find DUT instance name after parameter override")
-
-    indent = inst_match.group(1)
-    instance_name = tail_match.group(1)
-    replace_end = close_index + 1 + tail_match.end()
-    text = (
-        text[: inst_match.start()]
-        + f"{indent}{rtl_name} {instance_name} ("
-        + text[replace_end:]
-    )
+        indent = inst_match.group(1)
+        instance_name = tail_match.group(1)
+        replace_end = close_index + 1 + tail_match.end()
+        text = (
+            text[: inst_match.start()]
+            + f"{indent}{rtl_name} {instance_name} ("
+            + text[replace_end:]
+        )
+    else:
+        plain_match = re.search(
+            rf"(?m)^\s*{re.escape(rtl_name)}\s+([A-Za-z_][A-Za-z0-9_$]*)\s*\(", text
+        )
+        if not plain_match:
+            raise ValueError(f"could not find DUT instantiation for {rtl_name}")
+        instance_name = plain_match.group(1)
 
     gate_hook = f"""
 `ifdef NW_LOGIC_GATE_SIM
@@ -161,12 +173,46 @@ def prepare_simulation_run(job: dict[str, str], run_dir: Path) -> Path:
     return filelist_path
 
 
+def _check_direct_sim_outputs(run_dir: Path) -> str | None:
+    """Replicate 04_sim.sh's pass/fail checks for direct ./simv re-runs.
+
+    Returns an error string or None.  The runner script performs these checks
+    itself for the first (compiling) invocation; subsequent per-mode runs call
+    simv directly and must apply the same gate.
+    """
+    sim_log = run_dir / "sim.log"
+    if not sim_log.exists():
+        return "simv produced no sim.log"
+    text = sim_log.read_text(encoding="utf-8", errors="replace")
+    if re.search(r"(?m)^\s*(Error-|Error:|Fatal:)", text) or " FAIL" in text:
+        return "sim.log contains failure messages"
+    if " PASS" not in text:
+        return "sim.log does not contain a PASS marker"
+    if not (run_dir / "sim.saif").exists():
+        return "missing output sim.saif"
+    return None
+
+
+def _stash_mode_outputs(run_dir: Path, mode: str) -> None:
+    """Rename the fixed-name sim outputs to their per-mode names.
+
+    The TB always writes sim.saif/sim.log (04_sim.sh checks those names), so
+    each mode's outputs are moved aside before the next mode overwrites them.
+    """
+    for fixed, stem in (("sim.saif", "sim_%s.saif"), ("sim.log", "sim_%s.log")):
+        source = run_dir / fixed
+        if source.exists():
+            source.replace(run_dir / (stem % mode))
+
+
 def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = False) -> None:
     run_id = run_id_for_job(job, job_index)
+    rtl_name = job["rtl_name"].strip()
     node = normalize_node(job.get("node", ""))
     tech_dir = NW_LOGIC_DIR / f"TECH_{int(node):02d}nm"
     run_dir = tech_dir / "04_sim" / run_id
     corner = find_tech_corner(job)
+    modes = power_modes(rtl_name)
 
     log_event(
         stage=STAGE_LOGIC_SIM,
@@ -177,6 +223,7 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
         details={
             "run_dir": str(run_dir),
             "db_file": str(corner.db_file),
+            "power_modes": list(modes),
             "reset_existing_run_dir": run_dir.exists(),
         },
     )
@@ -188,46 +235,69 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
     # Run the TB at the job's clock so the captured activity toggles at the
     # frequency the power row claims (the TB default is 10 ns).
     period_ps = int(round(clock_period_ns(job) * 1000.0))
-    simv_args = [f"+nw_clock_period_ps={period_ps}"]
 
-    log_event(
-        stage=STAGE_LOGIC_SIM,
-        status=STATUS_RUNNING,
-        message="launching 04_sim.sh",
-        job=job,
-        run_id=run_id,
-        details={
-            "command": f"{sim_runner} {run_id} {' '.join(simv_args)}",
-            "run_dir": str(run_dir),
-            "filelist": str(filelist_path),
-        },
-    )
+    # One simulation per stimulus mode, all sharing one VCS compile: the first
+    # mode goes through 04_sim.sh (compile + run + output checks), later modes
+    # re-run the compiled ./simv directly with a different +nw_power_mode.
+    # Each mode's sim.saif/sim.log are stashed as sim_<mode>.saif/.log so the
+    # vectored power runs can pick their activity file.
+    for mode_index, mode in enumerate(modes):
+        simv_args = [
+            f"+nw_clock_period_ps={period_ps}",
+            f"+nw_power_mode={mode}",
+        ]
+        if mode_index == 0:
+            command = [str(sim_runner), run_id, *simv_args]
+            cwd = sim_runner.parent
+        else:
+            command = ["./simv", "-l", "sim.log", *simv_args]
+            cwd = run_dir
 
-    runner_log_path = run_dir / "04_sim.sh.log"
-    returncode = run_logged_command(
-        [str(sim_runner), run_id, *simv_args],
-        cwd=sim_runner.parent,
-        log_path=runner_log_path,
-        verbose=verbose,
-        prefix=run_id,
-    )
-
-    sim_log = run_dir / "sim.log"
-    vcd_path = run_dir / "sim.vcd"
-    if returncode != 0:
         log_event(
             stage=STAGE_LOGIC_SIM,
-            status=STATUS_ERROR,
-            message=f"04_sim.sh failed with exit code {returncode}",
+            status=STATUS_RUNNING,
+            message=f"launching gate-level sim, mode {mode}",
             job=job,
             run_id=run_id,
             details={
-                "sim_log": str(sim_log),
-                "runner_log": str(runner_log_path),
+                "command": " ".join(command),
                 "run_dir": str(run_dir),
+                "filelist": str(filelist_path),
             },
         )
-        raise RuntimeError(f"gate-level simulation failed for {run_id}; see {sim_log}")
+
+        runner_log_path = run_dir / f"04_sim.sh.{mode}.log"
+        returncode = run_logged_command(
+            command,
+            cwd=cwd,
+            log_path=runner_log_path,
+            verbose=verbose,
+            prefix=f"{run_id}:{mode}",
+        )
+
+        sim_log = run_dir / "sim.log"
+        error = None
+        if returncode != 0:
+            error = f"exit code {returncode}"
+        elif mode_index > 0:
+            error = _check_direct_sim_outputs(run_dir)
+        if error:
+            log_event(
+                stage=STAGE_LOGIC_SIM,
+                status=STATUS_ERROR,
+                message=f"gate-level sim failed in mode {mode}: {error}",
+                job=job,
+                run_id=run_id,
+                details={
+                    "sim_log": str(sim_log),
+                    "runner_log": str(runner_log_path),
+                    "run_dir": str(run_dir),
+                },
+            )
+            raise RuntimeError(
+                f"gate-level simulation failed for {run_id} (mode {mode}); see {sim_log}"
+            )
+        _stash_mode_outputs(run_dir, mode)
 
     log_event(
         stage=STAGE_LOGIC_SIM,
@@ -236,8 +306,9 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
         job=job,
         run_id=run_id,
         details={
-            "sim_log": str(sim_log),
-            "vcd": str(vcd_path),
+            "modes": list(modes),
+            "saif_files": [str(run_dir / f"sim_{mode}.saif") for mode in modes],
+            "vcd": str(run_dir / "sim.vcd"),
         },
     )
 

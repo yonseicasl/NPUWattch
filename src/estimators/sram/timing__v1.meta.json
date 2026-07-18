@@ -1,0 +1,46 @@
+{
+ "model": "timing",
+ "version": "v1",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 12,
+ "features": [
+  "log10_node_nm",
+  "log2_rows",
+  "log2_cols",
+  "voltage_offset_V",
+  "temperature_C",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "t_read",
+  "t_write"
+ ],
+ "one_hot": [
+  "t_read",
+  "t_write"
+ ],
+ "target": "log10_ns",
+ "dataset_sha256": "a9cc5ba64949a33382ba370a7bfd3b402ba6f2620adcb6f374ab6f8a19148646",
+ "seed": 42,
+ "split": {
+  "train": 802,
+  "val": 100,
+  "test": 100
+ },
+ "epochs_run": 947,
+ "val_mape": 0.029789581894874573,
+ "test_mape": 0.042657427624191474,
+ "test_spearman": 0.9921272127212724,
+ "per_op_test_mape": {
+  "t_read": 0.04863771003626352,
+  "t_write": 0.036677145212119434
+ },
+ "date": "2026-07-18T18:00:23",
+ "torch": "2.13.0+cpu"
+}

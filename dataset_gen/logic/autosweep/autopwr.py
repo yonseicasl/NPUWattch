@@ -41,15 +41,24 @@ def _set_tcl_var(text: str, name: str, value: str | float) -> str:
     raise ValueError(f"PrimeTime template missing variable: {name}")
 
 
-def _vectored_activity_file(tech_dir: Path, run_id: str) -> Path:
+def _vectored_activity_file(tech_dir: Path, run_id: str, stim_mode: str) -> Path:
     sim_dir = tech_dir / "04_sim" / run_id
-    for candidate in (sim_dir / "sim.saif", sim_dir / "sim.vcd"):
+    candidates = [sim_dir / f"sim_{stim_mode}.saif"]
+    if stim_mode == "random":
+        # legacy names from runs that predate per-mode SAIF stashing
+        candidates += [sim_dir / "sim.saif", sim_dir / "sim.vcd"]
+    for candidate in candidates:
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(f"missing vectored activity file: expected {sim_dir}/sim.saif or {sim_dir}/sim.vcd")
+    raise FileNotFoundError(
+        f"missing vectored activity file: expected {candidates[0]} "
+        "(did the sim stage run with the current per-mode autosim?)"
+    )
 
 
-def prepare_power_script(job: dict[str, str], run_dir: Path, *, vectored: bool = False) -> Path:
+def prepare_power_script(
+    job: dict[str, str], run_dir: Path, *, vectored: bool = False, stim_mode: str = "random"
+) -> Path:
     rtl_name = job["rtl_name"].strip()
     run_id = run_id_for_job(job)
     node = normalize_node(job.get("node", ""))
@@ -72,7 +81,7 @@ def prepare_power_script(job: dict[str, str], run_dir: Path, *, vectored: bool =
     if not spef_path.exists():
         raise FileNotFoundError(f"missing PEX SPEF: {spef_path}")
 
-    activity_file = _vectored_activity_file(tech_dir, run_id) if vectored else None
+    activity_file = _vectored_activity_file(tech_dir, run_id, stim_mode) if vectored else None
 
     recreate_run_dir(run_dir)
     script_path = run_dir / "05_pwr.tcl"
@@ -85,6 +94,9 @@ def prepare_power_script(job: dict[str, str], run_dir: Path, *, vectored: bool =
     text = _set_tcl_var(text, "sdc_file", str(sdc_path))
     text = _set_tcl_var(text, "spef_file", str(spef_path))
     text = _set_tcl_var(text, "activity_mode", "vectored" if vectored else "unvectored")
+    # stimulus class of the SAIF ("none" for vectorless runs); provenance the
+    # collector reads back into the dataset's stim_mode column
+    text = _set_tcl_var(text, "stim_mode", stim_mode if vectored else "none")
     text = _set_tcl_var(text, "activity_file", str(activity_file) if activity_file else "")
     text = _set_tcl_var(text, "clock_period_ns", clock_period_ns(job))
 
@@ -95,7 +107,14 @@ def prepare_power_script(job: dict[str, str], run_dir: Path, *, vectored: bool =
     return script_path
 
 
-def run_power_job(job: dict[str, str], job_index: int, *, verbose: bool = False, vectored: bool = False) -> None:
+def run_power_job(
+    job: dict[str, str],
+    job_index: int,
+    *,
+    verbose: bool = False,
+    vectored: bool = False,
+    stim_mode: str = "random",
+) -> None:
     run_id = run_id_for_job(job, job_index)
     node = normalize_node(job.get("node", ""))
     tech_dir = NW_LOGIC_DIR / f"TECH_{int(node):02d}nm"
@@ -111,11 +130,11 @@ def run_power_job(job: dict[str, str], job_index: int, *, verbose: bool = False,
         details={
             "run_dir": str(run_dir),
             "db_file": str(corner.db_file),
-            "mode": "vectored" if vectored else "unvectored",
+            "mode": f"vectored:{stim_mode}" if vectored else "unvectored",
             "reset_existing_run_dir": run_dir.exists(),
         },
     )
-    script_path = prepare_power_script(job, run_dir, vectored=vectored)
+    script_path = prepare_power_script(job, run_dir, vectored=vectored, stim_mode=stim_mode)
     pwr_runner = tech_dir / "run_scripts" / "05_pwr.sh"
     if not pwr_runner.exists():
         raise FileNotFoundError(f"missing PrimeTime power runner: {pwr_runner}")
@@ -174,12 +193,15 @@ def run_power_for_node(
     *,
     verbose: bool = False,
     vectored: bool = False,
+    stim_mode: str = "random",
     jobs_per_node: int = 1,
 ) -> None:
     log_event(stage=STAGE_POWER_SIM, status=STATUS_START, message="node power worker started", node=node)
     run_jobs_for_node(
         jobs,
-        lambda job, index: run_power_job(job, index, verbose=verbose, vectored=vectored),
+        lambda job, index: run_power_job(
+            job, index, verbose=verbose, vectored=vectored, stim_mode=stim_mode
+        ),
         jobs_per_node=jobs_per_node,
     )
     log_event(stage=STAGE_POWER_SIM, status=STATUS_DONE, message="node power worker complete", node=node)
@@ -190,6 +212,7 @@ def run_power_from_manifest(
     *,
     verbose: bool = False,
     vectored: bool = False,
+    stim_mode: str = "random",
     jobs_per_node: int = 1,
 ) -> None:
     jobs = read_jobs(path)
@@ -200,7 +223,7 @@ def run_power_from_manifest(
         message="PrimeTime power stage started",
         details={
             "nodes": sorted(grouped),
-            "mode": "vectored" if vectored else "unvectored",
+            "mode": f"vectored:{stim_mode}" if vectored else "unvectored",
             "jobs_per_node": jobs_per_node,
         },
     )
@@ -213,6 +236,7 @@ def run_power_from_manifest(
                 node_jobs,
                 verbose=verbose,
                 vectored=vectored,
+                stim_mode=stim_mode,
                 jobs_per_node=jobs_per_node,
             ): node
             for node, node_jobs in grouped.items()

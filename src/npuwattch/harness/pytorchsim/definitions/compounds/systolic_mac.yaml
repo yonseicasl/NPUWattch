@@ -1,0 +1,35 @@
+# ============================================================================
+#  systolic_mac — a weight-stationary systolic array as NPUWattch primitives
+# ============================================================================
+# This is the DEFAULT bundle NPUWattch ships for PyTorchSim, and also the sample
+# to copy when authoring your own compound. Compounds are tool-agnostic: nothing
+# PyTorchSim/Timeloop-specific appears here — that lives in projections/.
+#
+# The PE is ONE MAC primitive (the accumulator is already inside the MAC's
+# characterization, so no separate accumulator element). The only extra element
+# is the stationary-weight register that a weight-load writes and that the
+# 'hold_b' compute mode assumes is already latched.
+#
+# Resolution (per kernel, done by the harness):
+#   {mac_primitive}  -> intmac | fpmac | mxfpmac   (chosen from the kernel dtype)
+#   {mac_config}     -> that primitive's exact RTL params (bit-widths, ...)
+#   bitwidth, lanes  -> scalars from the MAC config inferencer / run config
+# 'count' and scalar fields are +/* expressions over {lanes, bitwidth} and ints.
+# Note: {…} MUST be quoted in YAML (an unquoted {…} is a flow-mapping).
+# See docs/COMPOUND_SCHEMA.md §2.
+
+systolic_mac:
+  select_primitive_by: dtype          # pick the PE primitive from the kernel dtype
+  elements:
+
+    pe:                               # processing element = one MAC primitive
+      primitive: "{mac_primitive}"    # intmac / fpmac / mxfpmac
+      config: "{mac_config}"          # its exact RTL params (per kernel)
+      count: "lanes*lanes"            # instance count for area/leak (a lanes×lanes grid)
+
+    w_reg:                            # stationary weight register (weight-load target)
+      primitive: regfile
+      config:
+        width: bitwidth               # = operand bit-width
+        depth: 1                      # one latched weight per PE
+      count: "lanes*lanes"

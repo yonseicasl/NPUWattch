@@ -29,12 +29,27 @@ from autocommon import (
 )
 from rtl_gen import generator
 
+# Applied to the (single) clock in every job; also folded into the input-delay
+# value below so port->flop cones are timed to the testbench's exact budget
+# instead of double-counting this margin.
+CLOCK_UNCERTAINTY_NS = 0.2
+
 
 def dc_append_script(job: dict[str, str], dont_use: tuple[str, ...] = ()) -> str:
     period = clock_period_ns(job)
     half_period = period / 2.0
     clock_port = job.get("clock_port", "").strip() or "i_clk"
     reset_port = job.get("reset_port", "").strip()
+    # Testbenches drive DUT inputs at the falling edge, so a port->flop cone
+    # only gets half a cycle in gate-level sim.  Model that arrival as an
+    # input delay of T/2 minus the clock uncertainty: the sim budget is exact
+    # (TB edge and SDF flop share one ideal clock, and the DUT's insertion
+    # delay only adds margin), so keeping the uncertainty here would demand
+    # cone <= T/2 - 0.2 and artificially floor T_min for every clocked module.
+    # Without any input delay these cones are unconstrained and slow nodes
+    # corrupt captures silently (2026-07-17 PDK pilot: regfile 20/16 nm failed
+    # their sim self-checks while STA reported clean timing).
+    input_delay = half_period - CLOCK_UNCERTAINTY_NS
 
     lines = []
     # Node-level cell exclusions from tech_libs/catalog.json ("dontuse"). Keeps
@@ -50,13 +65,18 @@ def dc_append_script(job: dict[str, str], dont_use: tuple[str, ...] = ()) -> str
         f"set clockPorts [get_ports -quiet {{{clock_port}}}]",
         "if {[sizeof_collection $clockPorts] > 0} {",
         f"    create_clock -name clk $clockPorts -period {period:g} -waveform {{0 {half_period:g}}}",
+        "    # I/O delays matching the gate-level TB: inputs driven at the",
+        "    # negedge (see input_delay rationale above), outputs sampled a",
+        "    # full cycle later.",
+        f"    set_input_delay {input_delay:g} -clock clk [remove_from_collection [all_inputs] $clockPorts]",
+        "    set_output_delay 0 -clock clk [all_outputs]",
         "} else {",
         "    # Combinational block: virtual clock constrains the in->out paths.",
         f"    create_clock -name clk -period {period:g} -waveform {{0 {half_period:g}}}",
         "    set_input_delay 0 -clock clk [all_inputs]",
         "    set_output_delay 0 -clock clk [all_outputs]",
         "}",
-        "set_clock_uncertainty 0.2 [get_clocks clk]",
+        f"set_clock_uncertainty {CLOCK_UNCERTAINTY_NS:g} [get_clocks clk]",
     ]
     if reset_port:
         lines.extend(

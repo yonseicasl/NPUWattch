@@ -1,0 +1,47 @@
+{
+ "model": "leakage",
+ "version": "v1",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 13,
+ "features": [
+  "log10_node_nm",
+  "log2_rows",
+  "log2_cols",
+  "voltage_offset_V",
+  "temperature_C",
+  "inv_T_1000K",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "array",
+  "dec"
+ ],
+ "one_hot": [
+  "array",
+  "dec"
+ ],
+ "target": "log10_mW",
+ "dataset_sha256": "a9cc5ba64949a33382ba370a7bfd3b402ba6f2620adcb6f374ab6f8a19148646",
+ "seed": 42,
+ "split": {
+  "train": 815,
+  "val": 101,
+  "test": 99
+ },
+ "epochs_run": 1094,
+ "val_mape": 0.059968508780002594,
+ "test_mape": 0.05482766735859451,
+ "test_spearman": 0.9993011707128059,
+ "per_op_test_mape": {
+  "array": 0.0612720087572153,
+  "dec": 0.049002974171379596
+ },
+ "date": "2026-07-18T17:59:19",
+ "torch": "2.13.0+cpu"
+}

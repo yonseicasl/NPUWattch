@@ -49,7 +49,8 @@ DATASETS_DIR = NW_LOGIC_DIR / "datasets"
 
 # Schema version for the emitted CSVs. Bump when columns are added or renamed so a
 # mixed-vintage dataset can be told apart.
-COLLECTOR_SCHEMA_VERSION = "1"
+# 2: rows carry stim_mode (power-phase stimulus class; "none" for unvectored)
+COLLECTOR_SCHEMA_VERSION = "2"
 
 _NUMBER = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
 
@@ -281,6 +282,23 @@ def _activity_mode(pwr_run_dir: Path) -> str:
     return match.group(1) if match else ""
 
 
+def _stim_mode(pwr_run_dir: Path) -> str:
+    """Power-phase stimulus class of the vectored SAIF ("none" when unvectored).
+
+    Parsed from the same prepared script as _activity_mode; scripts that
+    predate the stim_mode variable read back as "random" for vectored runs
+    (the legacy stimulus) and "none" otherwise.
+    """
+    script = pwr_run_dir / "05_pwr.tcl"
+    if not script.exists():
+        return ""
+    text = script.read_text(encoding="utf-8")
+    match = re.search(r'^set\s+stim_mode\s+"([^"]*)"', text, re.MULTILINE)
+    if match:
+        return match.group(1)
+    return "random" if _activity_mode(pwr_run_dir) == "vectored" else "none"
+
+
 def collect_job(job: dict[str, str]) -> dict[str, Any]:
     run_id = run_id_for_job(job)
     node = normalize_node(job.get("node", ""))
@@ -312,16 +330,24 @@ def collect_job(job: dict[str, str]) -> dict[str, Any]:
     record.update(parse_pwr_reports(pwr_dir, period_ns=period_ns))
 
     record["power_activity_mode"] = _activity_mode(pwr_dir)
+    record["stim_mode"] = _stim_mode(pwr_dir)
     record["collector_schema"] = COLLECTOR_SCHEMA_VERSION
     record["collected_at"] = utc_timestamp()
     return record
 
 
-def _row_key(row: dict[str, Any]) -> tuple[str, str]:
-    """Rows are keyed by run id *and* activity mode: the same design point yields a
-    different power measurement unvectored (vectorless estimate) than vectored (from
-    the gate-level sim), and both are worth keeping."""
-    return str(row.get("flow_run_id", "")), str(row.get("power_activity_mode", ""))
+def _row_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    """Rows are keyed by run id, activity mode AND stimulus class: the same design
+    point yields a different power measurement unvectored (vectorless estimate) than
+    vectored, and a different vectored measurement per stimulus class (random /
+    read / write / hold_b / ...) -- all worth keeping.  Legacy rows without a
+    stim_mode column key as ("", ...) and are replaced by their re-collected
+    successors only when activity mode and run id also match."""
+    return (
+        str(row.get("flow_run_id", "")),
+        str(row.get("power_activity_mode", "")),
+        str(row.get("stim_mode", "")),
+    )
 
 
 def _upsert_csv(path: Path, record: dict[str, Any]) -> None:

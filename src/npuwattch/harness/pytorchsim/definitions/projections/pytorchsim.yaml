@@ -1,0 +1,46 @@
+# ============================================================================
+#  PyTorchSim projection for the systolic_mac compound
+# ============================================================================
+# Maps each PyTorchSim native action to { element: stim_mode } plus where its
+# cycle count comes from. 'hold_b' = "b latched once = weight-stationary" is a
+# HARDWARE property (not a tool artifact), so compute maps to hold_b here and in
+# the Timeloop projection alike — that shared mode axis is what lets both
+# toolchains drive the same compound.
+#
+# count_from carries Option A's calibration:
+#   systolic_active_cycles × lanes²  = MACs at 100% utilization
+# (below 100%, the extra active cycles are real reload/stall energy, so charging
+#  per active cycle is intended).
+#
+# CustomMatMuliVpush (input push) and CustomMatMulvpop (psum pop) are subsumed by
+# 'hold_b' (which already drives operand a and the addend c) and are deliberately
+# omitted to avoid double-counting. Add them as explicit elements only once a
+# separate input/drain register is characterized.
+#
+# Rule of thumb: ENERGY uses count_from (per-cycle events); AREA/LEAK use the
+# compound element 'count' — the two never multiply.
+# See docs/COMPOUND_SCHEMA.md §3.
+
+tool: pytorchsim
+compounds:
+
+  systolic_mac:
+
+    CustomMatMul:                     # weight-stationary compute
+      count_from:
+        stat: systolic_active_cycles
+        scale: "lanes*lanes"          # cycles × lanes² = MACs (Option A)
+      elements:
+        pe: hold_b                    # PE computes with b latched
+        w_reg: idle                   # weight held; no write this action
+
+    CustomMatMulwVpush:               # weight load (push a new weight)
+      count_from:
+        stat: CustomMatMulwVpush
+        scale: lanes
+      elements:
+        pe: idle                      # PE not computing during a load
+        w_reg: write                  # the weight-register write = weight-load energy
+
+    # Sparsity variant: if the log exposes activation sparsity, map
+    # CustomMatMul.pe -> sparse50 instead of hold_b.

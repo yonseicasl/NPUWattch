@@ -1,4 +1,8 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
+# NOTE: resolves to the ACTIVE python3 so `conda activate npuwattch` supplies
+# jinja2 (rtl_gen) — a hardcoded python3.11 bypassed the env and failed on
+# import. On this server the bare system python3 is 3.6 and dies on the
+# `from __future__` line below; activate the env first.
 from __future__ import annotations
 
 import argparse
@@ -7,7 +11,9 @@ import sys
 
 
 if sys.version_info < (3, 9):
-    raise SystemExit("run_batch.py requires Python 3.9 or newer. Try python3.11 run_batch.py.")
+    raise SystemExit(
+        "run_batch.py requires Python 3.9+ with jinja2. Run `conda activate npuwattch` first."
+    )
 
 
 from autocollect import collect_from_manifest  # noqa: E402
@@ -33,6 +39,14 @@ def main() -> int:
         "-vectored",
         action="store_true",
         help="use gate-level simulation activity for 05_pwr instead of default unvectored activity",
+    )
+    parser.add_argument(
+        "-stim-mode",
+        dest="stim_mode",
+        default="random",
+        help="stimulus class for the standalone '-vectored pwr' stage (default "
+        "random; see sweep_spec.POWER_MODES). The sweep stage runs every mode "
+        "of each module by itself and ignores this flag",
     )
     parser.add_argument(
         "-jobs-per-node",
@@ -80,6 +94,11 @@ def main() -> int:
     if args.jobs_per_node < 1:
         parser.error("-jobs-per-node must be >= 1")
 
+    if args.stim_mode != "random" and not (
+        args.vectored and args.stage in {"all", "pwr", "05_pwr"}
+    ):
+        parser.error("-stim-mode only applies to the pwr stage with -vectored")
+
     nodes: tuple[str, ...] | None = None
     if args.nodes:
         nodes = tuple(part.strip() for part in args.nodes.split(",") if part.strip())
@@ -114,7 +133,10 @@ def main() -> int:
         run_simulation_from_manifest(verbose=args.verbose, jobs_per_node=args.jobs_per_node)
     if args.stage in {"all", "pwr", "05_pwr"}:
         run_power_from_manifest(
-            verbose=args.verbose, vectored=args.vectored, jobs_per_node=args.jobs_per_node
+            verbose=args.verbose,
+            vectored=args.vectored,
+            stim_mode=args.stim_mode,
+            jobs_per_node=args.jobs_per_node,
         )
     if args.stage in {"all", "collect", "data-collection"}:
         collect_from_manifest()

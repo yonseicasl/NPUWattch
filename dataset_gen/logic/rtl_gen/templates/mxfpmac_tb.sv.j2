@@ -38,12 +38,50 @@ module {{ module_name }}_tb;
     );
 
 {{ pwr.decls("TOTAL_ELEMS*ELEM_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random      everything uniform random (legacy default)
+    //   hold_scale  block scales latched once (seeded), elements random --
+    //               inside a real MX tile the per-block scales are constant
+    //   sparse50    each a-element zeroed with p=0.5 (activation sparsity)
+    //   idle        valid=0, all inputs held -> pipeline clock power
+    logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0] nw_hold_scale_a;
+    logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0] nw_hold_scale_b;
     task automatic nw_drive_random();
-        i_valid = 1'b1;
-        i_a = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
-        i_b = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
-        i_scale_a = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
-        i_scale_b = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+        if (nw_power_mode == "random") begin
+            i_valid = 1'b1;
+            i_a = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
+            i_b = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
+            i_scale_a = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+            i_scale_b = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+        end else if (nw_power_mode == "hold_scale") begin
+            if (!nw_mode_init) begin
+                nw_hold_scale_a = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+                nw_hold_scale_b = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+                nw_mode_init = 1'b1;
+            end
+            i_valid = 1'b1;
+            i_a = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
+            i_b = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
+            i_scale_a = nw_hold_scale_a;
+            i_scale_b = nw_hold_scale_b;
+        end else if (nw_power_mode == "sparse50") begin
+            i_valid = 1'b1;
+            for (int e = 0; e < TOTAL_ELEMS; e = e + 1) begin
+                i_a[e*ELEM_WIDTH +: ELEM_WIDTH] =
+                    ($urandom_range(0, 1) != 0) ? ELEM_WIDTH'(nw_rand_bits(ELEM_WIDTH)) : '0;
+            end
+            i_b = (TOTAL_ELEMS*ELEM_WIDTH)'(nw_rand_bits(TOTAL_ELEMS*ELEM_WIDTH));
+            i_scale_a = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+            i_scale_b = (NUM_BLOCKS*SCALE_EXP_BITS)'(nw_rand_bits(NUM_BLOCKS*SCALE_EXP_BITS));
+        end else if (nw_power_mode == "idle") begin
+            i_valid = 1'b0;
+            i_a = '0;
+            i_b = '0;
+            i_scale_a = '0;
+            i_scale_b = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for mxfpmac: %s", nw_power_mode);
+        end
     endtask
 
 {{ pwr.clock_gen("i_clk") }}

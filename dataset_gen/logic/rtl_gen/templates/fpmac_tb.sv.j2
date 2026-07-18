@@ -38,10 +38,36 @@ module fpmac_tb;
     );
 
 {{ pwr.decls("FP_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random    all operands uniform random (legacy default)
+    //   hold_b    weight-stationary: b latched once (seeded), a/c random
+    //   sparse50  a zeroed with p=0.5 (activation sparsity), b/c random
+    //   idle      operands held at zero, clock running -> pipeline clock power
+    logic [FP_WIDTH-1:0] nw_hold_b_val;
     task automatic nw_drive_random();
-        i_a = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
-        i_b = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
-        i_c = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+        if (nw_power_mode == "random") begin
+            i_a = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+            i_b = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+            i_c = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+        end else if (nw_power_mode == "hold_b") begin
+            if (!nw_mode_init) begin
+                nw_hold_b_val = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+                nw_mode_init = 1'b1;
+            end
+            i_a = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+            i_b = nw_hold_b_val;
+            i_c = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+        end else if (nw_power_mode == "sparse50") begin
+            i_a = ($urandom_range(0, 1) != 0) ? FP_WIDTH'(nw_rand_bits(FP_WIDTH)) : '0;
+            i_b = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+            i_c = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+        end else if (nw_power_mode == "idle") begin
+            i_a = '0;
+            i_b = '0;
+            i_c = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for fpmac: %s", nw_power_mode);
+        end
     endtask
 
 {{ pwr.clock_gen("i_clk") }}

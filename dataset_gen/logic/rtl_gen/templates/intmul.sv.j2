@@ -50,10 +50,19 @@ module {{ module_name }} #(
             wire [B_WIDTH-1:0] b_in = (g == 0) ? b_mag_r : b_pipe[g-1];
             wire sign_in = (g == 0) ? sign_r : sign_pipe[g-1];
             wire [FULL_WIDTH-1:0] acc_in = (g == 0) ? '0 : acc_pipe[g-1];
-            wire [CW-1:0] b_chunk = b_in[HI:LO];
-            wire [A_WIDTH+CW-1:0] partial_small = a_in * b_chunk;
-            wire [FULL_WIDTH-1:0] partial_shifted = { {(FULL_WIDTH-A_WIDTH-CW-LO){1'b0}}, partial_small, {LO{1'b0}} };
-            wire [FULL_WIDTH-1:0] acc_next = acc_in + partial_shifted;
+            wire [FULL_WIDTH-1:0] acc_next;
+
+            if (LO < B_WIDTH) begin : gen_chunk
+                wire [CW-1:0] b_chunk = b_in[HI:LO];
+                wire [A_WIDTH+CW-1:0] partial_small = a_in * b_chunk;
+                wire [FULL_WIDTH-1:0] partial_shifted = { {(FULL_WIDTH-A_WIDTH-CW-LO){1'b0}}, partial_small, {LO{1'b0}} };
+                assign acc_next = acc_in + partial_shifted;
+            end else begin : gen_pass
+                // Ceil-split tail: when B_WIDTH < 2*SEG_COUNT the earlier
+                // chunks already cover every multiplier bit, so this stage
+                // is a pure pipeline register (keeps latency intact).
+                assign acc_next = acc_in;
+            end
 
             always_ff @(posedge i_clk) begin
                 if (!i_rst_n) begin

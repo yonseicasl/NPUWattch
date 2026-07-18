@@ -14,6 +14,9 @@ set netlist_file    "./MyDesign_icc2.v"
 set sdc_file        "./MyDesign.sdc"
 set spef_file       "./MyDesign.spef"
 set activity_mode   "unvectored"
+# stimulus class of the vectored activity ("none" when unvectored); pure
+# provenance -- the collector parses it into the dataset's stim_mode column
+set stim_mode       "none"
 set activity_file   ""
 set clock_period_ns 5
 set_host_options -max_cores 8

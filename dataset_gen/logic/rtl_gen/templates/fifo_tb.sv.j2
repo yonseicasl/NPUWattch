@@ -35,12 +35,28 @@ module {{ module_name }}_tb;
     );
 
 {{ pwr.decls("WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random  push/pop coin toss (legacy default; random walk occupancy)
+    //   stream  push=pop=1 every cycle -> steady flow-through power
+    //   idle    no push/pop, data held -> clock-tree power
     task automatic nw_drive_random();
-        // Push/pop toss a coin each cycle; the DUT's own full/empty guards
-        // bound occupancy, giving a random walk around half-full operation.
-        i_push = 1'($urandom_range(0, 1));
-        i_pop = 1'($urandom_range(0, 1));
-        i_push_data = WIDTH'(nw_rand_bits(WIDTH));
+        if (nw_power_mode == "random") begin
+            // Push/pop toss a coin each cycle; the DUT's own full/empty guards
+            // bound occupancy, giving a random walk around half-full operation.
+            i_push = 1'($urandom_range(0, 1));
+            i_pop = 1'($urandom_range(0, 1));
+            i_push_data = WIDTH'(nw_rand_bits(WIDTH));
+        end else if (nw_power_mode == "stream") begin
+            i_push = 1'b1;
+            i_pop = 1'b1;
+            i_push_data = WIDTH'(nw_rand_bits(WIDTH));
+        end else if (nw_power_mode == "idle") begin
+            i_push = 1'b0;
+            i_pop = 1'b0;
+            i_push_data = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for fifo: %s", nw_power_mode);
+        end
     endtask
 
 {{ pwr.clock_gen("i_clk") }}

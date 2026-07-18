@@ -14,9 +14,18 @@
      +nw_power_cycles=<int>     number of random vectors in the power phase
                                 (default baked in at generation time).
      +nw_power_seed=<int>       $urandom seed for the power phase (default 42).
+     +nw_power_mode=<string>    stimulus class driven during the power phase
+                                (default "random").  Modules whose ports have
+                                distinguishable operations dispatch on it in
+                                nw_drive_random() (read/write/idle/hold_b/...);
+                                see autosweep/activity_modes.md for the mode
+                                table.  A TB $fatal()s on a mode it does not
+                                implement, so a typo can never silently
+                                measure random activity.
 
    Each TB must define `task automatic nw_drive_random();` that drives one
-   random input vector appropriate to its port protocol.
+   input vector for the active nw_power_mode (plain modules ignore the mode
+   and always drive uniform random).
 #}
 {% macro decls(max_width_expr) %}
     // Power-stimulus phase state (see templates/_power_stim.sv.j2).
@@ -25,6 +34,8 @@
     int unsigned nw_power_cycles;
     int unsigned nw_power_seed;
     real nw_clock_period_ns = 10.0;
+    string nw_power_mode = "random";
+    bit nw_mode_init;  // set by hold-style modes after latching their value
 
     function automatic logic [NW_RAND_MAX_BITS-1:0] nw_rand_bits(input int nbits);
         logic [31:0] chunk;
@@ -61,9 +72,10 @@
         if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
             nw_power_seed = 42;
         end
+        void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
         void'($urandom(nw_power_seed));
-        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g",
-            nw_power_cycles, nw_power_seed, nw_clock_period_ns);
+        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_seed, nw_clock_period_ns, nw_power_mode);
         nw_power_phase = 1'b1;
         repeat (nw_power_cycles) begin
             @(negedge {{ clk }});
@@ -82,9 +94,10 @@
         if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
             nw_power_seed = 42;
         end
+        void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
         void'($urandom(nw_power_seed));
-        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g",
-            nw_power_cycles, nw_power_seed, nw_clock_period_ns);
+        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_seed, nw_clock_period_ns, nw_power_mode);
         nw_power_phase = 1'b1;
         repeat (nw_power_cycles) begin
             nw_drive_random();

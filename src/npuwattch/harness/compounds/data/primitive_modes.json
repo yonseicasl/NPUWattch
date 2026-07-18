@@ -1,0 +1,18 @@
+{
+  "_comment": "The per-primitive stim_mode vocabulary. Fully-resolved mirror of dataset_gen/logic/autosweep/sweep_spec.POWER_MODES (arithmetic-only modules resolve to the default ['random']). A (primitive, mode) pair not listed here is unpredictable and the loader rejects any projection that uses it. New modes are added in POWER_MODES + the module TB template first, then here. See docs/COMPOUND_SCHEMA.md §1 and dataset_gen/logic/autosweep/activity_modes.md.",
+  "modes": {
+    "regfile":    ["random", "read", "write", "idle"],
+    "fifo":       ["random", "stream", "idle"],
+    "intmac":     ["random", "hold_b", "sparse50", "idle"],
+    "fpmac":      ["random", "hold_b", "sparse50", "idle"],
+    "mxfpmac":    ["random", "hold_scale", "sparse50", "idle"],
+    "simplemux":  ["random", "valid25"],
+    "crossbar":   ["random", "fixed_route", "valid25"],
+    "fattree":    ["random", "fixed_route"],
+    "foldedclos": ["random", "fixed_route"],
+    "intadd":     ["random"],
+    "intmul":     ["random"],
+    "fpadd":      ["random"],
+    "fpmul":      ["random"]
+  }
+}

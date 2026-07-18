@@ -36,14 +36,42 @@ module {{ module_name }}_tb;
     );
 
 {{ pwr.decls("W_DATA_BITS") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random  both operations at random rates (legacy default)
+    //   read    write ports quiet, read addresses random -> read-path power
+    //   write   full-rate writes, read addresses held    -> write-path power
+    //   idle    every input held, clock running          -> clock-tree power
     task automatic nw_drive_random();
-        i_w_en = W_PORT_WIDTH'(nw_rand_bits(W_PORT_WIDTH));
-        i_w_data = W_DATA_BITS'(nw_rand_bits(W_DATA_BITS));
-        for (int p = 0; p < W_PORT_WIDTH; p = p + 1) begin
-            i_w_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
-        end
-        for (int p = 0; p < NUM_READ_PORTS; p = p + 1) begin
-            i_r_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
+        if (nw_power_mode == "random") begin
+            i_w_en = W_PORT_WIDTH'(nw_rand_bits(W_PORT_WIDTH));
+            i_w_data = W_DATA_BITS'(nw_rand_bits(W_DATA_BITS));
+            for (int p = 0; p < W_PORT_WIDTH; p = p + 1) begin
+                i_w_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
+            end
+            for (int p = 0; p < NUM_READ_PORTS; p = p + 1) begin
+                i_r_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
+            end
+        end else if (nw_power_mode == "read") begin
+            i_w_en = '0;
+            i_w_data = '0;
+            i_w_addr = '0;
+            for (int p = 0; p < NUM_READ_PORTS; p = p + 1) begin
+                i_r_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
+            end
+        end else if (nw_power_mode == "write") begin
+            i_w_en = '1;
+            i_w_data = W_DATA_BITS'(nw_rand_bits(W_DATA_BITS));
+            for (int p = 0; p < W_PORT_WIDTH; p = p + 1) begin
+                i_w_addr[p*ADDR_WIDTH +: ADDR_WIDTH] = ADDR_WIDTH'($urandom_range(0, DEPTH - 1));
+            end
+            i_r_addr = '0;
+        end else if (nw_power_mode == "idle") begin
+            i_w_en = '0;
+            i_w_data = '0;
+            i_w_addr = '0;
+            i_r_addr = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for regfile: %s", nw_power_mode);
         end
     endtask
 

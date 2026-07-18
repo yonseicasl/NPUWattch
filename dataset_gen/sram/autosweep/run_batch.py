@@ -367,28 +367,36 @@ def parse_run_dir(log_path):
 
 
 def build_array_collateral(job, wds, log_path, env):
-    """gen_wd/gen_col/gen_array/gds2spice for whatever is missing, under
-    the per-cell lock (two PVT points of one config must not race)."""
+    """gen_wd/gen_col/gen_array/gds2spice for whatever is missing.  Every
+    artifact takes its own lock and is re-checked inside it: arrays of
+    one node share wd ladders and columns (8x4/8x8/8x16 all need
+    column_X4_8), so a per-array lock alone lets concurrent jobs race
+    the shared builds (gen_col then dies on "exists (use --force)")."""
     info, cell = job["info"], job["cell"]
     tech = info.tech_dir
     col = "column_X%d_%d" % (job["wd"], job["rows"])
+    col_gds = os.path.join(tech, col, "01_gds", col + ".gds")
     py = wds.py
-    with cell_lock((info.key, cell)):
-        if not os.path.isfile(os.path.join(tech, col, "01_gds",
-                                           col + ".gds")):
-            unit = wds.unit(info.key)
-            wd_gds = os.path.join(tech, "wd_X%d" % job["wd"], "01_gds",
-                                  "wd_X%d.gds" % job["wd"])
-            if job["wd"] != unit and not os.path.isfile(wd_gds):
-                run_step("gen_wd",
-                         [py, os.path.join(ARR, "scripts", "gen_wd.py"),
-                          "--node", info.key, "X%d" % job["wd"]],
+    if not os.path.isfile(col_gds):
+        unit = wds.unit(info.key)
+        wd = "wd_X%d" % job["wd"]
+        wd_gds = os.path.join(tech, wd, "01_gds", wd + ".gds")
+        if job["wd"] != unit and not os.path.isfile(wd_gds):
+            with cell_lock((info.key, wd)):
+                if not os.path.isfile(wd_gds):
+                    run_step("gen_wd",
+                             [py, os.path.join(ARR, "scripts",
+                                               "gen_wd.py"),
+                              "--node", info.key, "X%d" % job["wd"]],
+                             log_path, env=env)
+        with cell_lock((info.key, col)):
+            if not os.path.isfile(col_gds):
+                run_step("gen_col",
+                         [py, os.path.join(ARR, "scripts", "gen_col.py"),
+                          "--node", info.key, "--rows", str(job["rows"]),
+                          "--wd", str(job["wd"])],
                          log_path, env=env)
-            run_step("gen_col",
-                     [py, os.path.join(ARR, "scripts", "gen_col.py"),
-                      "--node", info.key, "--rows", str(job["rows"]),
-                      "--wd", str(job["wd"])],
-                     log_path, env=env)
+    with cell_lock((info.key, cell)):
         gds = os.path.join(tech, cell, "01_gds", cell + ".gds")
         sidecar = os.path.join(tech, cell, "01_gds", cell + ".json")
         if not (os.path.isfile(gds) and os.path.isfile(sidecar)):
@@ -432,9 +440,17 @@ def run_array_item(job, wds, opts, env):
     return log_path
 
 
-def run_dec_item(job, opts, env):
+def run_dec_item(job, wds, opts, env):
     log_path = os.path.join(LOG_DIR, "%s_%s.log" % (job["dec_tag"], STAMP))
     info = job["info"]
+    # wl_load.py needs an array PEX spef (wordline RC) and the array's
+    # 01_gds sidecar (die height, rows must match) on disk; nothing else
+    # guarantees they exist when this runs — the array item races us
+    # under -jobs-per-node > 1, and a sheet-resumed array may have no
+    # collateral at all.  Building this job's own array satisfies both
+    # (matching rows AND cols); the artifact locks make it a no-op when
+    # the array item got there first.
+    build_array_collateral(job, wds, log_path, env)
     cmd = [os.path.join(DEC, "run_decoder.sh"),
            "--node", info.key, "--rows", str(job["rows"]),
            "--cols", str(job["cols"]), "--reuse-gds"]
@@ -478,7 +494,7 @@ def run_item(item, wds, opts, env, state):
         if kind == "array":
             run_array_item(job, wds, opts, env)
         else:
-            run_dec_item(job, opts, env)
+            run_dec_item(job, wds, opts, env)
         outcome = "done"
     except StepError as exc:
         record_failure(tag, exc.step, str(exc))
