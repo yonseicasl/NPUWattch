@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from .float_model import FloatFormat, emit_add_vectors, emit_mac_vectors, emit_mul_vectors
 from .int_model import emit_intadd_vectors, emit_intmac_vectors, emit_intmul_vectors
 from .mxfp_model import acc_width_from_format, emit_mxfpmac_vectors, get_mxfp_format
+from .sfu_model import SfuSpec, emit_fpsfu_vectors, emit_tables
 from .storage_model import emit_fifo_vectors, emit_regfile_vectors
 
 
@@ -180,15 +181,6 @@ def _decode_function(is_int: bool) -> str:
             end
         end
     endfunction"""
-
-
-def _block_accum_code(num_blocks: int) -> str:
-    if num_blocks == 1:
-        return "mac_comb = block_sum[0];"
-    return """mac_comb = '0;
-            for (int block = 0; block < NUM_BLOCKS; block = block + 1) begin
-                mac_comb = mac_comb + block_sum[block];
-            end"""
 
 
 def _storage_context(module_name: str, width: int, depth: int) -> dict[str, Any]:
@@ -431,12 +423,22 @@ def gen_mxfpmac(
     acc_width: int | None = None,
     decode_width: int = 24,
     decode_frac_bits: int = 8,
+    pipeline_stages: int = 1,
     output_root: Path | None = None,
 ) -> dict[str, Path]:
     if block_elems < 1:
         raise ValueError("block_elems must be >= 1")
     if num_blocks < 1:
         raise ValueError("num_blocks must be >= 1")
+    total = int(block_elems) * int(num_blocks)
+    # 1 = legacy combinational datapath + output register; >= 2 adds an input
+    # capture stage, the output stage, and pipeline_stages-2 banks inside the
+    # reduction tree -- more stages than tree levels + 2 cannot be placed.
+    max_stages = max(2, (total - 1).bit_length()) + 2
+    if pipeline_stages < 1 or pipeline_stages > max_stages:
+        raise ValueError(
+            f"pipeline_stages must be in [1, {max_stages}] for {total} elements"
+        )
     if scale_exp_bits < 1:
         raise ValueError("scale_exp_bits must be >= 1")
     if decode_width < 8:
@@ -478,7 +480,7 @@ def gen_mxfpmac(
         "decode_frac_bits": int(decode_frac_bits),
         "product_width": int(decode_width) * 2,
         "decode_function": _decode_function(fmt.is_int),
-        "block_accum_code": _block_accum_code(int(num_blocks)),
+        "pipeline_stages": int(pipeline_stages),
         "power_cycles": DEFAULT_POWER_CYCLES,
     }
     context["test_vectors"] = emit_mxfpmac_vectors(
@@ -494,6 +496,95 @@ def gen_mxfpmac(
     return {
         "rtl": _write_text(unit_dir / "mxfpmac.sv", _render("mxfpmac.sv.j2", context)),
         "tb": _write_text(unit_dir / "mxfpmac_tb.sv", _render("mxfpmac_tb.sv.j2", context)),
+    }
+
+
+def gen_fpsfu(
+    *,
+    exp_bits: int = 8,
+    mantissa_bits: int = 23,
+    sfu_segments: int = 64,
+    sfu_op_exp: int = 0,
+    sfu_op_trig: int = 0,
+    sfu_op_hyp: int = 0,
+    sfu_op_erf: int = 0,
+    sfu_op_relu: int = 0,
+    pipeline_stages: int = 4,
+    output_root: Path | None = None,
+) -> dict[str, Path]:
+    """Piecewise-linear special function unit (docs/DESIGN_SFU_DMA.md §2).
+
+    Op groups are elaboration-time 0/1 flags (they add coefficient tables and
+    pre/post logic to a shared PWL datapath); ``sfu_model.py`` is the single
+    source of the tables and the bit-exact expected outputs.
+
+    Pipelining is REAL stage distribution over nine combinational segments
+    (both multipliers split into hi/lo partial products so they can be cut
+    internally); ps in [4, 10], latency = ps.
+    """
+    if pipeline_stages < 4 or pipeline_stages > 10:
+        raise ValueError("pipeline_stages must be in [4, 10]")
+    spec = SfuSpec(
+        exp_bits=int(exp_bits),
+        mantissa_bits=int(mantissa_bits),
+        segments=int(sfu_segments),
+        op_exp=bool(int(sfu_op_exp)),
+        op_trig=bool(int(sfu_op_trig)),
+        op_hyp=bool(int(sfu_op_hyp)),
+        op_erf=bool(int(sfu_op_erf)),
+        op_relu=bool(int(sfu_op_relu)),
+    )
+    if spec.df < 2:
+        raise ValueError(
+            "interpolation fraction needs >= 2 bits to split the interp "
+            "multiplier (raise mantissa_bits or lower sfu_segments)"
+        )
+    kw = spec.kw
+    context: dict[str, Any] = {
+        "module_name": "fpsfu",
+        "exp_bits": spec.exp_bits,
+        "mantissa_bits": spec.mantissa_bits,
+        "pipeline_stages": int(pipeline_stages),
+        "fp_width": spec.width,
+        "bias": spec.bias,
+        "exp_max": spec.exp_max,
+        "guard": 3,
+        "xi": 5,
+        "xf": spec.xf,
+        "xw": spec.xw,
+        "tw": spec.xf + 7,
+        "kw": kw,
+        "aw": spec.aw,
+        "seg_bits": spec.seg_bits,
+        "df": spec.df,
+        "eesw": max(spec.exp_bits + 2, 10),
+        "k_half": kw // 2,
+        "d_half": spec.df // 2,
+        "segments": spec.segments,
+        "op_exp": spec.op_exp,
+        "op_trig": spec.op_trig,
+        "op_hyp": spec.op_hyp,
+        "op_erf": spec.op_erf,
+        "op_relu": spec.op_relu,
+        "k_exp_lit": f"{kw}'d{spec.k_exp}",
+        "k_exp2_lit": f"{kw}'d{spec.k_exp2}",
+        "k_trig_lit": f"{kw}'d{spec.k_trig}",
+        "k_hyp_lit": f"{kw}'d{spec.k_hyp}",
+        "k_erf_lit": f"{kw}'d{spec.k_erf}",
+        "latency": int(pipeline_stages) + 2,
+        "power_cycles": DEFAULT_POWER_CYCLES,
+        "enabled_op_codes": [
+            {"exp": 0, "exp2": 1, "sin": 2, "cos": 3,
+             "tanh": 4, "sigmoid": 5, "erf": 6, "relu": 7}[op]
+            for op in spec.enabled_ops
+        ],
+    }
+    context.update(emit_tables(spec))
+    context["test_vectors"] = emit_fpsfu_vectors(spec)
+    unit_dir = _unit_dir("fpsfu", output_root)
+    return {
+        "rtl": _write_text(unit_dir / "fpsfu.sv", _render("fpsfu.sv.j2", context)),
+        "tb": _write_text(unit_dir / "fpsfu_tb.sv", _render("fpsfu_tb.sv.j2", context)),
     }
 
 

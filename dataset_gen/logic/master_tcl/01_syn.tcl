@@ -87,4 +87,45 @@ report_area -hierarchy
 # Worst-path timing report ? verify setup slack meets target before hand-off.
 report_timing
 
+# Per-path-class worst paths for the frequency probe (autoprobe.py).
+# report_qor lumps every setup path into one 'clk' group, but the sweep clock
+# formula needs the input-launched cones separately: set_input_delay tracks
+# T/2, so an in2reg cone's budget only grows at half a period and its length
+# must be doubled when deriving an achievable clock.
+# Every from/to collection is size-guarded: report_timing on an empty
+# collection prints an Error line, and 01_syn.sh greps the log for those --
+# combinational blocks (no registers) would fail synthesis outright
+# (2026-07-23: all 355 NoC probe rows died this way).  autoprobe treats an
+# empty bracket as "class absent".  `catch` additionally keeps any report
+# surprise from aborting the script.
+set nwProbeClk  [get_ports -quiet {i_clk}]
+if {[sizeof_collection $nwProbeClk] > 0} {
+    set nwProbeIns [remove_from_collection [all_inputs] $nwProbeClk]
+} else {
+    set nwProbeIns [all_inputs]
+}
+set nwProbeOuts [all_outputs]
+set nwProbeRegD [all_registers -data_pins]
+set nwProbeRegC [all_registers -clock_pins]
+puts "NW_PATHCLASS in2reg BEGIN"
+if {[sizeof_collection $nwProbeIns] > 0 && [sizeof_collection $nwProbeRegD] > 0} {
+    catch { report_timing -from $nwProbeIns -to $nwProbeRegD }
+}
+puts "NW_PATHCLASS in2reg END"
+puts "NW_PATHCLASS reg2reg BEGIN"
+if {[sizeof_collection $nwProbeRegC] > 0 && [sizeof_collection $nwProbeRegD] > 0} {
+    catch { report_timing -from $nwProbeRegC -to $nwProbeRegD }
+}
+puts "NW_PATHCLASS reg2reg END"
+puts "NW_PATHCLASS reg2out BEGIN"
+if {[sizeof_collection $nwProbeRegC] > 0 && [sizeof_collection $nwProbeOuts] > 0} {
+    catch { report_timing -from $nwProbeRegC -to $nwProbeOuts }
+}
+puts "NW_PATHCLASS reg2out END"
+puts "NW_PATHCLASS in2out BEGIN"
+if {[sizeof_collection $nwProbeIns] > 0 && [sizeof_collection $nwProbeOuts] > 0} {
+    catch { report_timing -from $nwProbeIns -to $nwProbeOuts }
+}
+puts "NW_PATHCLASS in2out END"
+
 quit

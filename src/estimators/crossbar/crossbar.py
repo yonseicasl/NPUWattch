@@ -27,9 +27,9 @@ from torch.utils.data import Dataset, DataLoader
 ###############################################################################
 
 ESTIMATOR_SPEC = {
-    "primitive": "regfile",
+    "primitive": "crossbar",
     "version": "1.0",
-    "description": "Register file energy, area, and timing estimator using MLP models",
+    "description": "Crossbar energy, area, and timing estimator using MLP models",
     "entrypoints": {
         "energy": "get_energy",
         "area": "get_area",
@@ -39,15 +39,16 @@ ESTIMATOR_SPEC = {
         "train_timing": "train_timing_model",
     },
     "parameters": {
+        # Canonical names only (npuwattch.naming). These replace a set copy-pasted
+        # from the regfile estimator (depth/n_banks/n_ports), which described no
+        # property a crossbar actually has.
         "required": [
-            {"name": "node", "type": "int", "arch_keys": ["node", "technology", "tech_node"]},
-            {"name": "depth", "type": "int", "arch_keys": ["depth", "entries", "num_entries"]},
-            {"name": "bw", "type": "int", "arch_keys": ["bw", "width", "bitwidth", "datawidth"]},
+            {"name": "node", "type": "str"},
+            {"name": "data_width", "type": "int"},
+            {"name": "net_inputs", "type": "int"},
+            {"name": "net_outputs", "type": "int"},
         ],
-        "optional": [
-            {"name": "n_banks", "type": "int", "arch_keys": ["n_banks", "banks"], "default": 1},
-            {"name": "n_ports", "type": "int", "arch_keys": ["n_ports", "ports", "num_ports", "nports"], "default": 1},
-        ],
+        "optional": [],
     },
     "models": {
         "energy": "regfile_energy_model.pth",

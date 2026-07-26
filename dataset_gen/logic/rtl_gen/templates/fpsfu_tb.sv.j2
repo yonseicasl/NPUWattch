@@ -1,0 +1,124 @@
+{% import "_power_stim.sv.j2" as pwr %}
+module fpsfu_tb;
+    localparam int EXPONENT_BITS = {{ exp_bits }};
+    localparam int MANTISSA_BITS = {{ mantissa_bits }};
+    localparam int PIPELINE_STAGES = {{ pipeline_stages }};
+    localparam int FP_WIDTH = EXPONENT_BITS + MANTISSA_BITS + 1;
+    localparam int NUM_CASES = {{ test_vectors|length }};
+    localparam int NUM_OPS = {{ enabled_op_codes|length }};
+
+    logic [FP_WIDTH-1:0] i_x;
+    logic [2:0] i_op;
+    logic i_clk;
+    logic i_rst_n;
+    logic [FP_WIDTH-1:0] o_y;
+    logic o_sat;
+
+    logic [FP_WIDTH-1:0] vec_x [0:NUM_CASES-1];
+    logic [2:0] vec_op [0:NUM_CASES-1];
+    logic [FP_WIDTH-1:0] vec_expected [0:NUM_CASES-1];
+    string vec_desc [0:NUM_CASES-1];
+    // Enabled op codes, for random op selection in the power phase.
+    logic [2:0] op_pool [0:NUM_OPS-1];
+    int errors;
+
+    fpsfu #(
+        .EXPONENT_BITS(EXPONENT_BITS),
+        .MANTISSA_BITS(MANTISSA_BITS),
+        .PIPELINE_STAGES(PIPELINE_STAGES),
+        .SFU_SEGMENTS({{ segments }})
+    ) dut (
+        .i_x(i_x),
+        .i_op(i_op),
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n),
+        .o_y(o_y),
+        .o_sat(o_sat)
+    );
+
+{{ pwr.decls("FP_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random  random op among the ENABLED ops, random operand
+    //   exp     exp/exp2 ops only, random operand      (needs op_exp)
+    //   trig    sin/cos ops only, random operand       (needs op_trig)
+    //   hyp     tanh/sigmoid ops only, random operand  (needs op_hyp)
+    //   erf     erf op only, random operand            (needs op_erf)
+    //   idle    op held, operand zero, clock running
+    // A mode whose op group is disabled in this variant falls through to
+    // $fatal — a typo or wrong-group request can never measure random power.
+    task automatic nw_drive_random();
+        if (nw_power_mode == "random") begin
+            i_op = op_pool[$urandom_range(0, NUM_OPS - 1)];
+            i_x = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+{% if op_exp %}
+        end else if (nw_power_mode == "exp") begin
+            i_op = ($urandom_range(0, 1) != 0) ? 3'd0 : 3'd1;   // exp / exp2
+            i_x = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+{% endif %}
+{% if op_trig %}
+        end else if (nw_power_mode == "trig") begin
+            i_op = ($urandom_range(0, 1) != 0) ? 3'd2 : 3'd3;   // sin / cos
+            i_x = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+{% endif %}
+{% if op_hyp %}
+        end else if (nw_power_mode == "hyp") begin
+            i_op = ($urandom_range(0, 1) != 0) ? 3'd4 : 3'd5;   // tanh / sigmoid
+            i_x = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+{% endif %}
+{% if op_erf %}
+        end else if (nw_power_mode == "erf") begin
+            i_op = 3'd6;
+            i_x = FP_WIDTH'(nw_rand_bits(FP_WIDTH));
+{% endif %}
+        end else if (nw_power_mode == "idle") begin
+            i_op = op_pool[0];
+            i_x = '0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for fpsfu: %s", nw_power_mode);
+        end
+    endtask
+
+{{ pwr.clock_gen("i_clk") }}
+    initial begin
+        i_rst_n = 1'b0;
+        i_x = '0;
+        i_op = '0;
+        errors = 0;
+{% for code in enabled_op_codes %}
+        op_pool[{{ loop.index0 }}] = 3'd{{ code }};
+{% endfor %}
+{% for vec in test_vectors %}
+        vec_x[{{ vec.index }}] = {{ fp_width }}'h{{ vec.in_hex }};
+        vec_op[{{ vec.index }}] = 3'd{{ vec.op_code }};
+        vec_expected[{{ vec.index }}] = {{ fp_width }}'h{{ vec.expected_hex }};
+        vec_desc[{{ vec.index }}] = "{{ vec.desc }}";
+{% endfor %}
+        repeat (2) @(posedge i_clk);
+        i_rst_n = 1'b1;
+
+        for (int n = 0; n < NUM_CASES; n = n + 1) begin
+            @(negedge i_clk);
+            i_x = vec_x[n];
+            i_op = vec_op[n];
+            repeat ({{ latency }}) @(posedge i_clk);
+            #1;
+            $display("fpsfu case=%0d desc=%s op=%0d x=%h got=%h exp=%h sat=%0b",
+                n, vec_desc[n], vec_op[n], vec_x[n], o_y, vec_expected[n], o_sat);
+            if (o_y !== vec_expected[n]) begin
+                errors = errors + 1;
+                $display("fpsfu mismatch at case %0d", n);
+            end
+        end
+
+        if (errors == 0) begin
+            $display("fpsfu_tb PASS");
+        end else begin
+            $display("fpsfu_tb FAIL errors=%0d", errors);
+            $fatal(1);
+        end
+{{ pwr.run_clocked("fpsfu_tb", "i_clk", power_cycles) }}
+        $finish;
+    end
+
+{{ pwr.saif_hook("fpsfu_tb") }}
+endmodule

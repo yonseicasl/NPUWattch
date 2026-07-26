@@ -1,0 +1,61 @@
+# ============================================================================
+#  noc — PyTorchSim's BookSim2 interconnect as physical components
+# ============================================================================
+# PyTorchSim delegates the NoC wholesale to BookSim2; the log echoes the .icnt
+# [config] and (for anynet) names a .net router graph. booksim.py normalizes
+# both topologies into three integer symbols merged into the run config:
+#
+#   icnt_ports      port count (radix) of one switch
+#                     fly n=1  -> k            (the single k x k crossbar)
+#                     anynet   -> nodes+links of a real router (author chiplet: 40)
+#   icnt_routers    switch count               (fly: 1; author chiplet: 2)
+#   icnt_channels   die-to-die channel count   (fly: 0; author chiplet: 8)
+#
+# plus the raw booksim_* config ints (flit_size, input_buffer_size, ...).
+# A run whose NoC is not modelable carries none of these symbols, so every
+# element below fails count resolution and is skipped with a warning — the
+# systolic/spad emission is unaffected.
+#
+# default_mode: gated — an action charges only the element it names; the other
+# NoC structures are clock-gated that cycle (leakage still accrues via §6).
+#
+# Element notes:
+#   icnt_xbar   the switch datapath. Combinational (no idle mode); dynamic
+#               energy is charged per flit, normalized by the valid fraction of
+#               its stim mode at the emitter (unit: flits).
+#   icnt_buf    one input buffer per switch port: input_buffer_size flits of
+#               flit_size bytes (author configs: 8-16 KB) — SRAM-macro territory,
+#               emitted through the capacity->template solver like the spads.
+#               vc_buf/ejection/boundary buffers are NOT separately modeled.
+#   icnt_d2d    anynet pass-through channels (no attached nodes, 2 links) are
+#               the die-to-die links themselves. No characterization flow
+#               exists: the d2dlink primitive is an analytic constant
+#               (net_energy_per_bit_pJ, override per component; see
+#               energy.unit_cost.D2D_ENERGY_PER_BIT_PJ).
+
+noc:
+  default_mode: gated
+  elements:
+
+    icnt_xbar:
+      primitive: crossbar
+      config:
+        net_inputs: icnt_ports
+        net_outputs: icnt_ports
+        data_width: "booksim_flit_size * 8"    # flit bytes -> bits
+      count: icnt_routers
+      per: chip
+
+    icnt_buf:
+      primitive: sram
+      config:
+        capacity_bit: "booksim_input_buffer_size * booksim_flit_size * 8"
+      count: "icnt_ports * icnt_routers"
+      per: chip
+
+    icnt_d2d:
+      primitive: d2dlink
+      config:
+        data_width: "booksim_flit_size * 8"
+      count: icnt_channels                     # 0 for fly -> not emitted
+      per: chip

@@ -1,0 +1,45 @@
+# ============================================================================
+#  dma — the per-core DMA engine, from existing primitives only
+# ============================================================================
+# HARNESS-OWNED. Design: docs/DESIGN_SFU_DMA.md §1 (user decisions 2026-07-23).
+#
+# The engine is deliberately small — the *transactions* dominate DMA energy and
+# are already charged elsewhere (vmem sram fill/drain, NoC flits, d2dlink); this
+# compound adds only the engine datapath that was previously invisible:
+#
+#   dma_q     the outstanding request/response queue: one entry = one DRAM
+#             request flit (dram_req_size_byte wide). Depth 16 is a DOCUMENTED
+#             ASSUMPTION — TOGSim exposes no queue-depth config or stat.
+#   dma_addr  address generation: one 64-bit add per request. This single add
+#             deliberately subsumes the burst/length counters of a real DMA
+#             (a ~32-bit decrement per request — same order, far below the
+#             queue), so no `counter` primitive is needed or characterized.
+#
+# Explicitly NOT modeled (would need special-purpose RTL — dropped by design):
+# descriptor/scatter-gather FSMs and the compiler's -dma-fine-grained tiling
+# control. DRAM device energy stays out of scope (off-chip).
+#
+# default_mode: gated — event-charged only; idle-period leakage is the §6
+# time-domain term (DMA active/idle cycles are still parsed per core and drive
+# the exact per-core split of dram_requests via `dma_responses`).
+
+dma:
+  default_mode: gated
+  elements:
+
+    dma_q:                              # outstanding request/response queue
+      primitive: fifo
+      config:
+        data_width: "dram_req_size_byte*8"   # one 32 B flit per entry
+        mem_depth_per_bank: 16               # ASSUMPTION (no config/stat source)
+      count: 1
+      per: core
+
+    dma_addr:                           # address generator (+ counters, subsumed)
+      primitive: intadd
+      config:
+        data_width_a: 64
+        data_width_b: 64
+        data_width_out: 64
+      count: 1
+      per: core

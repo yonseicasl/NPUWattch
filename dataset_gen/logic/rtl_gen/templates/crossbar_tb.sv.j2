@@ -112,7 +112,10 @@ module {{ module_name }}_tb;
                 end
             end
 
-            #1;
+            // One pacing period of settle: the SDC bounds every in->out path
+            // to the period minus the uncertainty, while a fixed #1 undershot
+            // the SDF propagation delay of the large/slow configurations.
+            #(nw_clock_period_ns);
             $display("crossbar cycle=%0d in_valid=%b out_valid=%b", cycle, i_valid, o_valid);
             if ((o_valid !== exp_valid) || (o_data !== exp_data) || (o_sel !== exp_sel) || (o_grant !== exp_grant)) begin
                 errors = errors + 1;

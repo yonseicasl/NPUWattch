@@ -1,0 +1,36 @@
+# ============================================================================
+#  spads — PyTorchSim's capacity-specified scratchpads
+# ============================================================================
+# HARNESS-OWNED (like every file in this bundle): these elements reference
+# PyTorchSim run-config keys as expression symbols (core_spad_size_kb,
+# vpu_spad_size_kb_per_lane), which the harness supplies at resolution. Another
+# simulator's bundle authors its own memories against its own config vocabulary.
+#
+# An sram element whose config carries `capacity_kbit` is CAPACITY-SPECIFIED:
+# the emitter expands it through the SRAM estimator's macro templates
+# (sram_64k / sram_256k, banks of <= 16 subarrays — manual §3.8) instead of a
+# free geometry. `per` scales the instance count by the run's core count
+# ("core") rather than the default per-array.
+#
+# default_mode: gated — an action charges ONLY the elements it names. A
+# scratchpad not touched by an action is bank-/clock-gated: its leakage is
+# charged over time by §6, never per event (unlike the systolic compound's
+# cycle-domain idle default).
+
+spads:
+  default_mode: gated
+  elements:
+
+    vmem:                               # per-core vector memory (TPU VMEM)
+      primitive: sram
+      config:
+        capacity_kbit: "core_spad_size_kb * 8"
+      count: 1
+      per: core
+
+    vpu_spad:                           # per-lane VPU scratchpad
+      primitive: sram
+      config:
+        capacity_kbit: "vpu_spad_size_kb_per_lane * 8"
+      count: lanes
+      per: core

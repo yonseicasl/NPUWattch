@@ -26,6 +26,7 @@ uniform-random inputs, the legacy stimulus and upper anchor).
 | intmac | random, hold_b, sparse50, idle | hold_b: weight-stationary (b latched once, seeded); sparse50: a zeroed w.p. 0.5 |
 | fpmac | random, hold_b, sparse50, idle | as intmac, addend c random in every non-idle mode |
 | mxfpmac | random, hold_scale, sparse50, idle | hold_scale: per-block scales latched once (constant inside a real MX tile); sparse50: per-element zeroing of a |
+| fpsfu | random, exp, trig, hyp, erf, idle | per-op-group stimulus: op restricted to that group (exp/exp2, sin/cos, tanh/sigmoid, erf), operand random — only that group's table + the shared PWL datapath toggle; random draws ops across every ENABLED group. **Group modes apply only to variants that enable the group** — `power_modes(rtl_name, arch_params)` filters by the job's `sfu_op_*` flags (the TB $fatal()s otherwise) |
 | simplemux | random, valid25 | valid25: each source valid w.p. 0.25; invalid sources hold data |
 | crossbar | random, fixed_route, valid25 | fixed_route: `dest = src % NUM_OUTPUTS` constant, data random |
 | fattree | random, fixed_route | fixed_route: rotation `dest = (src+1) % NUM_NODES` |

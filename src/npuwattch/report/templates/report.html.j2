@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<!-- NPUWattch PPA report — single self-contained file (manual §8).
+     Rendered by report/html.py; every number is computed upstream in energy/ —
+     this template only formats. report.json is written from the same context,
+     so the two can never disagree. No CDN, no external assets; the report is
+     fully readable with JS disabled (there is no JS at all). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NPUWattch PPA Report — {{ design_name }}</title>
+<style>
+  :root{
+    --bg:#f7f7f5; --card:#ffffff; --ink:#1c1c1c; --muted:#6b6b6b;
+    --line:#e3e1dc; --accent:#3b6ea5; --warn-bg:#fff4e0; --warn-ink:#8a5a00;
+    --err-bg:#fdecec; --err-ink:#9c1c1c; --ok:#2e7d32;
+    --cal-bg:#e2f0ec; --cal-ink:#0c6e63; --const-bg:#ece6f6; --const-ink:#5d4a9e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+  main{max-width:1080px;margin:0 auto;padding:24px}
+  h1{font-size:22px;margin:0 0 2px} h2{font-size:16px;margin:0 0 12px}
+  h2 .sub{font-weight:400}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px;margin-bottom:16px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+         gap:12px;margin-bottom:16px}
+  .cards .card{margin-bottom:0}
+  .kpi .v{font-size:22px;font-weight:600} .kpi .l{color:var(--muted);font-size:12px}
+  .banner{border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px}
+  .banner.warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .banner.err{background:var(--err-bg);color:var(--err-ink)}
+  .tblwrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600}
+  tfoot td{font-weight:600;border-bottom:0}
+  .badge{display:inline-block;border-radius:4px;padding:0 6px;font-size:11px;
+         margin-left:6px;background:var(--warn-bg);color:var(--warn-ink)}
+  .badge.user{background:#e8eef7;color:var(--accent)}
+  .chip{display:inline-block;border-radius:8px;padding:0 7px;font-size:10.5px;
+        font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .chip.cal{background:var(--cal-bg);color:var(--cal-ink)}
+  .chip.const{background:var(--const-bg);color:var(--const-ink)}
+  .chip.stub{background:var(--warn-bg);color:var(--warn-ink)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .chart svg{width:100%;height:auto;display:block}
+  .chart.donut svg{max-width:220px;margin:0 auto 10px}
+  .tree{font:12.5px/1.6 ui-monospace,Consolas,monospace;overflow-x:auto}
+  .tree details{padding-left:18px}
+  .tree>details{padding-left:0}
+  .tree summary{cursor:pointer;list-style:none}
+  .tree summary::before{content:"\25B8  ";color:var(--accent)}
+  .tree details[open]>summary::before{content:"\25BE  "}
+  .tree .leaf{padding-left:18px}
+  .tree .leaf::before{content:"\00B7  ";color:var(--muted)}
+  .tree .cnt{color:var(--accent);font-weight:600}
+  .tree .lbl{color:var(--muted)}
+  ul.warnings{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted)}
+  footer{color:var(--muted);font-size:11px;margin:24px 0}
+  code{background:#f0efec;border-radius:4px;padding:0 4px;font-size:12px}
+</style>
+</head>
+<body>
+<main>
+
+  <!-- 1. Header -->
+  <h1>NPUWattch PPA Report — {{ design_name }}</h1>
+  <div class="sub">
+    Generated {{ timestamp }} · NPUWattch {{ version }} ({{ git_commit }}) ·
+    node {{ tech.node }} / {{ tech.transistor }} / {{ tech.corner }} /
+    Vdd{{ "%+.2f"|format(tech.voltage_offset_V) }} V / {{ tech.temperature_C }} °C ·
+    clock {{ clock.frequency_MHz }} MHz ·
+    activity source: <strong>{{ activity_source }}</strong> ·
+    model: <strong>{{ model_tag }}</strong>
+  </div>
+
+  {% for b in banners %}<div class="banner {{ b.level }}">{{ b.text }}</div>{% endfor %}
+
+  <!-- 2. Summary cards -->
+  <div class="cards">
+    <div class="card kpi"><div class="v">{{ totals.energy_str }}</div>
+      <div class="l">Total energy — dyn {{ totals.dyn_str }} + leak {{ totals.leak_str }}</div></div>
+    <div class="card kpi"><div class="v">{{ totals.avg_power_str }}</div>
+      <div class="l">Average power</div></div>
+    <div class="card kpi"><div class="v">{{ totals.area_mm2 }} mm²</div>
+      <div class="l">Total area</div></div>
+    <div class="card kpi"><div class="v">{{ timing.f_max_str }}</div>
+      <div class="l">f_max — clock check:
+        <span style="color:var(--{{ timing.check_color }})">{{ timing.check_text }}</span></div></div>
+    <div class="card kpi"><div class="v">{{ totals.cycles }}</div>
+      <div class="l">Cycles ({{ totals.exec_time_str }})</div></div>
+  </div>
+
+  <!-- 3 & 4. Energy / area breakdowns -->
+  <div class="two">
+    <div class="card">
+      <h2>Energy breakdown <span class="sub">dynamic {{ totals.dyn_pct }}% ·
+        leakage {{ totals.leak_pct }}%</span></h2>
+      <div class="chart">{{ svg.split_bar }}</div>
+      <div class="chart donut">{{ svg.energy_donut }}</div>
+      <div class="chart">{{ svg.energy_bars }}</div>
+    </div>
+    <div class="card">
+      <h2>Area breakdown</h2>
+      <div class="chart donut">{{ svg.area_donut }}</div>
+      <div class="chart">{{ svg.area_bars }}</div>
+    </div>
+  </div>
+
+  <!-- 5. Cycle-level energy -->
+  <div class="card">
+    <h2>Cycle-level energy</h2>
+    {% if windows %}
+      <div class="chart">{{ svg.windows }}</div>
+      <div class="tblwrap"><table>
+        <thead><tr><th>Window</th><th>Kernel</th><th>Cycles</th>
+          <th>Dynamic</th><th>Leakage</th><th>Total</th><th>Avg power</th></tr></thead>
+        <tbody>
+        {% for w in windows %}
+          <tr><td>{{ w.index }}</td><td><code>{{ w.label }}</code></td>
+            <td>{{ w.cycles }}</td><td>{{ w.dyn_str }}</td><td>{{ w.leak_str }}</td>
+            <td>{{ w.total_str }}</td><td>{{ w.power_str }}</td></tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td colspan="2">Run total</td><td>{{ totals.cycles }}</td>
+          <td>{{ totals.dyn_str }}</td><td>{{ totals.leak_str }}</td>
+          <td>{{ totals.energy_str }}</td><td>{{ totals.avg_power_str }}</td></tr></tfoot>
+      </table></div>
+      {% if matrix.rows %}
+      <h2 style="margin-top:18px">Per-window component energy
+        <span class="sub">dynamic energy per kernel; leakage-only components omitted</span></h2>
+      <div class="tblwrap"><table>
+        <thead><tr><th>Component</th>
+          {% for w in windows %}<th><code>{{ w.label }}</code></th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for r in matrix.rows %}
+          <tr><td><code>{{ r.name }}</code></td>
+            {% for cell in r.cells %}<td>{{ cell }}</td>{% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+    {% else %}
+      <div class="sub">Aggregate activity only — no time series available.
+        Provide windowed activity to enable this chart:
+        Timeloop harness <code>--mode windows</code> (per-layer), or gem5 periodic
+        <code>m5.stats.dump()</code> sections.</div>
+    {% endif %}
+  </div>
+
+  <!-- Instance hierarchy (the --tree view; optional by contract) -->
+  <div class="card">
+    <h2>Instance hierarchy <span class="sub">as interpreted from the run;
+      every leaf names one row of the component table</span></h2>
+    {% if tree %}
+      {% macro tree_node(n, depth) -%}
+        {% if n.children %}
+          <details{% if depth < 2 %} open{% endif %}><summary>{{ n.name }}
+            {%- if n.count and n.count != 1 %} <span class="cnt">×{{ n.count }}</span>{% endif %}
+            {%- if n.label %} <span class="lbl">({{ n.label }})</span>{% endif %}</summary>
+          {% for c in n.children %}{{ tree_node(c, depth + 1) }}{% endfor %}
+          </details>
+        {% else %}
+          <div class="leaf">{{ n.name }}
+            {%- if n.count and n.count != 1 %} <span class="cnt">×{{ n.count }}</span>{% endif %}
+            {%- if n.label %} <span class="lbl">({{ n.label }})</span>{% endif %}</div>
+        {% endif %}
+      {%- endmacro %}
+      <div class="tree">{{ tree_node(tree, 0) }}</div>
+    {% else %}
+      <div class="sub">Hierarchy view unavailable for this run (see warnings) —
+        energy accounting is unaffected.</div>
+    {% endif %}
+  </div>
+
+  <!-- 6. Per-component detail -->
+  <div class="card">
+    <h2>Components <span class="sub">one row per physical instance —
+      instances are never lumped</span></h2>
+    <div class="tblwrap"><table>
+      <thead><tr>
+        <th>Component</th><th>Class</th><th>Model</th><th>Count</th>
+        <th>E/op or E/rd·wr [pJ]</th><th>P_leak/inst [mW]</th>
+        <th>Area/inst [µm²]</th>
+        <th>t_crit [ns]</th><th>Activity [events]</th>
+        <th>E_dyn</th><th>E_leak</th><th>E_total</th><th>Share</th>
+      </tr></thead>
+      <tbody>
+      {% for c in components %}
+        <tr>
+          <td><code>{{ c.name }}</code>
+              {% if c.vectorless %}<span class="badge">vectorless</span>{% endif %}
+              {% if c.user_defined %}<span class="badge user">user</span>{% endif %}</td>
+          <td>{{ c.cls }}</td>
+          <td><span class="chip {{ c.model }}">{{ c.model }}</span></td>
+          <td>{{ c.count }}</td>
+          <td>{{ c.unit_energy_str }}</td><td>{{ c.leak_power_str }}</td>
+          <td>{{ c.area_str }}</td><td>{{ c.crit_path_str }}</td>
+          <td>{{ c.activity_str }}</td>
+          <td>{{ c.dyn_str }}</td><td>{{ c.leak_str }}</td>
+          <td>{{ c.energy_str }}</td><td>{{ c.energy_pct }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="sub" style="margin:8px 0 0">Unit-cost columns are per single
+      instance and time-independent (<code>P_leak</code> is a static power
+      rating in mW); the energy columns integrate over this run —
+      <code>E_leak = count × P_leak × exec&nbsp;time</code>, which is exactly
+      the leakage series in the Cycle-level section above.</div>
+  </div>
+
+  <!-- 7. Provenance -->
+  <div class="card">
+    <h2>Provenance</h2>
+    {% if provenance.models %}
+    <div class="tblwrap"><table>
+      <thead><tr><th>Cluster</th><th>Metric</th><th>Checkpoint</th>
+        <th>SHA-256</th><th>Test MAPE</th></tr></thead>
+      <tbody>
+      {% for m in provenance.models %}
+        <tr><td>{{ m.cluster }}</td><td>{{ m.metric }}</td><td>{{ m.path }}</td>
+            <td><code>{{ m.sha[:12] }}</code></td><td>{{ m.test_mape }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="sub">{{ provenance.model_note }}</div>
+    {% endif %}
+    <div class="sub">
+      inputs: {% for f in provenance.inputs -%}
+        {{ f.name }}{% if f.sha %} <code>{{ f.sha[:12] }}</code>{% endif %}{{ ", " if not loop.last }}
+      {%- else %}(in-memory run — no input files recorded){% endfor %}
+    </div>
+    {% if provenance.warnings %}
+    <details><summary style="cursor:pointer;font-size:13px">
+      {{ provenance.warnings|length }} warnings recorded during this run</summary>
+      <ul class="warnings">
+      {% for w in provenance.warnings %}<li>{{ w }}</li>{% endfor %}
+      </ul></details>
+    {% endif %}
+    {% if provenance.notes %}
+    <details><summary style="cursor:pointer;font-size:13px">
+      {{ provenance.notes|length }} declared exclusions (INFO — deliberate,
+      not modeling gaps)</summary>
+      <ul class="warnings">
+      {% for n in provenance.notes %}<li>{{ n }}</li>{% endfor %}
+      </ul></details>
+    {% endif %}
+  </div>
+
+  <footer>NPUWattch — ML-based power, area, and timing modeling for neural
+    accelerators (HPCA 2026). The numbers in this report are also available in
+    machine-readable form in <code>report.json</code> next to this file.</footer>
+</main>
+</body>
+</html>

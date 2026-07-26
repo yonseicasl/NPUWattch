@@ -13,6 +13,13 @@
                                 the frequency the power row claims.
      +nw_power_cycles=<int>     number of random vectors in the power phase
                                 (default baked in at generation time).
+     +nw_power_warmup=<int>     stimulus vectors driven BEFORE the SAIF window
+                                opens (default 16) so pipelines/occupancy reach
+                                steady state and the measured window is
+                                stationary -- no cold-start undercount, and the
+                                in-flight work leaking out at the window end is
+                                balanced by warmed-up work leaking in at the
+                                start.
      +nw_power_seed=<int>       $urandom seed for the power phase (default 42).
      +nw_power_mode=<string>    stimulus class driven during the power phase
                                 (default "random").  Modules whose ports have
@@ -32,6 +39,7 @@
     localparam int NW_RAND_MAX_BITS = {{ max_width_expr }};
     bit nw_power_phase;
     int unsigned nw_power_cycles;
+    int unsigned nw_power_warmup;
     int unsigned nw_power_seed;
     real nw_clock_period_ns = 10.0;
     string nw_power_mode = "random";
@@ -69,13 +77,21 @@
         if (!$value$plusargs("nw_power_cycles=%d", nw_power_cycles)) begin
             nw_power_cycles = {{ default_cycles }};
         end
+        if (!$value$plusargs("nw_power_warmup=%d", nw_power_warmup)) begin
+            nw_power_warmup = 16;
+        end
         if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
             nw_power_seed = 42;
         end
         void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
         void'($urandom(nw_power_seed));
-        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g mode=%s",
-            nw_power_cycles, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        $display("{{ tb_name }} power phase start cycles=%0d warmup=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_warmup, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        // Warmup outside the SAIF window: reach steady state before it opens.
+        repeat (nw_power_warmup) begin
+            @(negedge {{ clk }});
+            nw_drive_random();
+        end
         nw_power_phase = 1'b1;
         repeat (nw_power_cycles) begin
             @(negedge {{ clk }});
@@ -91,13 +107,22 @@
         if (!$value$plusargs("nw_power_cycles=%d", nw_power_cycles)) begin
             nw_power_cycles = {{ default_cycles }};
         end
+        if (!$value$plusargs("nw_power_warmup=%d", nw_power_warmup)) begin
+            nw_power_warmup = 16;
+        end
         if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
             nw_power_seed = 42;
         end
         void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
         void'($urandom(nw_power_seed));
-        $display("{{ tb_name }} power phase start cycles=%0d seed=%0d period_ns=%g mode=%s",
-            nw_power_cycles, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        $display("{{ tb_name }} power phase start cycles=%0d warmup=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_warmup, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        // Warmup outside the SAIF window (combinational blocks have no state,
+        // but the identical structure keeps the window semantics uniform).
+        repeat (nw_power_warmup) begin
+            nw_drive_random();
+            #(nw_clock_period_ns);
+        end
         nw_power_phase = 1'b1;
         repeat (nw_power_cycles) begin
             nw_drive_random();

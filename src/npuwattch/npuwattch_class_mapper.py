@@ -61,16 +61,27 @@ def _parse_technology_node(value: Any, default: int = 7) -> int:
                 return default
     return default
 
+# One canonical attribute name per feature — see npuwattch.naming for the
+# vocabulary and the rationale. A component that spells a name differently is
+# rejected there (legacy alias → error with a rename hint), so this mapper never
+# has to guess which of several spellings the author meant.
 FEATURE_MAPPER: Dict[str, FeatureRule] = {
-    "node": (("technology", "node"), 7, _parse_technology_node),
-    "depth": (("depth", "entries", "memory_depth"), 64, int),
-    "bw": (("width", "bw", "datawidth", "bitwidth"), 32, int),
-    "n_banks": (("n_banks",), 1, int),
-    "n_ports": (("n_ports", "num_ports", "nports"), 1, int),
+    "node": (("node",), 7, _parse_technology_node),
+    "mem_depth_per_bank": (("mem_depth_per_bank",), 64, int),
+    "data_width": (("data_width",), 32, int),
+    "mem_banks": (("mem_banks",), 1, int),
+    "mem_r_ports": (("mem_r_ports",), 0, int),
+    "mem_w_ports": (("mem_w_ports",), 0, int),
+    "mem_rw_ports": (("mem_rw_ports",), 1, int),
 }
 
 def extract_features_from_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract estimator features from a component's attributes dict."""
+    """Extract estimator features from a component's attributes dict.
+
+    Attributes are assumed canonical; validation lives in
+    :func:`npuwattch.naming.validate_attributes`, which the emitter and the
+    native-description loader both run before anything reaches here.
+    """
     features: Dict[str, Any] = {}
     for feat, (keys, default, transform) in FEATURE_MAPPER.items():
         val: Any = default
@@ -102,9 +113,9 @@ def reclassify_estimator(estimator: Optional[str], features: Dict[str, Any]) -> 
     """Reclassify regfile to sram if total size exceeds threshold."""
     if estimator != "regfile":
         return estimator
-    n_banks = features.get("n_banks", 1)
-    depth = features.get("depth", 64)
-    bw = features.get("bw", 32)
-    if n_banks * depth * bw > REGFILE_TO_SRAM_THRESHOLD:
+    banks = features.get("mem_banks", 1)
+    depth = features.get("mem_depth_per_bank", 64)
+    width = features.get("data_width", 32)
+    if banks * depth * width > REGFILE_TO_SRAM_THRESHOLD:
         return "sram"
     return estimator

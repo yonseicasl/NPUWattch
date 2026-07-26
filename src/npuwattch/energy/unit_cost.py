@@ -30,7 +30,8 @@ try:
 except ImportError:  # pragma: no cover - py<3.8
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
-__all__ = ["TechContext", "UnitCostProvider", "StubUnitCostProvider"]
+__all__ = ["TechContext", "UnitCostProvider", "StubUnitCostProvider",
+           "D2DLinkCostProvider", "D2D_ENERGY_PER_BIT_PJ"]
 
 
 @dataclass(frozen=True)
@@ -89,16 +90,27 @@ _STIM_ACTIVITY: Dict[str, float] = {
     "fixed_route": 0.7,
     "valid25": 0.35,
     "random": 1.0,
+    # fpsfu op-group modes: one group's table + the shared PWL datapath active.
+    "exp": 0.8,
+    "trig": 0.8,
+    "hyp": 0.8,
+    "erf": 0.8,
 }
 
 
 def _effective_width(features: Mapping[str, Any]) -> int:
-    """A rough operand width from whatever config keys are present."""
-    for k in ("a_width", "width", "out_width", "acc_width"):
+    """A rough operand width from the canonical width attributes.
+
+    Only canonical names (``npuwattch.naming``) are read — harnesses translate
+    their simulator's vocabulary at ingest, so by the time a features dict
+    reaches a provider there is exactly one spelling per concept.
+    """
+    for k in ("data_width", "data_width_a", "data_width_out", "data_width_acc"):
         v = features.get(k)
         if isinstance(v, int):
             return max(1, v)
-    exp, mant = features.get("exp_bits"), features.get("mantissa_bits")
+    exp = features.get("exponent_bits")
+    mant = features.get("mantissa_bits")
     if isinstance(exp, int) and isinstance(mant, int):
         return exp + mant + 1
     return 16
@@ -119,8 +131,18 @@ class StubUnitCostProvider:
         # MACs ~ w² (multiplier dominated); regfile ~ w·depth; else ~ w.
         if primitive in ("intmac", "fpmac", "mxfpmac"):
             base = 0.15 * w * w
+        elif primitive == "fpsfu":
+            # PWL evaluator: a mantissa multiplier (~w²) + one coefficient
+            # table per enabled op group, scaled by the segment count.
+            groups = sum(
+                1 for k in ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp",
+                            "sfu_op_erf", "sfu_op_relu")
+                if int(features.get(k, 0) or 0)
+            )
+            segs = max(1, int(features.get("sfu_segments", 64)))
+            base = 0.12 * w * w + 0.02 * w * segs * max(1, groups)
         elif primitive == "regfile":
-            base = 0.05 * w * max(1, int(features.get("depth", 1)))
+            base = 0.05 * w * max(1, int(features.get("mem_depth_per_bank", 1)))
         else:
             base = 0.05 * w
         return base * (1.0 + max(0, int(features.get("pipeline_stages", 0))) * 0.1)
@@ -144,3 +166,64 @@ class StubUnitCostProvider:
         stages = max(1, int(features.get("pipeline_stages", 1)))
         # log-depth path, shortened by pipelining.
         return (0.08 * math.log2(w + 1) + 0.05) / stages
+
+
+# ---------------------------------------------------------------------------
+# Analytic die-to-die link model (constant pJ/bit — no characterization flow)
+# ---------------------------------------------------------------------------
+
+#: Default die-to-die link traversal energy. A **literature constant**, not a
+#: measurement: on-package SerDes/parallel PHYs land around 0.5–1 pJ/bit
+#: (UCIe-class links; Simba's GRS reports 0.82–1.75 pJ/bit) — we take the
+#: conservative round value. Override per component via the canonical
+#: ``net_energy_per_bit_pJ`` attribute in the description.
+D2D_ENERGY_PER_BIT_PJ = 1.0
+
+
+@dataclass(frozen=True)
+class D2DLinkCostProvider:
+    """Chain link answering primitive ``d2dlink`` with the analytic constant.
+
+    Energy per crossing = ``data_width × net_energy_per_bit_pJ``; there is no
+    leakage/area/timing model (all 0.0 — the PHY is not ours to model).
+    Everything else delegates to ``fallback``. ``calibrated`` is inherited from
+    the fallback: a constant is never calibration.
+    """
+
+    fallback: Any = None
+
+    @property
+    def calibrated(self) -> bool:
+        return bool(getattr(self.fallback, "calibrated", False))
+
+    def _delegate(self, method: str, primitive: str,
+                  features: Mapping[str, Any]) -> float:
+        if self.fallback is None:
+            raise ValueError(
+                f"d2dlink provider got primitive {primitive!r} and has no fallback"
+            )
+        return getattr(self.fallback, method)(primitive, features)
+
+    def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "d2dlink":
+            return self._delegate("energy_per_cycle", primitive, features)
+        bits = int(features.get("data_width") or 0)
+        per_bit = features.get("net_energy_per_bit_pJ")
+        if not isinstance(per_bit, (int, float)) or per_bit <= 0:
+            per_bit = D2D_ENERGY_PER_BIT_PJ
+        return bits * float(per_bit)
+
+    def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "d2dlink":
+            return self._delegate("leak_power", primitive, features)
+        return 0.0
+
+    def area(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "d2dlink":
+            return self._delegate("area", primitive, features)
+        return 0.0
+
+    def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "d2dlink":
+            return self._delegate("crit_path", primitive, features)
+        return 0.0

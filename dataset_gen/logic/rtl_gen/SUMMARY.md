@@ -22,7 +22,8 @@ Implemented generator targets:
 | `fpadd` | `gen_fpadd` | `fpadd.sv`, `fpadd_tb.sv` | `exp_bits`, `mantissa_bits`, `pipeline_stages` |
 | `fpmul` | `gen_fpmul` | `fpmul.sv`, `fpmul_tb.sv` | `exp_bits`, `mantissa_bits`, `pipeline_stages` |
 | `fpmac` | `gen_fpmac` | `fpmac.sv`, `fpmac_tb.sv` | `exp_bits`, `mantissa_bits`, `pipeline_stages` |
-| `mxfpmac` | `gen_mxfpmac` | `mxfpmac.sv`, `mxfpmac_tb.sv` | `block_elems`, `num_blocks`, `input_format`, `scale_exp_bits`, `acc_format` |
+| `fpsfu` | `gen_fpsfu` | `fpsfu.sv`, `fpsfu_tb.sv` | `exp_bits`, `mantissa_bits`, `sfu_segments`, `sfu_op_exp`, `sfu_op_trig`, `sfu_op_hyp`, `sfu_op_erf`, `sfu_op_relu`, `pipeline_stages` |
+| `mxfpmac` | `gen_mxfpmac` | `mxfpmac.sv`, `mxfpmac_tb.sv` | `block_elems`, `num_blocks`, `input_format`, `scale_exp_bits`, `acc_format`, `pipeline_stages` |
 | `simplemux` | `gen_simplemux` | `simplemux.sv`, `simplemux_tb.sv` | `data_width`, `num_inputs` |
 | `crossbar` | `gen_crossbar` | `crossbar.sv`, `crossbar_tb.sv` | `data_width`, `num_inputs`, `num_outputs` |
 | `fattree` | `gen_fattree` | `fattree.sv`, `fattree_tb.sv` | `data_width`, `radix`, `num_levels`, `oversubscription` |
@@ -49,6 +50,27 @@ Floating-point parameters:
 - `exp_bits`: IEEE-like exponent field width.
 - `mantissa_bits`: fraction field width, excluding the implicit leading bit.
 - `pipeline_stages`: registered pipeline depth. Valid range is 2 to 5.
+
+SFU (fpsfu) parameters (docs/DESIGN_SFU_DMA.md; `sfu_model.py` is the
+bit-exact single source of the PWL tables and TB expectations):
+- `sfu_segments`: piecewise-linear segments per op table. Power of two >= 16;
+  needs `mantissa_bits + 3 > log2(segments)`.
+- `sfu_op_exp` / `sfu_op_trig` / `sfu_op_hyp` / `sfu_op_erf` / `sfu_op_relu`:
+  0/1 op-group enables (exp+exp2, sin+cos, tanh+sigmoid, erf, relu). At least
+  one group must be on. Each group adds its coefficient table + pre/post
+  logic to a shared PWL datapath (decode -> constant premultiply ->
+  interpolate -> normalize/pack).
+- `pipeline_stages`: registered pipeline depth, **4 to 10** (user decision
+  2026-07-24). REAL stage distribution — never output delay banks: the
+  datapath is NINE combinational segments (decode | premult partial products
+  | premult combine + u/quadrant | table read | interp partial products |
+  interp combine + per-op transform | LZC | normalize shift | pack + mux);
+  both multipliers are split into exact hi/lo partial products so they can
+  be cut internally. Each ps step enables one more register cut, ordered by
+  criticality (ps>=3 after premult-combine, >=4 after interp-combine, >=5
+  after decode, >=6 after table read, >=7 after LZC, >=8 inside the
+  premultiplier, >=9 inside the interp multiplier, >=10 after the shift), so
+  the critical path genuinely shortens with ps. Latency = ps exactly.
 
 MX dot-product parameters:
 - `block_elems`: elements per MX block. Default is 32.
@@ -131,6 +153,10 @@ period, default 10000; the autosweep sim stage passes the job's clock),
 - MX dot-product vectors are produced by `mxfp_model.py`.
 - NoC testbenches sweep idle, sparse, mixed, and saturated traffic.
 - `mxfpmac` models finite values and does not implement full IEEE exception semantics.
+- `mxfpmac` `pipeline_stages`: 1 = combinational dot product + output register
+  (legacy); >= 2 adds an input capture stage and spreads `pipeline_stages - 2`
+  register banks across the reduction tree (latency = `pipeline_stages` cycles,
+  results bit-identical since ACC-width addition is modular).
 
 ## Next Useful Extensions
 

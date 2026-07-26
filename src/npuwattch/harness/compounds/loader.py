@@ -62,8 +62,13 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 # The primitives the systolic PE placeholder {mac_primitive} can resolve to.
 MAC_PRIMITIVES = ("intmac", "fpmac", "mxfpmac")
 
-# Symbols permitted in count/scale/config expressions, resolved per kernel.
-_ALLOWED_SYMBOLS = ("lanes", "bitwidth")
+# Symbols in count/scale/config expressions resolve per kernel from the MAC
+# scalars (lanes, bitwidth) plus the harness's integer run-config keys (bundles
+# are harness-owned, so their compounds may use that harness's vocabulary).
+# Load-time checking is therefore *syntactic* (identifier-shaped tokens); an
+# actually-unknown symbol still fails loudly at resolution.
+_MAC_SYMBOLS = ("lanes", "bitwidth")
+_SYMBOL_RE = __import__("re").compile(r"[A-Za-z_]\w*$")
 
 
 class CompoundBundleError(ValueError):
@@ -113,11 +118,11 @@ def _is_placeholder(v: object) -> bool:
 
 
 def _is_scalar_expr(s: str) -> bool:
-    """True if every factor is a digit or an allowed symbol (so it is resolvable)."""
+    """True if every factor is a digit or an identifier-shaped symbol."""
     for term in s.split("+"):
         for factor in term.split("*"):
             f = factor.strip()
-            if not (f.isdigit() or f in _ALLOWED_SYMBOLS):
+            if not (f.isdigit() or _SYMBOL_RE.match(f)):
                 return False
     return True
 
@@ -131,11 +136,12 @@ def _check_scalar_expr(expr: object, where: str) -> None:
     for term in expr.split("+"):
         for factor in term.split("*"):
             f = factor.strip()
-            if f in _ALLOWED_SYMBOLS or f.isdigit():
+            if f.isdigit() or _SYMBOL_RE.match(f):
                 continue
             raise CompoundBundleError(
-                f"{where}: unresolved token {f!r} in {expr!r} "
-                f"(allowed symbols: {', '.join(_ALLOWED_SYMBOLS)})"
+                f"{where}: malformed token {f!r} in {expr!r} (use ints, +, *, and "
+                f"identifier symbols — MAC scalars {', '.join(_MAC_SYMBOLS)} or the "
+                f"harness's integer run-config keys)"
             )
 
 
@@ -236,12 +242,23 @@ def load_primitive_modes(path: Optional[Path] = None) -> PrimitiveModes:
 # compounds/<name>.json — tool-agnostic composition
 # ---------------------------------------------------------------------------
 
+#: Instance-multiplier domains for CompoundElement.per: the emitter multiplies
+#: an element's count by the run's array / core count (or nothing for "chip").
+ELEMENT_PER = ("array", "core", "chip")
+
+#: Compound.default_mode: what an action charges elements it does not name.
+#: "idle" (classic, cycle-domain compounds) or "gated" — omitted elements are
+#: simply not charged (bank-/clock-gated memories; leakage covers them).
+DEFAULT_MODES = ("idle", "gated")
+
+
 @dataclass(frozen=True)
 class CompoundElement:
     name: str
     primitive: str                       # concrete or "{mac_primitive}"
     config: object                       # "{mac_config}" | dict | concrete
     count: Union[int, str]               # e.g. "lanes*lanes"
+    per: str = "array"                   # instance multiplier domain
 
     @property
     def primitive_is_template(self) -> bool:
@@ -253,6 +270,7 @@ class Compound:
     name: str
     select_primitive_by: Optional[str]
     elements: Dict[str, CompoundElement]
+    default_mode: str = "idle"           # omitted-element charge: idle | gated
 
 
 def _parse_compound(name: str, obj: Mapping) -> Compound:
@@ -273,16 +291,30 @@ def _parse_compound(name: str, obj: Mapping) -> Compound:
             )
         count = espec.get("count", 1)
         _check_scalar_expr(count, f"compound {name!r} element {ename!r} count")
+        per = espec.get("per", "array")
+        if per not in ELEMENT_PER:
+            raise CompoundBundleError(
+                f"compound {name!r} element {ename!r}: 'per' must be one of "
+                f"{ELEMENT_PER}, got {per!r}"
+            )
         elements[ename] = CompoundElement(
             name=ename,
             primitive=espec["primitive"],
             config=espec.get("config"),
             count=count,
+            per=per,
+        )
+    default_mode = obj.get("default_mode", "idle")
+    if default_mode not in DEFAULT_MODES:
+        raise CompoundBundleError(
+            f"compound {name!r}: 'default_mode' must be one of {DEFAULT_MODES}, "
+            f"got {default_mode!r}"
         )
     return Compound(
         name=name,
         select_primitive_by=obj.get("select_primitive_by"),
         elements=elements,
+        default_mode=default_mode,
     )
 
 
@@ -305,10 +337,21 @@ def load_compounds(path: Path) -> Dict[str, Compound]:
 # projections/<tool>.json — native action -> element stim_mode
 # ---------------------------------------------------------------------------
 
+#: How a count_from stat converts into charge events for the target elements:
+#: "words" (raw count x scale), "bytes" (/ the element's word bytes), "vectors"
+#: (x lanes x operand bits / the element's word bits), "flits" (NoC flit count;
+#: per-element-kind conversion — buffer word accesses, valid-fraction-normalized
+#: crossbar cycles, or link crossings). bytes/vectors apply only to
+#: capacity-resolved memory elements; flits additionally to crossbar/d2dlink
+#: (the emitter knows word widths, port counts and the flit size — §3.9).
+COUNT_UNITS = ("words", "bytes", "vectors", "flits")
+
+
 @dataclass(frozen=True)
 class CountFrom:
     stat: str
     scale: Union[int, str]
+    unit: str = "words"
 
 
 @dataclass(frozen=True)
@@ -323,6 +366,21 @@ class Projection:
     tool: str
     # compound name -> action name -> ActionMapping
     compounds: Dict[str, Dict[str, ActionMapping]]
+    #: stat name -> one-line justification. Coverage-warning WAIVERS (lint/CDC
+    #: waiver-file sense): the stat IS collected, and the author deliberately
+    #: does not charge it. The emitter's coverage check reports these as INFO
+    #: instead of WARNING — the WARNING tier then means "genuinely
+    #: uninterpreted, possibly forgotten".
+    waivers: Dict[str, str] = field(default_factory=dict)
+    #: Modeling-scope boundary declarations: hardware whose activity the
+    #: harness readers never even collect (so no stat exists to waive),
+    #: reported once per run as INFO.
+    out_of_scope: List[str] = field(default_factory=list)
+    #: Planned third-party tool integrations (external power-model API calls)
+    #: not implemented yet. Unlike ``out_of_scope`` these are TEMPORARY gaps,
+    #: so each entry is reported as a WARNING every run until the integration
+    #: lands — then the entry is deleted and replaced by real charging.
+    third_party_pending: List[str] = field(default_factory=list)
 
 
 def _parse_action(compound: str, action: str, obj: Mapping) -> ActionMapping:
@@ -338,6 +396,12 @@ def _parse_action(compound: str, action: str, obj: Mapping) -> ActionMapping:
         )
     scale = cf.get("scale", 1)
     _check_scalar_expr(scale, f"projection {compound}.{action} count_from.scale")
+    unit = cf.get("unit", "words")
+    if unit not in COUNT_UNITS:
+        raise CompoundBundleError(
+            f"projection {compound}.{action}: count_from.unit must be one of "
+            f"{COUNT_UNITS}, got {unit!r}"
+        )
     els = obj.get("elements")
     if not isinstance(els, dict) or not els:
         raise CompoundBundleError(
@@ -348,7 +412,8 @@ def _parse_action(compound: str, action: str, obj: Mapping) -> ActionMapping:
             raise CompoundBundleError(
                 f"projection {compound}.{action}.elements[{k!r}] must be a mode string"
             )
-    return ActionMapping(action=action, count_from=CountFrom(stat, scale), elements=dict(els))
+    return ActionMapping(action=action, count_from=CountFrom(stat, scale, unit),
+                         elements=dict(els))
 
 
 def load_projection(path: Path) -> Projection:
@@ -370,7 +435,50 @@ def load_projection(path: Path) -> Projection:
                 )
             parsed[aname] = _parse_action(cname, aname, aspec)
         compounds[cname] = parsed
-    return Projection(tool=obj["tool"], compounds=compounds)
+
+    # Short-lived legacy spellings (2026-07-26, pre-rename): error with a hint,
+    # never a silent alias — same policy as the canonical attribute names.
+    for legacy, current in (("ignores", "waivers"), ("notes", "out_of_scope")):
+        if legacy in obj:
+            raise CompoundBundleError(
+                f"projection file: {legacy!r} was renamed — use {current!r}"
+            )
+
+    waivers_obj = obj.get("waivers") or {}
+    if not isinstance(waivers_obj, dict):
+        raise CompoundBundleError("projection file: 'waivers' must be an object "
+                                  "mapping stat name -> justification string")
+    waivers: Dict[str, str] = {}
+    for stat, justification in _strip_comments(waivers_obj).items():
+        if not isinstance(justification, str) or not justification.strip():
+            raise CompoundBundleError(
+                f"projection waivers[{stat!r}]: the justification must be a "
+                f"non-empty string (say WHY the stat is deliberately not charged)"
+            )
+        waivers[stat] = " ".join(justification.split())
+    # A stat both charged and waived is a contradiction — definition bug.
+    for cname, actions in compounds.items():
+        for aname, mapping in actions.items():
+            if mapping.count_from.stat in waivers:
+                raise CompoundBundleError(
+                    f"projection {cname}.{aname} charges stat "
+                    f"{mapping.count_from.stat!r} which is also listed in "
+                    f"'waivers' — remove one of the two"
+                )
+
+    def _string_list(key: str) -> List[str]:
+        raw = obj.get(key) or []
+        if not isinstance(raw, list) or any(
+                not isinstance(n, str) or not n.strip() for n in raw):
+            raise CompoundBundleError(
+                f"projection file: {key!r} must be a list of non-empty strings"
+            )
+        return [" ".join(n.split()) for n in raw]
+
+    return Projection(tool=obj["tool"], compounds=compounds,
+                      waivers=waivers,
+                      out_of_scope=_string_list("out_of_scope"),
+                      third_party_pending=_string_list("third_party_pending"))
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +533,7 @@ class ResolvedElement:
     primitive: str
     config: object
     count: int                           # instance count (for area/leak)
+    per: str = "array"                   # instance multiplier domain
 
 
 @dataclass(frozen=True)
@@ -449,11 +558,21 @@ class ActionResolution:
     action: str
     stat: str
     scale: int
+    unit: str = "words"
     elements: List[ResolvedActionElement] = field(default_factory=list)
 
 
-def _symbols_for(mac_config) -> Dict[str, int]:
-    return {"lanes": int(mac_config.lanes), "bitwidth": int(mac_config.operand_dtype.bits)}
+def _symbols_for(mac_config,
+                 extra_symbols: Optional[Mapping[str, int]] = None) -> Dict[str, int]:
+    """Expression symbols: the MAC scalars, plus any harness-supplied extras
+    (integer run-config keys — a bundle is harness-owned, so its compounds may
+    reference that harness's config vocabulary). MAC symbols win on collision."""
+    symbols = {k: int(v) for k, v in (extra_symbols or {}).items()
+               if isinstance(v, int) and not isinstance(v, bool)}
+    symbols.update(
+        {"lanes": int(mac_config.lanes), "bitwidth": int(mac_config.operand_dtype.bits)}
+    )
+    return symbols
 
 
 def _resolve_config(cfg: object, mac_config, symbols: Mapping[str, int], where: str) -> object:
@@ -469,27 +588,46 @@ def _resolve_config(cfg: object, mac_config, symbols: Mapping[str, int], where: 
             elif isinstance(v, int):
                 resolved[k] = v
             elif isinstance(v, str) and not _is_placeholder(v) and _is_scalar_expr(v):
-                resolved[k] = _resolve_scalar_expr(v, symbols, f"{where}.{k}")
+                # A bare identifier that is not a known symbol is a *literal*
+                # string config (e.g. an mxfpmac format name "fp8_e4m3");
+                # anything with operators must fully resolve or it errors.
+                bare = v.strip()
+                if ("+" not in v and "*" not in v
+                        and not bare.isdigit() and bare not in symbols):
+                    resolved[k] = v
+                else:
+                    resolved[k] = _resolve_scalar_expr(v, symbols, f"{where}.{k}")
             else:
-                resolved[k] = v  # literal string config (e.g. an mxfpmac format name)
+                resolved[k] = v  # non-expression string / list / None
         return resolved
     return cfg
 
 
-def resolve_compound(compound: Compound, mac_config) -> Dict[str, ResolvedElement]:
+def _resolve_element(
+    compound_name: str, el: CompoundElement, mac_config,
+    symbols: Mapping[str, int],
+) -> ResolvedElement:
+    primitive = mac_config.primitive if el.primitive_is_template else el.primitive
+    config = _resolve_config(
+        el.config, mac_config, symbols, f"compound {compound_name}.{el.name}.config"
+    )
+    count = _resolve_scalar_expr(
+        el.count, symbols, f"compound {compound_name}.{el.name}.count"
+    )
+    return ResolvedElement(name=el.name, primitive=primitive, config=config,
+                           count=count, per=el.per)
+
+
+def resolve_compound(
+    compound: Compound, mac_config,
+    extra_symbols: Optional[Mapping[str, int]] = None,
+) -> Dict[str, ResolvedElement]:
     """Resolve placeholders/symbols to a concrete element table for one kernel."""
-    symbols = _symbols_for(mac_config)
-    out: Dict[str, ResolvedElement] = {}
-    for ename, el in compound.elements.items():
-        primitive = mac_config.primitive if el.primitive_is_template else el.primitive
-        config = _resolve_config(
-            el.config, mac_config, symbols, f"compound {compound.name}.{ename}.config"
-        )
-        count = _resolve_scalar_expr(
-            el.count, symbols, f"compound {compound.name}.{ename}.count"
-        )
-        out[ename] = ResolvedElement(name=ename, primitive=primitive, config=config, count=count)
-    return out
+    symbols = _symbols_for(mac_config, extra_symbols)
+    return {
+        ename: _resolve_element(compound.name, el, mac_config, symbols)
+        for ename, el in compound.elements.items()
+    }
 
 
 def resolve_action(
@@ -498,14 +636,17 @@ def resolve_action(
     action: str,
     mac_config,
     primitive_modes: PrimitiveModes,
+    extra_symbols: Optional[Mapping[str, int]] = None,
 ) -> ActionResolution:
     """Resolve one native action for a kernel, enforcing the vocabulary at the
     *resolved* primitive.
 
-    Elements omitted from the action's ``elements`` map default to ``idle``
-    (schema §5), so accounting stays complete. An omitted or explicit mode the
-    resolved primitive can't do (e.g. ``mxfpmac`` + ``hold_b``) raises — honest,
-    rather than silently mischarging.
+    Elements omitted from the action's ``elements`` map follow the compound's
+    ``default_mode``: ``idle`` charges them one idle each (schema §5, complete
+    accounting for cycle-domain compounds); ``gated`` excludes them entirely
+    (clock-gated memories — their leakage is charged over time, never per
+    event). A mode the resolved primitive can't do (e.g. ``mxfpmac`` +
+    ``hold_b``) raises — honest, rather than silently mischarging.
     """
     actions = projection.compounds.get(compound.name)
     if actions is None or action not in actions:
@@ -513,16 +654,20 @@ def resolve_action(
             f"projection {projection.tool!r} has no action {action!r} for {compound.name!r}"
         )
     mapping = actions[action]
-    resolved_elems = resolve_compound(compound, mac_config)
-    symbols = _symbols_for(mac_config)
+    symbols = _symbols_for(mac_config, extra_symbols)
     scale = _resolve_scalar_expr(
         mapping.count_from.scale, symbols,
         f"projection {compound.name}.{action} count_from.scale",
     )
 
     out_elems: List[ResolvedActionElement] = []
-    for ename, re in resolved_elems.items():
-        mode = mapping.elements.get(ename, "idle")  # omitted -> idle default
+    for ename, el in compound.elements.items():
+        mode = mapping.elements.get(ename)
+        if mode is None:
+            if compound.default_mode == "gated":
+                continue        # gated: neither charged nor resolved
+            mode = "idle"
+        re = _resolve_element(compound.name, el, mac_config, symbols)
         primitive_modes.require(re.primitive, mode)
         out_elems.append(
             ResolvedActionElement(
@@ -530,7 +675,8 @@ def resolve_action(
             )
         )
     return ActionResolution(
-        action=action, stat=mapping.count_from.stat, scale=scale, elements=out_elems
+        action=action, stat=mapping.count_from.stat, scale=scale,
+        unit=mapping.count_from.unit, elements=out_elems,
     )
 
 
@@ -598,7 +744,8 @@ def load_bundle(root: Path) -> "Bundle":
     }
     pm_path = _resolve_named(root, "primitive_modes")
     modes = load_primitive_modes(pm_path) if pm_path else load_primitive_modes()
-    bundle = Bundle(compounds=compounds, projections=projections, primitive_modes=modes)
+    bundle = Bundle(compounds=compounds, projections=projections,
+                    primitive_modes=modes)
     bundle.validate()
     return bundle
 

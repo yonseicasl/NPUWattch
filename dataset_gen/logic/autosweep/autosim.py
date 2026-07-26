@@ -212,7 +212,7 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
     tech_dir = NW_LOGIC_DIR / f"TECH_{int(node):02d}nm"
     run_dir = tech_dir / "04_sim" / run_id
     corner = find_tech_corner(job)
-    modes = power_modes(rtl_name)
+    modes = power_modes(rtl_name, job.get("arch_params", ""))
 
     log_event(
         stage=STAGE_LOGIC_SIM,

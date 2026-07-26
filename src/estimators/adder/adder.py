@@ -15,11 +15,17 @@ ESTIMATOR_SPEC = {
         "switching": "estimate_switching_energy",
     },
     "parameters": {
+        # Canonical names only (npuwattch.naming). Activity is expressed as the
+        # characterized `stim_mode`, not a bare switching fraction.
         "required": [
-            {"name": "bitwidth", "type": "int", "arch_keys": ["bitwidth", "bits", "width"]},
+            {"name": "node", "type": "str"},
+            {"name": "data_width_a", "type": "int"},
+            {"name": "data_width_b", "type": "int"},
+            {"name": "data_width_out", "type": "int"},
         ],
         "optional": [
-            {"name": "activity", "type": "float", "arch_keys": ["activity"], "default": 0.5},
+            {"name": "pipeline_stages", "type": "int", "default": 1},
+            {"name": "stim_mode", "type": "str", "default": "random"},
         ],
     },
 }

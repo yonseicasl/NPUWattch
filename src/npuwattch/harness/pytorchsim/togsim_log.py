@@ -1,80 +1,200 @@
 """Parse a TOGSim run log (``togsim_results/*.log``).
 
 The TOGSim log is the primary activity input: its header echoes the full hardware
-config as JSON, and its body reports **on-chip** per-core activity. NPUWattch uses
-the on-chip rows only (systolic / vector active cycles, COMP GEMM op counts, the
-``outputs/<hash>`` pointer); the DRAM/NoC rows are TOGSim's off-chip domain and are
-ignored.
+config, and its body reports **on-chip** per-core activity (systolic / vector
+active cycles, COMP GEMM op counts, DMA engine active/idle cycles + response
+counts). Two off-chip echoes are read too: the final
+DRAM request totals (VMEM + NoC traffic derive from them) and the BookSim
+``[config]`` block the simulator prints at init (the NoC topology — for ``fly``
+networks it makes the log fully self-contained; ``anynet`` additionally needs the
+``.net`` file, whose *path* is all the log carries).
 
-Two structural facts (verified against the local-run samples):
+Log format (the 2026-07-20 author build; the earlier ``TOGSim Config: {JSON}``
+header format is **retired** — logs from older builds are not accepted):
 
+- Line 1 is the simulator **command line**; the kernel hash is the ``<hash>`` in
+  ``--trace_so .../outputs/<hash>/trace.so``. This is the join key to the kernel's
+  gem5 output dir (``<gem5_dir>/<hash>/``) — the log body carries no hash, and the
+  log *filename*'s hex suffix is NOT the kernel hash.
+- The config block is echoed as bare ``key: value`` lines following a
+  ``PyTorchSim config:`` marker, terminated by the next timestamped line.
 - The per-core activity block is reprinted every ``core_stats_print_period_cycles``
-  as a **per-period increment**, then a **final cumulative block** is emitted at the
-  end. Taking the *last* value reported for each ``(core, systolic-array)`` yields the
-  cumulative total (= sum of the increments); likewise for the vector unit per core.
-- Each log corresponds to **one compiled kernel**, named by the
-  ``.../outputs/<hash>/tile_graph.onnx`` path in the ``Register graph path`` line —
-  that hash is the join key to the kernel's ``meta.txt`` / MLIR / ``m5out``.
+  as a per-period increment, then a final cumulative block is emitted at the end.
+  Taking the *last* value reported for each ``(core, systolic-array)`` yields the
+  cumulative total; likewise for the vector unit per core. Stat lines are
+  colon-separated: ``... utilization(%): 9.79, active_cycles: 64, ...``.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
-__all__ = ["TogsimActivity", "TogsimLogError", "parse_config", "parse_togsim_log"]
+__all__ = ["TogsimActivity", "TogsimLogError", "parse_config",
+           "parse_icnt_config", "parse_togsim_log"]
 
 
 class TogsimLogError(ValueError):
     """The TOGSim log is malformed or missing an expected field."""
 
 
-_HASH = re.compile(r"outputs/([A-Za-z0-9]+)/tile_graph\.onnx")
+#: Kernel hash from the command line (author builds: --trace_so/--cycle_table).
+_TRACE_SO = re.compile(r"--trace_so\s+\S*?[/\\]outputs[/\\]([A-Za-z0-9]+)[/\\]trace\.so")
+_CYCLE_TABLE = re.compile(r"--cycle_table\s+\S*?[/\\]outputs[/\\]([A-Za-z0-9]+)[/\\]")
+#: Tutorial/models_list builds pass `--models_list <run>.trace` instead — no hash
+#: on the command line. The scheduler body lines still name the kernel dir
+#: (`tog_path: .../outputs/<hash>/tile_graph.onnx`), so a log whose body
+#: mentions exactly ONE kernel dir is unambiguous.
+_OUTPUTS_DIR = re.compile(r"[/\\]outputs[/\\]([A-Za-z0-9]+)[/\\]")
+
+_CONFIG_MARKER = "PyTorchSim config:"
+_CONFIG_LINE = re.compile(r"^([A-Za-z_]\w*):\s*(.*)$")
+
+# BookSim2's own config echo: a bare "[config]" line, then "key = value" lines
+# (blank lines separate sections), ended by the next timestamped "[...]" line.
+_ICNT_MARKER = "[config]"
+_ICNT_LINE = re.compile(r"^([A-Za-z_]\w*)\s*=\s*(.*)$")
+
 _SYS = re.compile(
-    r"Core \[(\d+)\] : Systolic array \[(\d+)\]\s+utilization\(%\)\s+[\d.]+,\s+"
-    r"active_cycles\s+(\d+)"
+    r"Core \[(\d+)\] : Systolic array \[(\d+)\]\s+[Uu]tilization\(%\)\s*:\s*[\d.]+,"
+    r"\s*active[ _]cycles?\s*:\s*(\d+)"
 )
-# Vector line has two spellings: periodic "Utilization ... active_cycles N",
-# final "utilization ... active cycle N". Capture the count either way.
+# Vector line spelling varies (periodic vs final): "active_cycles:" / "active cycle:".
 _VEC = re.compile(
-    r"Core \[(\d+)\] : Vector unit\s+[Uu]tilization\(%\)\s+[\d.]+,\s+"
-    r"active[ _]cycles?\s+(\d+)"
+    r"Core \[(\d+)\] : Vector unit\s+[Uu]tilization\(%\)\s*:\s*[\d.]+,"
+    r"\s*active[ _]cycles?\s*:\s*(\d+)"
 )
 _COMP = re.compile(
-    r"Core \[(\d+)\] : COMP\s+inst_count\s+(\d+)\s+\(GEMM:\s+(\d+),\s+Vector:\s+(\d+)\)"
+    r"Core \[(\d+)\] : COMP\s+inst_count\s*:\s*(\d+)\s+\(GEMM:\s*(\d+),\s*Vector:\s*(\d+)\)"
 )
-_MOV = re.compile(r"Core \[(\d+)\] : (MOVIN|MOVOUT)\s+inst_count\s+(\d+)")
+_MOV = re.compile(r"Core \[(\d+)\] : (MOVIN|MOVOUT)\s+inst_count\s*:\s*(\d+)")
+# Core [0] : DMA active_cycles: 8905, DMA idle_cycles: 1095, DRAM BW: 278.000 GB/s (92430 responses)
+# Periodic lines are per-period increments (active+idle = the print period); the
+# final line is cumulative — same convention as the systolic/vector blocks, and
+# verified on the tutorial run (periodic actives sum exactly to the final line;
+# final responses 393216 = 12 MB / 32 B = the run's total DRAM requests).
+_DMA = re.compile(
+    r"Core \[(\d+)\] : DMA active[ _]cycles?\s*:\s*(\d+),\s*"
+    r"DMA idle[ _]cycles?\s*:\s*(\d+).*?\((\d+) responses\)"
+)
 _TOTAL_EXEC = re.compile(r"Total execution cycles:\s+(\d+)")
+
+# [DRAM] channel 5 | ... | 48 reads, 16 writes        (per-channel, cumulative)
+# [DRAM] channels 0..15 combined | ... | 772 reads, 256 writes
+_DRAM_CH = re.compile(r"\[DRAM\] channel (\d+) \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
+_DRAM_ALL = re.compile(r"\[DRAM\] channels [\d.]+ combined \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
+
+
+def _coerce(raw: str) -> object:
+    """Coerce a config value string: int → float → quoted/plain string."""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1]
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        return s
 
 
 def parse_config(text: str) -> Dict[str, object]:
-    """Extract the ``TOGSim Config: { ... }`` JSON header block."""
+    """Extract the ``PyTorchSim config:`` key/value block.
+
+    Config lines are printed bare (no ``[timestamp]`` prefix) immediately after the
+    marker; the block ends at the first timestamped line.
+    """
     lines = text.splitlines()
     start = None
     for i, line in enumerate(lines):
-        if "TOGSim Config: {" in line:
+        if _CONFIG_MARKER in line:
             start = i
             break
     if start is None:
-        raise TogsimLogError("no 'TOGSim Config: {' header found")
-    buf = ["{"]
+        raise TogsimLogError(
+            f"no {_CONFIG_MARKER!r} header found (older 'TOGSim Config: {{JSON}}' "
+            f"logs are no longer supported — re-run with a current PyTorchSim build)"
+        )
+    config: Dict[str, object] = {}
     for line in lines[start + 1:]:
-        buf.append(line)
-        if line.strip() == "}":
+        if line.startswith("["):          # next timestamped log line = end of block
             break
-    else:
-        raise TogsimLogError("TOGSim Config block not terminated by '}'")
-    try:
-        return json.loads("\n".join(buf))
-    except json.JSONDecodeError as e:
-        raise TogsimLogError(f"TOGSim Config is not valid JSON: {e}") from e
+        m = _CONFIG_LINE.match(line.strip())
+        if m:
+            config[m.group(1)] = _coerce(m.group(2))
+    if not config:
+        raise TogsimLogError(f"{_CONFIG_MARKER!r} block is empty")
+    return config
+
+
+def parse_icnt_config(text: str) -> Optional[Dict[str, object]]:
+    """The BookSim2 ``[config]`` block the simulator echoes at init, or ``None``.
+
+    Absent for non-BookSim interconnects (``icnt_type != booksim2``) and for
+    logs from builds that do not echo it — the caller treats ``None`` as "NoC
+    not modelable from this log".
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == _ICNT_MARKER:
+            start = i
+            break
+    if start is None:
+        return None
+    icnt: Dict[str, object] = {}
+    for line in lines[start + 1:]:
+        s = line.strip()
+        if not s:
+            continue                       # blank section separators
+        if s.startswith("["):              # next timestamped line = end of block
+            break
+        m = _ICNT_LINE.match(s)
+        if m:
+            icnt[m.group(1)] = _coerce(m.group(2))
+    return icnt or None
+
+
+def parse_kernel_hash(text: str) -> str:
+    """The kernel hash joining this log to its ``outputs/<hash>/`` dir.
+
+    Sources, in precedence order:
+
+    1. the command line's ``--trace_so .../outputs/<hash>/trace.so``
+       (fallback ``--cycle_table``) — author builds, one kernel per log;
+    2. a **unique** ``outputs/<hash>/`` mention in the log body — the
+       ISPASS-tutorial ``--models_list`` build has no hash on the command line,
+       but its scheduler lines name each kernel's ``tile_graph.onnx`` path. A
+       models_list log that ran SEVERAL kernels mentions several dirs; its
+       combined activity cannot be attributed per kernel, so that is an error
+       (run one kernel per invocation when collecting for NPUWattch).
+    """
+    m = _TRACE_SO.search(text) or _CYCLE_TABLE.search(text)
+    if m:
+        return m.group(1)
+    hashes = sorted(set(_OUTPUTS_DIR.findall(text)))
+    if len(hashes) == 1:
+        return hashes[0]
+    if len(hashes) > 1:
+        raise TogsimLogError(
+            f"models_list log mentions {len(hashes)} kernel dirs "
+            f"({', '.join(hashes[:4])}{', …' if len(hashes) > 4 else ''}) — "
+            f"its combined activity cannot be split per kernel; re-run with "
+            f"one kernel per simulator invocation"
+        )
+    raise TogsimLogError(
+        "no kernel hash: expected '--trace_so .../outputs/<hash>/trace.so' on "
+        "the command line, or (models_list builds) an outputs/<hash>/ path in "
+        "the log body"
+    )
 
 
 @dataclass(frozen=True)
 class TogsimActivity:
-    kernel_hashes: List[str]
+    kernel_hash: str
     config: Dict[str, object]
     lanes: int
     num_cores: int
@@ -85,15 +205,10 @@ class TogsimActivity:
     comp_gemm_ops: int                       # summed over cores
     comp_vector_ops: int
     total_exec_cycles: Optional[int]
+    dram_reads: Optional[int] = None         # whole-chip DRAM requests (final)
+    dram_writes: Optional[int] = None
+    icnt_config: Optional[Dict[str, object]] = None   # BookSim [config] echo
     per_core: Dict[int, Dict[str, object]] = field(default_factory=dict)
-
-    @property
-    def primary_hash(self) -> str:
-        if len(self.kernel_hashes) != 1:
-            raise TogsimLogError(
-                f"expected exactly one kernel hash, found {self.kernel_hashes}"
-            )
-        return self.kernel_hashes[0]
 
 
 def _as_int(config: Dict[str, object], key: str) -> Optional[int]:
@@ -101,17 +216,16 @@ def _as_int(config: Dict[str, object], key: str) -> Optional[int]:
     return int(v) if isinstance(v, (int, float)) else None
 
 
-def parse_togsim_log(text: str) -> TogsimActivity:
-    config = parse_config(text)
+def parse_togsim_log(text: str,
+                     base_config: Optional[Dict[str, object]] = None) -> TogsimActivity:
+    """Parse one TOGSim log. ``base_config`` (from ``config.yml``) fills keys a
+    damaged header is missing — the header always wins on overlap."""
+    config = {**(base_config or {}), **parse_config(text)}
     lanes = _as_int(config, "vpu_num_lanes")
     if lanes is None:
         raise TogsimLogError("config has no integer 'vpu_num_lanes'")
     num_cores = _as_int(config, "num_cores") or 1
-
-    hashes: List[str] = []
-    for h in _HASH.findall(text):
-        if h not in hashes:
-            hashes.append(h)
+    kernel_hash = parse_kernel_hash(text)
 
     # last value per (core, array) / per core = cumulative total.
     sys_last: Dict[tuple, int] = {}
@@ -128,14 +242,35 @@ def parse_togsim_log(text: str) -> TogsimActivity:
     for m in _MOV.finditer(text):
         mov.setdefault(int(m.group(1)), {})[m.group(2)] = int(m.group(3))
 
+    # DMA engine block: last line per core = cumulative (active, idle, responses).
+    dma_last: Dict[int, tuple] = {}
+    for m in _DMA.finditer(text):
+        dma_last[int(m.group(1))] = (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+
     te = _TOTAL_EXEC.search(text)
     total_exec = int(te.group(1)) if te else None
 
+    # DRAM request totals: the "channels N..M combined" line when present, else
+    # the sum of each channel's last (cumulative) report.
+    dram_reads = dram_writes = None
+    combined = _DRAM_ALL.findall(text)
+    if combined:
+        dram_reads, dram_writes = (int(x) for x in combined[-1])
+    else:
+        ch_last: Dict[int, tuple] = {}
+        for m in _DRAM_CH.finditer(text):
+            ch_last[int(m.group(1))] = (int(m.group(2)), int(m.group(3)))
+        if ch_last:
+            dram_reads = sum(r for r, _ in ch_last.values())
+            dram_writes = sum(w for _, w in ch_last.values())
+
     per_core: Dict[int, Dict[str, object]] = {}
-    core_ids = set(c for c, _ in sys_last) | set(vec_last) | set(comp) | set(mov)
+    core_ids = (set(c for c, _ in sys_last) | set(vec_last) | set(comp)
+                | set(mov) | set(dma_last))
     for c in sorted(core_ids):
         arrays = {a: v for (cc, a), v in sys_last.items() if cc == c}
         g = comp.get(c, (0, 0, 0))
+        d = dma_last.get(c, (0, 0, 0))
         per_core[c] = {
             "systolic_active_cycles": sum(arrays.values()),
             "arrays": arrays,
@@ -145,10 +280,13 @@ def parse_togsim_log(text: str) -> TogsimActivity:
             "comp_vector_ops": g[2],
             "movin": mov.get(c, {}).get("MOVIN", 0),
             "movout": mov.get(c, {}).get("MOVOUT", 0),
+            "dma_active_cycles": d[0],
+            "dma_idle_cycles": d[1],
+            "dma_responses": d[2],
         }
 
     return TogsimActivity(
-        kernel_hashes=hashes,
+        kernel_hash=kernel_hash,
         config=config,
         lanes=lanes,
         num_cores=num_cores,
@@ -160,5 +298,8 @@ def parse_togsim_log(text: str) -> TogsimActivity:
         comp_gemm_ops=sum(g[1] for g in comp.values()),
         comp_vector_ops=sum(g[2] for g in comp.values()),
         total_exec_cycles=total_exec,
+        dram_reads=dram_reads,
+        dram_writes=dram_writes,
+        icnt_config=parse_icnt_config(text),
         per_core=per_core,
     )

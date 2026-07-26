@@ -2,17 +2,38 @@
 
 The probe synthesizes every sweep configuration once per node at an
 unreachable clock (0.5 ns): Design Compiler pushes to its floor and the
-achieved critical-path length approximates the minimum achievable period
-T_min. From T_min the manifest generator derives the two sweep clocks per
-(config, node):
+achieved path lengths approximate the intrinsic minimums.  The synthesis
+log's NW_PATHCLASS report brackets (master_tcl/01_syn.tcl) give the worst
+cone per path class -- in2reg / reg2reg / reg2out / in2out -- because the
+production SDC (autosynth.py) budgets them differently:
 
-    tight   = ceil(1.2 x T_min / grid) x grid   (MET with PnR margin)
-    relaxed = ceil(2.0 x T_min / grid) x grid
+    port-launched cones (in2reg, in2out on clocked designs) get T/2,
+    register-launched paths get T - uncertainty,
+    combinational blocks get the full period minus uncertainty,
+
+so the minimum meetable period is
+
+    T_req = max( 2 x (L_in2reg + setup), 2 x (L_in2out + setup),
+                 L_reg2reg + uncertainty + setup,
+                 max(L_reg2out + uncertainty + setup, 2 x L_reg2out) )
+
+(the 2 x L_reg2out term keeps register outputs observable at the falling
+edge where the testbenches sample).  The manifest generator then derives
+the two sweep clocks per (config, node):
+
+    tight   = ceil(1.2 x T_req / grid) x grid   (MET with PnR margin)
+    relaxed = ceil(2.0 x T_req / grid) x grid
+
+The pre-2026-07-22 formula applied 1.2x/2.0x to the single lumped critical
+path as if the whole period were available; in2reg-dominated modules
+(unpipelined mxfpmac) then failed post-PnR timing at every derived clock
+and died in gate-level sim.
 
 Probe results accumulate in probe_results.tsv; ok rows are skipped on
-re-run (crash resume), error rows are retried. Each probe run directory is
-deleted right after its numbers are parsed, so the probe needs only a few
-hundred MB of scratch at any moment.
+re-run (crash resume), error rows are retried; a results file with an old
+column layout is moved aside and everything re-probes. Each probe run
+directory is deleted right after its numbers are parsed, so the probe needs
+only a few hundred MB of scratch at any moment.
 """
 from __future__ import annotations
 
@@ -33,22 +54,103 @@ from autocommon import (
     rtl_variant_dir_name,
     run_id_for_job,
 )
-from autosynth import run_synthesis_job
+from autosynth import CLOCK_UNCERTAINTY_NS, run_synthesis_job
 from rtl_gen import generator
 from sweep_spec import CLOCKED_MODULES, SWEEP_NODES, sweep_configs
 
 PROBE_CLOCK_NS = 0.5
 PROBE_RESULTS = AUTOSWEEP_DIR / "probe_results.tsv"
-PROBE_COLUMNS = ("rtl_name", "arch_params", "node", "status", "crit_path_ns", "slack_ns", "message")
+PATH_CLASSES = ("in2reg", "reg2reg", "reg2out", "in2out")
+PROBE_COLUMNS = (
+    "rtl_name",
+    "arch_params",
+    "node",
+    "status",
+    "crit_path_ns",
+    "slack_ns",
+    "crit_in2reg_ns",
+    "crit_reg2reg_ns",
+    "crit_reg2out_ns",
+    "crit_in2out_ns",
+    "message",
+)
 
 TIGHT_MARGIN = 1.2
 RELAX_MARGIN = 2.0
 CLOCK_GRID_NS = 0.25
+SETUP_MARGIN_NS = 0.05
 
 _TSV_LOCK = threading.Lock()
 
 _CRIT_RE = re.compile(r"Critical Path Length:\s+([0-9.]+)")
 _SLACK_RE = re.compile(r"Critical Path Slack:\s+(-?[0-9.]+)")
+_ARRIVAL_RE = re.compile(r"data arrival time\s+(-?[0-9.]+)")
+_INPUT_DELAY_RE = re.compile(r"input external delay\s+(-?[0-9.]+)")
+
+
+def _parse_path_classes(text: str) -> dict[str, float | None]:
+    """Worst data-path length per class from the NW_PATHCLASS log brackets.
+
+    Input-launched classes subtract the constrained input external delay so
+    the value is the pure port->endpoint cone length.  A bracket with no
+    'data arrival time' line (no matching paths, e.g. no registers in a
+    combinational block) yields None for that class.
+    """
+    lengths: dict[str, float | None] = {}
+    for cls in PATH_CLASSES:
+        match = re.search(
+            rf"NW_PATHCLASS {cls} BEGIN(.*?)NW_PATHCLASS {cls} END", text, re.S
+        )
+        body = match.group(1) if match else ""
+        arrival = _ARRIVAL_RE.search(body)
+        if not arrival:
+            lengths[cls] = None
+            continue
+        length = float(arrival.group(1))
+        input_delay = _INPUT_DELAY_RE.search(body)
+        if input_delay:
+            length -= float(input_delay.group(1))
+        lengths[cls] = round(length, 4) if length > 0.0 else None
+    return lengths
+
+
+def required_period_ns(rtl_name: str, entry: dict[str, float | None]) -> float:
+    """Minimum period the production SDC (autosynth.py) can actually meet.
+
+    Clocked designs: port-launched cones get T/2 - setup (set_input_delay
+    tracks T/2), register-launched paths T - uncertainty - setup, and
+    register outputs must additionally be visible at the falling edge where
+    the testbenches sample (2 x L_reg2out).  Combinational blocks get the
+    full period minus uncertainty.
+    """
+    clocked = rtl_name in CLOCKED_MODULES
+    candidates: list[float] = []
+    if clocked:
+        for cls in ("in2reg", "in2out"):
+            length = entry.get(cls)
+            if length:
+                candidates.append(2.0 * (length + SETUP_MARGIN_NS))
+        length = entry.get("reg2reg")
+        if length:
+            candidates.append(length + CLOCK_UNCERTAINTY_NS + SETUP_MARGIN_NS)
+        length = entry.get("reg2out")
+        if length:
+            candidates.append(
+                max(length + CLOCK_UNCERTAINTY_NS + SETUP_MARGIN_NS, 2.0 * length)
+            )
+    else:
+        length = entry.get("in2out")
+        if length:
+            candidates.append(length + CLOCK_UNCERTAINTY_NS + SETUP_MARGIN_NS)
+    if not candidates:
+        # No per-class data (empty brackets): treat the lumped critical path
+        # as an input-launched cone -- the safe direction.
+        lumped = entry.get("crit_path_ns") or 0.0
+        if clocked:
+            candidates.append(2.0 * (lumped + SETUP_MARGIN_NS))
+        else:
+            candidates.append(lumped + CLOCK_UNCERTAINTY_NS + SETUP_MARGIN_NS)
+    return max(candidates)
 
 
 def _resolve_nodes(nodes: tuple[str, ...] | None) -> tuple[str, ...]:
@@ -107,19 +209,38 @@ def _append_result(row: dict[str, str]) -> None:
             fp.write("\t".join(str(row.get(col, "")) for col in PROBE_COLUMNS) + "\n")
 
 
-def load_probe_results() -> dict[tuple[str, str, str], float]:
-    """(rtl_name, arch_params, node) -> crit_path_ns for every ok row."""
-    results: dict[tuple[str, str, str], float] = {}
+def load_probe_results() -> dict[tuple[str, str, str], dict[str, float | None]]:
+    """(rtl_name, arch_params, node) -> path lengths for every ok row.
+
+    Each value holds 'crit_path_ns' plus one entry per PATH_CLASSES (None
+    where the class had no paths).  A results file written with an older
+    column layout is moved aside so every config re-probes under the current
+    schema rather than mixing formulas.
+    """
+    results: dict[tuple[str, str, str], dict[str, float | None]] = {}
     if not PROBE_RESULTS.exists():
         return results
     with PROBE_RESULTS.open(encoding="utf-8") as fp:
         header = fp.readline().rstrip("\n").split("\t")
+        if header != list(PROBE_COLUMNS):
+            stale = PROBE_RESULTS.with_name(PROBE_RESULTS.name + ".schema_old")
+            fp.close()
+            PROBE_RESULTS.rename(stale)
+            print(
+                f"probe: {PROBE_RESULTS.name} used an old column layout; moved to "
+                f"{stale.name} -- all configs will re-probe"
+            )
+            return results
         for line in fp:
             row = dict(zip(header, line.rstrip("\n").split("\t")))
             if row.get("status") != "ok":
                 continue
             key = (row["rtl_name"], row["arch_params"], normalize_node(row["node"]))
-            results[key] = float(row["crit_path_ns"])
+            entry: dict[str, float | None] = {"crit_path_ns": float(row["crit_path_ns"])}
+            for cls in PATH_CLASSES:
+                raw = row.get(f"crit_{cls}_ns", "").strip()
+                entry[cls] = float(raw) if raw else None
+            results[key] = entry
     return results
 
 
@@ -154,12 +275,17 @@ def _probe_one(rtl_name: str, arch: str, node: str) -> None:
         slack_match = _SLACK_RE.search(text)
         if not crit_match:
             raise RuntimeError("no 'Critical Path Length' in synthesis.log")
+        classes = _parse_path_classes(text)
         _append_result(
             base
             | {
                 "status": "ok",
                 "crit_path_ns": crit_match.group(1),
                 "slack_ns": slack_match.group(1) if slack_match else "",
+            }
+            | {
+                f"crit_{cls}_ns": ("" if classes[cls] is None else f"{classes[cls]:g}")
+                for cls in PATH_CLASSES
             }
         )
     except Exception as exc:  # noqa: BLE001 - a probe must survive bad configs
@@ -255,20 +381,24 @@ def generate_sweep_manifest(
     lines = [
         "# Generated by run_batch.py gen-jobs from probe_results.tsv.",
         f"# Nodes: {', '.join(nodes)}.",
-        f"# Two clocks per (config, node): tight = {TIGHT_MARGIN} x T_min, "
-        f"relaxed = {RELAX_MARGIN} x T_min, ceil to {CLOCK_GRID_NS} ns grid.",
+        f"# Two clocks per (config, node): tight = {TIGHT_MARGIN} x T_req, "
+        f"relaxed = {RELAX_MARGIN} x T_req, ceil to {CLOCK_GRID_NS} ns grid,",
+        "# where T_req is the SDC-consistent minimum period from the per-class",
+        "# probe cones (in2reg/in2out doubled: their budget is T/2; reg2reg +",
+        f"# {CLOCK_UNCERTAINTY_NS:g} ns uncertainty; reg2out also observable by T/2).",
         header,
     ]
     missing: list[tuple[str, str, str]] = []
     rows = 0
     for rtl_name, arch in configs:
         for node in nodes:
-            crit = results.get((rtl_name, arch, normalize_node(node)))
-            if crit is None:
+            entry = results.get((rtl_name, arch, normalize_node(node)))
+            if entry is None:
                 missing.append((rtl_name, arch, node))
                 continue
-            tight = _grid_ceil(TIGHT_MARGIN * crit)
-            relaxed = _grid_ceil(RELAX_MARGIN * crit)
+            t_req = required_period_ns(rtl_name, entry)
+            tight = _grid_ceil(TIGHT_MARGIN * t_req)
+            relaxed = _grid_ceil(RELAX_MARGIN * t_req)
             if relaxed <= tight:
                 relaxed = tight + CLOCK_GRID_NS
             for period in (tight, relaxed):

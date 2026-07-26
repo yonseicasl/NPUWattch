@@ -24,6 +24,8 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
+# Report template + JSON schema (manual §8 / §3.6).
+"npuwattch.report" = ["templates/*.j2", "schema.json"]
 # System contract for the compound interpreter.
 "npuwattch.harness.compounds" = ["data/*.json", "data/*.md"]
 # Per-harness definition bundles (compounds + projections), JSON or YAML.

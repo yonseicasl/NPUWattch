@@ -1,0 +1,46 @@
+# ============================================================================
+#  vpu — the per-core vector processor datapath (VFU + VRF)
+# ============================================================================
+# HARNESS-OWNED (like every file in this bundle): references the PyTorchSim
+# run-config key `vpu_vector_length_bits` as an expression symbol.
+#
+# Closes the last gap inside the author-sanctioned energy scope (2026-07-25:
+# vector processor + VMEM + systolic array + on-chip NoC). The per-lane spad is
+# already the spads compound; this adds the lane datapath:
+#
+#   vrf — per-lane RVV vector register file: 32 architectural vregs of
+#         `vpu_vector_length_bits` each (ARCHITECTURE_SPEC §2: lane마다 VRF).
+#   vfu — one representative `lanes`-wide SIMD function-unit datapath, priced
+#         as the kernel's MAC primitive ({mac_primitive}, ARCHITECTURE_SPEC §5
+#         maps VecMultiplier -> intmac/fpmac — the dominant VFU energy).
+#
+# FIRST CUT, STUB-PRICED (user decision 2026-07-26: fpadd/intadd are
+# pre-characterization): all logic costs are placeholders until workstream D.
+# Known simplifications, to refine after characterization:
+#   - gem5's FUPool has 4 physical FUs per type per core (VecAdder/Multiplier/
+#     Divider/...); modeled here as ONE lanes-wide datapath (count: lanes).
+#   - the op mix (add vs mul vs div vs ldst) is not split — the MAC primitive
+#     stands in for all of it; gem5's Simd* committed-inst classes carry the
+#     mix when a finer split is wanted.
+#
+# default_mode: gated — an action charges only the elements it names; an
+# untouched vpu (pure-GEMM kernel) is clock-gated, leakage-only via §6.
+
+vpu:
+  select_primitive_by: dtype          # vfu follows the kernel dtype (int/fp/mx)
+  default_mode: gated
+  elements:
+
+    vrf:                              # per-lane vector register file (RVV: 32 vregs)
+      primitive: regfile
+      config:
+        width: vpu_vector_length_bits
+        depth: 32
+      count: lanes
+      per: core
+
+    vfu:                              # representative lanes-wide SIMD datapath
+      primitive: "{mac_primitive}"
+      config: "{mac_config}"
+      count: lanes
+      per: core

@@ -76,19 +76,22 @@ ESTIMATOR_SPEC = {
         "unit_cost_provider": "make_unit_cost_provider",
     },
     "parameters": {
+        # Names are canonical (npuwattch.naming) — one spelling per concept, no
+        # aliases; a harness translates its simulator's vocabulary at ingest.
         "required": [
-            {"name": "node", "type": "str",
-             "arch_keys": ["node", "technology", "tech_node"]},
-            {"name": "depth", "type": "int",
-             "arch_keys": ["depth", "entries", "memory_depth", "words"]},
-            {"name": "bw", "type": "int",
-             "arch_keys": ["width_bits", "bw", "width", "datawidth", "bitwidth"]},
+            {"name": "node", "type": "str"},
+            {"name": "mem_depth_per_bank", "type": "int"},
+            {"name": "data_width", "type": "int"},
         ],
         "optional": [
-            {"name": "n_banks", "type": "int", "arch_keys": ["n_banks", "banks"],
-             "default": 1},
-            {"name": "n_ports", "type": "int",
-             "arch_keys": ["n_ports", "num_ports", "nports"], "default": 1},
+            {"name": "mem_banks", "type": "int", "default": 1},
+            {"name": "mem_r_ports", "type": "int", "default": 0},
+            {"name": "mem_w_ports", "type": "int", "default": 0},
+            {"name": "mem_rw_ports", "type": "int", "default": 1},
+            # Macro template (capacity-only specs): fixes data_width/depth and
+            # pins the 256x32 tile grid that models its column mux. Values:
+            # sram_64k (256WL x 4:1 x 64b) | sram_256k (256WL x 8:1 x 128b).
+            {"name": "mem_template", "type": "str", "default": None},
             {"name": "voltage_offset_V", "type": "float", "default": 0.0},
             {"name": "vdd_V", "type": "float", "default": None},
             {"name": "temperature_C", "type": "float", "default": 25.0},
@@ -393,6 +396,11 @@ class SramConfig:
     clock_mhz: Optional[float] = None
     source: str = "auto"                 # auto | table | mlp
     model_dir: Optional[str] = None      # checkpoint dir override
+    #: Macro template name. When set, the instance is a bank *hierarchy*:
+    #: ``banks`` banks of ``depth_words / template.depth_words`` subarrays each
+    #: (each subarray = one template macro), composed by
+    #: ``_bank_hierarchy_costs`` from a single-subarray query.
+    template: Optional[str] = None
 
 
 def _first_of(features: Mapping[str, Any], keys: Sequence[str]) -> Any:
@@ -426,13 +434,167 @@ def _fraction(features: Mapping[str, Any], name: str, default: float) -> float:
     return v
 
 
+# --------------------------------------------------------------------------
+# SRAM macro templates (capacity-only specs)
+# --------------------------------------------------------------------------
+#
+# Real macros rarely run the bitline past 256 cells; taller capacities use a
+# column mux instead. When a component gives only a capacity (e.g. a
+# simulator's "scratchpad = 16 MB"), NPUWattch auto-applies these two templates
+# (with a warning) rather than solving a free geometry.
+#
+# Solver mapping: a template pins the tile shape to 256×32 (a measured grid
+# point on every node), so the mux groups appear as vertical tile groups —
+# depth/rows(256) groups of io_bits-wide reads. On an access one group is
+# dynamic and the other (mux-1) groups contribute bitcell leakage + idle
+# decoder energy, which reproduces the col-mux leakage exactly with configs
+# the existing SRAM datasets/MLPs support. Approximation (warned): a real
+# muxed macro fires ONE wordline across all physical columns and precharges
+# every bitline; the tile model gives each group its own short wordline, so
+# shared-WL/BL dynamic energy is underestimated. The column mux itself
+# (pass gates, SA sharing) is not modeled.
+
+SRAM_TEMPLATES: Dict[str, Dict[str, int]] = {
+    # name: wordlines × col-mux × IO bits  (capacity = rows · io_bits · mux)
+    "sram_64k": {"rows": 256, "col_mux": 4, "io_bits": 64,
+                 "depth_words": 1024, "bits": 65536,
+                 "tile_rows": 256, "tile_cols": 32},
+    "sram_256k": {"rows": 256, "col_mux": 8, "io_bits": 128,
+                  "depth_words": 2048, "bits": 262144,
+                  "tile_rows": 256, "tile_cols": 32},
+}
+_TEMPLATE_SMALL, _TEMPLATE_LARGE = "sram_64k", "sram_256k"
+
+
+def _bank_parts(template: str, n_subarrays: int) -> List[Dict[str, Any]]:
+    """Group a template's subarrays into banks of <= 16, largest banks first.
+
+    Full 16-subarray banks form one part; a ragged tail becomes its own
+    single-bank part (its access charges only the tail's real siblings).
+    """
+    t = SRAM_TEMPLATES[template]
+    parts = []
+    full_banks, tail = divmod(n_subarrays, MAX_SUBARRAYS_PER_BANK)
+    for banks, s_per_bank in ((full_banks, MAX_SUBARRAYS_PER_BANK), (1, tail)):
+        if banks and s_per_bank:
+            parts.append({
+                "mem_template": template,
+                "data_width": t["io_bits"],
+                "mem_depth_per_bank": s_per_bank * t["depth_words"],
+                "mem_banks": banks,
+            })
+    return parts
+
+
+def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Cover an arbitrary capacity with the two macro templates.
+
+    Subarray count: fill with large (256k) macros; cover the remainder with
+    small (64k) ones unless that would take a whole large macro's worth (then
+    round up to one more large). Subarrays are then grouped into banks of at
+    most 16 (``_bank_parts``). Returns ``(parts, warnings)`` where each part is
+    a dict of **canonical component attributes** (`mem_template`, `data_width`,
+    `mem_depth_per_bank` = subarrays-per-bank x template depth, `mem_banks`)
+    ready for a §3.1 description.
+    """
+    if capacity_bits <= 0:
+        raise ValueError(f"capacity must be positive, got {capacity_bits} bits")
+    small, large = SRAM_TEMPLATES[_TEMPLATE_SMALL], SRAM_TEMPLATES[_TEMPLATE_LARGE]
+
+    n_large = capacity_bits // large["bits"]
+    rem = capacity_bits - n_large * large["bits"]
+    n_small = 0
+    if rem > 0:
+        n_small = -(-rem // small["bits"])                    # ceil
+        if n_small * small["bits"] >= large["bits"]:
+            n_large += 1
+            n_small = 0
+
+    parts: List[Dict[str, Any]] = []
+    parts += _bank_parts(_TEMPLATE_LARGE, n_large)
+    parts += _bank_parts(_TEMPLATE_SMALL, n_small)
+
+    total = n_large * large["bits"] + n_small * small["bits"]
+    util = capacity_bits / total
+    warnings = [
+        f"capacity-only SRAM spec ({capacity_bits} bits): auto-applied macro "
+        f"template(s) "
+        + " + ".join(f"{c}x {n}" for n, c in
+                     ((_TEMPLATE_LARGE, n_large), (_TEMPLATE_SMALL, n_small)) if c)
+        + f" grouped into banks of <= {MAX_SUBARRAYS_PER_BANK} subarrays; "
+        + f"utilization {util:.1%}"
+    ]
+    if util < 0.5:
+        warnings.append(
+            f"template utilization {util:.1%} < 50% — capacity is far below one "
+            f"{_TEMPLATE_SMALL} macro; energy/area reflect the full macro"
+        )
+    return parts, warnings
+
+
+#: Max subarrays (template macros) per bank in a template hierarchy.
+MAX_SUBARRAYS_PER_BANK = 16
+
+
+def _apply_template(features: Mapping[str, Any],
+                    warnings: List[str]) -> Mapping[str, Any]:
+    """Expand/validate ``mem_template`` in a features dict (no-op without one).
+
+    ``mem_depth_per_bank`` encodes the bank's subarray count: it must be
+    ``S x template.depth_words`` with 1 <= S <= 16 (omitted -> one subarray).
+    """
+    name = features.get("mem_template")
+    if not name:
+        return features
+    t = SRAM_TEMPLATES.get(str(name))
+    if t is None:
+        raise ValueError(
+            f"unknown mem_template '{name}'; available: "
+            f"{', '.join(sorted(SRAM_TEMPLATES))}"
+        )
+    merged = dict(features)
+    for feat, key in (("data_width", "io_bits"),
+                      ("tile_rows", "tile_rows"), ("tile_cols", "tile_cols")):
+        given = merged.get(feat)
+        if given is None:
+            merged[feat] = t[key]
+        elif int(given) != t[key]:
+            raise ValueError(
+                f"mem_template '{name}' fixes {feat}={t[key]} but got {given} — "
+                f"drop the explicit value or drop the template"
+            )
+
+    depth = merged.get("mem_depth_per_bank")
+    if depth is None:
+        merged["mem_depth_per_bank"] = t["depth_words"]          # S = 1
+    else:
+        depth = int(depth)
+        s, rem = divmod(depth, t["depth_words"])
+        if rem or not (1 <= s <= MAX_SUBARRAYS_PER_BANK):
+            raise ValueError(
+                f"mem_template '{name}': mem_depth_per_bank={depth} must be "
+                f"S x {t['depth_words']} words with 1 <= S <= "
+                f"{MAX_SUBARRAYS_PER_BANK} subarrays per bank (got S={s}"
+                f"{f'+{rem}w' if rem else ''})"
+            )
+
+    warnings.append(
+        f"mem_template '{name}' (256 WL x {t['col_mux']}:1 col-mux x "
+        f"{t['io_bits']}b): mux approximated by 256x32 tile groups — unselected "
+        f"groups' bitcell leakage + idle decoders are charged; shared-WL/BL "
+        f"dynamic, the mux itself, and inter-bank select/routing are not modeled"
+    )
+    return merged
+
+
 def normalize_config(
     features: Mapping[str, Any], ds: SramDataset
 ) -> Tuple[SramConfig, List[str]]:
     """Validate/canonicalize a features dict against the loaded dataset."""
     warnings: List[str] = []
+    features = _apply_template(features, warnings)
 
-    node_raw = _first_of(features, ("node", "technology", "tech_node"))
+    node_raw = features.get("node")
     if node_raw is None:
         raise ValueError("missing required feature 'node'")
     node = _norm_node(node_raw)
@@ -449,22 +611,28 @@ def normalize_config(
     if transistor != "hp":
         raise ValueError(f"transistor '{transistor}' not characterized (hp only)")
 
-    depth_raw = _first_of(features, ("depth", "entries", "memory_depth", "words"))
+    depth_raw = features.get("mem_depth_per_bank")
     if depth_raw is None:
-        raise ValueError("missing required feature 'depth' (words per bank)")
-    width_raw = _first_of(features, ("width_bits", "bw", "width", "datawidth", "bitwidth"))
+        raise ValueError(
+            "missing required feature 'mem_depth_per_bank' (words per bank)")
+    width_raw = features.get("data_width")
     if width_raw is None:
-        raise ValueError("missing required feature 'bw' (word width in bits)")
-    depth = _pos_int(depth_raw, "depth")
-    width = _pos_int(width_raw, "bw")
-    banks_raw = _first_of(features, ("n_banks", "banks"))
-    banks = _pos_int(banks_raw if banks_raw is not None else 1, "n_banks")
+        raise ValueError("missing required feature 'data_width' (word width in bits)")
+    depth = _pos_int(depth_raw, "mem_depth_per_bank")
+    width = _pos_int(width_raw, "data_width")
+    banks_raw = features.get("mem_banks")
+    banks = _pos_int(banks_raw if banks_raw is not None else 1, "mem_banks")
 
-    ports_raw = _first_of(features, ("n_ports", "num_ports", "nports"))
-    ports = _pos_int(ports_raw if ports_raw is not None else 1, "n_ports")
+    # Physical array ports = dedicated read + dedicated write + shared RW.
+    # A bare macro with none of the three declared is the common 1RW case.
+    r_p = int(features.get("mem_r_ports") or 0)
+    w_p = int(features.get("mem_w_ports") or 0)
+    rw_p = int(features.get("mem_rw_ports") or 0)
+    ports = (r_p + w_p + rw_p) or 1
     if ports > 2:
         warnings.append(
-            f"n_ports={ports} not characterized; clamped to dual-port (2)"
+            f"mem_r_ports+mem_w_ports+mem_rw_ports={ports} not characterized; "
+            f"clamped to dual-port (2)"
         )
         ports = 2
     if ports == 2:
@@ -516,6 +684,8 @@ def normalize_config(
         clock_mhz=float(clock) if clock else None,
         source=source,
         model_dir=str(model_dir) if model_dir else None,
+        template=(str(features["mem_template"])
+                  if features.get("mem_template") else None),
     )
     return cfg, warnings
 
@@ -952,8 +1122,68 @@ def _rank_key(cfg: SramConfig, c: SramUnitCosts) -> Tuple:
     return (e, ar, t, s.tile_rows, s.tile_cols)
 
 
+def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
+                          extra_warnings: Sequence[str] = ()) -> SramUnitCosts:
+    """Compose a template instance from ONE measured subarray.
+
+    A template instance is a hierarchy::
+
+        instance -> cfg.banks banks -> S subarrays each -> col-mux tile groups
+                    (S = depth_words / template.depth_words, <= 16)
+
+    where "subarray" = one template macro — the largest thing the datasets can
+    cost directly. The recursive call below prices that subarray (banks=1,
+    template cleared); everything above it is arithmetic on the result.
+
+    Access semantics (user-defined 2026-07-21, bank-level clock gating):
+
+    * the accessed subarray pays a full read/write (its internal col-mux group
+      composition included — that is the recursive call's own idle_overhead);
+    * its S-1 siblings in the SAME bank are clocked but not accessed — one
+      subarray-idle each, folded into the per-access energy;
+    * every other bank is clock-gated: leakage only, charged by the
+      ``leak_power`` term over time, never per access.
+    """
+    t = SRAM_TEMPLATES[cfg.template]
+    s_per_bank = cfg.depth_words // t["depth_words"]
+    n_subarrays = cfg.banks * s_per_bank
+
+    subarray = _unit_costs_for_cfg(
+        replace(cfg, template=None, depth_words=t["depth_words"], banks=1),
+        ds, extra_warnings,
+    )
+    sibling_idle = (s_per_bank - 1) * subarray.e_idle_pJ
+
+    st = subarray.structure
+    structure = replace(
+        st,
+        banks=cfg.banks,
+        tiles_per_bank=s_per_bank * st.tiles_per_bank,
+        total_tiles=n_subarrays * st.total_tiles,
+        logical_bits=n_subarrays * st.logical_bits,
+        physical_bits=n_subarrays * st.physical_bits,
+    )
+    return replace(
+        subarray,
+        e_read_pJ=subarray.e_read_pJ + sibling_idle,
+        e_write_pJ=subarray.e_write_pJ + sibling_idle,
+        e_idle_pJ=s_per_bank * subarray.e_idle_pJ,   # one bank held active
+        idle_overhead_pJ=subarray.idle_overhead_pJ + sibling_idle,
+        bank_idle_pJ=s_per_bank * subarray.e_idle_pJ,
+        leak_power_mW=n_subarrays * subarray.leak_power_mW,
+        leak_array_mW=n_subarrays * subarray.leak_array_mW,
+        leak_dec_mW=n_subarrays * subarray.leak_dec_mW,
+        area_um2=n_subarrays * subarray.area_um2,
+        structure=structure,
+        # timing stays the single-subarray path; bank select/routing is part of
+        # the approximation warning emitted by _apply_template.
+    )
+
+
 def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
                         extra_warnings: Sequence[str] = ()) -> SramUnitCosts:
+    if cfg.template:
+        return _bank_hierarchy_costs(cfg, ds, extra_warnings)
     shapes = ds.shapes_by_node[cfg.node]
     # k (separable table scaling) is ALWAYS computed: the MLP source ignores
     # its factors but the report keeps it as a diagnostic, and it carries the

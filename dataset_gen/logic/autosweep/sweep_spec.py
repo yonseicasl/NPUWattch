@@ -14,7 +14,7 @@ from __future__ import annotations
 # combinational and synthesize against a virtual clock.
 CLOCKED_MODULES = {
     "intadd", "intmul", "intmac",
-    "fpadd", "fpmul", "fpmac", "mxfpmac",
+    "fpadd", "fpmul", "fpmac", "mxfpmac", "fpsfu",
     "regfile", "fifo",
 }
 
@@ -30,6 +30,9 @@ POWER_MODES = {
     "intmac": ("random", "hold_b", "sparse50", "idle"),
     "fpmac": ("random", "hold_b", "sparse50", "idle"),
     "mxfpmac": ("random", "hold_scale", "sparse50", "idle"),
+    # per-op-group stimulus: only that group's table + the shared PWL datapath
+    # toggle. Modes for groups a variant disables are rejected by the TB.
+    "fpsfu": ("random", "exp", "trig", "hyp", "erf", "idle"),
     "simplemux": ("random", "valid25"),
     "crossbar": ("random", "fixed_route", "valid25"),
     "fattree": ("random", "fixed_route"),
@@ -37,9 +40,28 @@ POWER_MODES = {
 }
 
 
-def power_modes(rtl_name: str) -> tuple[str, ...]:
-    """Stimulus classes to measure for a module (always at least 'random')."""
-    return POWER_MODES.get(rtl_name, ("random",))
+def power_modes(rtl_name: str, arch_params: str = "") -> tuple[str, ...]:
+    """Stimulus classes to measure for a module (always at least 'random').
+
+    fpsfu's per-group modes apply only when the variant enables that op group
+    (``arch_params`` carries the ``sfu_op_*`` flags) — the generated TB
+    $fatal()s on a mode whose group is disabled, so the driver must not ask
+    for it. Callers that have the job MUST pass its arch_params through.
+    """
+    modes = POWER_MODES.get(rtl_name, ("random",))
+    if rtl_name != "fpsfu" or not arch_params:
+        return modes
+    flags: dict[str, str] = {}
+    for item in arch_params.split(";"):
+        if "=" in item:
+            key, value = item.split("=", 1)
+            flags[key.strip()] = value.strip()
+    keep = {"random", "idle"}
+    for mode, flag in (("exp", "sfu_op_exp"), ("trig", "sfu_op_trig"),
+                       ("hyp", "sfu_op_hyp"), ("erf", "sfu_op_erf")):
+        if flags.get(flag, "0").lower() not in ("0", "", "false"):
+            keep.add(mode)
+    return tuple(m for m in modes if m in keep)
 
 # (exp_bits, mantissa_bits): the 7 industry formats plus synthetic points
 # that densify/extend both axes for interpolation and extrapolation.
@@ -108,7 +130,7 @@ def _fp(pipes):
             yield f"exp_bits={exp};mantissa_bits={mant};pipeline_stages={pipe}"
 
 
-def _mxfpmac():
+def _mxfpmac_bases():
     for fmt in MX_STANDARD_FORMATS:
         for nb in (1, 2, 4):
             if _mx_ok(fmt, 32, nb):
@@ -122,6 +144,24 @@ def _mxfpmac():
     for nb in (1, 2):
         if _mx_ok("bf16", 32, nb):
             yield f"block_elems=32;num_blocks={nb};input_format=bf16"
+
+
+# Pipelined variants added 2026-07-21: the base (no pipeline_stages token)
+# configs keep their original arch_params strings so already-collected rows
+# and run_ids stay valid; they are the legacy pipeline_stages=1 structure
+# (fully combinational dot product + output register), whose achievable clock
+# is bounded by the in2reg half-period budget. The explicit-stage variants
+# add an input capture stage + tree-internal banks and reach the clock range
+# the unpipelined design cannot.
+MXFPMAC_PIPELINE_STAGES = (2, 4)
+
+
+def _mxfpmac():
+    for base in _mxfpmac_bases():
+        yield base
+    for base in _mxfpmac_bases():
+        for ps in MXFPMAC_PIPELINE_STAGES:
+            yield f"{base};pipeline_stages={ps}"
 
 
 def _regfile():
@@ -188,6 +228,37 @@ def _foldedclos():
         )
 
 
+# fpsfu op-group combos: each group alone (isolates its table/logic cost),
+# all-on (+relu, ~free), and exp+hyp (the common NN activation pair).
+_FPSFU_COMBOS = (
+    {"sfu_op_exp": 1},
+    {"sfu_op_trig": 1},
+    {"sfu_op_hyp": 1},
+    {"sfu_op_erf": 1},
+    {"sfu_op_exp": 1, "sfu_op_trig": 1, "sfu_op_hyp": 1, "sfu_op_erf": 1,
+     "sfu_op_relu": 1},
+    {"sfu_op_exp": 1, "sfu_op_hyp": 1},
+)
+_FPSFU_FLAGS = ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf",
+                "sfu_op_relu")
+
+
+def _fpsfu():
+    # ps range is [4, 10] (user decision 2026-07-24; real stage distribution
+    # over 9 segments — see fpsfu.sv.j2). Endpoints + a middle point so the
+    # timing MLP interpolates across the 2.5x span.
+    for exp, mant in ((5, 10), (8, 7), (8, 23)):    # fp16, bf16, fp32
+        for combo in _FPSFU_COMBOS:
+            flags = ";".join(f"{f}={combo.get(f, 0)}" for f in _FPSFU_FLAGS)
+            for segments in (64, 128):
+                for pipe in (4, 7, 10):
+                    yield (
+                        f"exp_bits={exp};mantissa_bits={mant};"
+                        f"sfu_segments={segments};{flags};"
+                        f"pipeline_stages={pipe}"
+                    )
+
+
 _GENERATORS = {
     "intadd": _intadd,
     "intmul": _intmul,
@@ -195,6 +266,7 @@ _GENERATORS = {
     "fpadd": lambda: _fp((2, 3, 5)),
     "fpmul": lambda: _fp((2, 3, 5)),
     "fpmac": lambda: _fp((2, 5)),
+    "fpsfu": _fpsfu,
     "mxfpmac": _mxfpmac,
     "regfile": _regfile,
     "fifo": _fifo,
@@ -206,11 +278,23 @@ _GENERATORS = {
 
 SWEEP_NODES = ("20", "16", "10", "7", "5")
 
+#: Modules whose generated RTL has NOT yet passed the user-run VCS smoke —
+#: excluded from sweep_configs() by default so a production probe→gen-jobs→
+#: sweep restart cannot silently pick up an unvalidated module. After the
+#: fpsfu smoke passes (docs/DESIGN_SFU_DMA.md §2.5), remove it here and run
+#: it as an incremental module add — never fold it into an in-flight sweep.
+# Modules specced here but excluded from sweep_configs() until their RTL
+# generation lands. fpsfu graduated 2026-07-23 (sfu_model.py + templates +
+# gen_fpsfu complete and validated).
+DEFERRED_MODULES: frozenset[str] = frozenset()
 
-def sweep_configs() -> list[tuple[str, str]]:
+
+def sweep_configs(include_deferred: bool = False) -> list[tuple[str, str]]:
     """Every (rtl_name, arch_params) pair of the sweep, in a stable order."""
     configs: list[tuple[str, str]] = []
     for rtl_name, gen in _GENERATORS.items():
+        if rtl_name in DEFERRED_MODULES and not include_deferred:
+            continue
         for arch in gen():
             configs.append((rtl_name, arch))
     return configs

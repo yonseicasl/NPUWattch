@@ -23,6 +23,7 @@ sweep.
 from __future__ import annotations
 
 import csv
+import re
 import shutil
 import tarfile
 import threading
@@ -42,7 +43,7 @@ from autopex import run_pex_job
 from autopnr import run_pnr_job
 from autopwr import run_power_job
 from autosim import run_simulation_job
-from autosynth import run_synthesis_job
+from autosynth import CLOCK_UNCERTAINTY_NS, run_synthesis_job
 from sweep_spec import power_modes
 
 SWEEP_REPORTS_DIR = NW_LOGIC_DIR / "sweep_reports"
@@ -79,6 +80,54 @@ def _tech_dir(job: dict[str, str]) -> Path:
     return NW_LOGIC_DIR / f"TECH_{int(normalize_node(job['node'])):02d}nm"
 
 
+_QOR_GROUP_RE = re.compile(r"Timing Path Group\s+'([^']+)'")
+_QOR_SLACK_RE = re.compile(r"Critical Path Slack:\s+(-?[0-9.]+)")
+
+# The gate trips only when a violation eats into the margin the SIMULATION
+# actually has.  STA slack includes the 0.2 ns clock uncertainty, which is
+# jitter margin that does not exist in the jitter-free SDF sim: a run at STA
+# slack s still has s + 0.2 ns of real sim margin.  ICC2 routinely lands a
+# few hundredths negative after DC met (2026-07-26: p50 of gate hits was
+# -0.03, 97% within the uncertainty; the old sweep had 1,682 such runs pass
+# their gate sims, with functional failures only from about -0.23).  Failing
+# at half the uncertainty keeps >=0.1 ns of true sim margin while discarding
+# only genuinely unachievable clocks.
+PNR_GATE_SLACK_NS = -(CLOCK_UNCERTAINTY_NS / 2.0)
+
+
+def _check_pnr_timing(job: dict[str, str]) -> None:
+    """Fail fast on post-PnR setup violations deep enough to corrupt the SDF
+    gate sim (2026-07-20: 162/164 sim failures were unmet clocks), instead of
+    letting the netlist reach sim where they surface as confusing checker
+    FAILs.  Raises RuntimeError listing every path group below
+    PNR_GATE_SLACK_NS; silently returns if the qor report is missing (the
+    gate is advisory, not load-bearing).
+    """
+    qor_path = _tech_dir(job) / "02_pnr" / run_id_for_job(job) / "qor.rpt"
+    if not qor_path.exists():
+        return
+    text = qor_path.read_text(encoding="utf-8", errors="replace")
+    violated: list[str] = []
+    group = None
+    for line in text.splitlines():
+        group_match = _QOR_GROUP_RE.search(line)
+        if group_match:
+            group = group_match.group(1)
+            continue
+        slack_match = _QOR_SLACK_RE.search(line)
+        if slack_match and group is not None:
+            slack = float(slack_match.group(1))
+            if slack < PNR_GATE_SLACK_NS:
+                violated.append(f"{group} slack {slack:g}")
+            group = None
+    if violated:
+        raise RuntimeError(
+            "post-PnR setup timing violated beyond the sim margin "
+            f"(threshold {PNR_GATE_SLACK_NS:g}: " + "; ".join(violated) + ") -- "
+            "the job clock is not achievable; gen-jobs should derive a slower one"
+        )
+
+
 def _collected_modes(job: dict[str, str]) -> set[tuple[str, str]]:
     """(power_activity_mode, stim_mode) pairs already in the dataset for this job."""
     dataset = dataset_path_for(job["rtl_name"].strip())
@@ -98,7 +147,10 @@ def _collected_modes(job: dict[str, str]) -> set[tuple[str, str]]:
 def _required_modes(job: dict[str, str]) -> set[tuple[str, str]]:
     """Every (activity, stimulus) row a complete job must have in the dataset."""
     required = {("unvectored", "none")}
-    required.update(("vectored", mode) for mode in power_modes(job["rtl_name"].strip()))
+    required.update(
+        ("vectored", mode)
+        for mode in power_modes(job["rtl_name"].strip(), job.get("arch_params", ""))
+    )
     return required
 
 
@@ -122,6 +174,24 @@ def _stage_keepers(job: dict[str, str], staging: Path, phase: str) -> None:
             for source in stage_run.glob(pattern):
                 if source.is_file():
                     shutil.copyfile(source, dest / source.name)
+
+
+def _stash_failure_evidence(job: dict[str, str], staging: Path) -> None:
+    """On failure, also archive the PnR netlist and SDF next to the reports.
+
+    A sim failure is undiagnosable once the run dirs are pruned (2026-07-26:
+    59 intmac gate sims produced X outputs with clean timing and the netlists
+    were already gone).  Only the failure path pays the archive cost.
+    """
+    run_id = run_id_for_job(job)
+    rtl_name = job["rtl_name"].strip()
+    pnr_run = _tech_dir(job) / "02_pnr" / run_id
+    dest = staging / "02_pnr"
+    for name in (f"{rtl_name}_icc2.v", f"{rtl_name}.sdf"):
+        source = pnr_run / name
+        if source.is_file():
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, dest / name)
 
 
 def _prune_job(job: dict[str, str], staging: Path) -> None:
@@ -166,6 +236,8 @@ def run_sweep_job(job: dict[str, str], job_index: int) -> str:
         run_synthesis_job(job, job_index)
         stage = "pnr"
         run_pnr_job(job, job_index)
+        stage = "pnr-timing"
+        _check_pnr_timing(job)
         stage = "pex"
         run_pex_job(job, job_index)
         stage = "sim"
@@ -175,7 +247,7 @@ def run_sweep_job(job: dict[str, str], job_index: int) -> str:
         stage = "collect-unvectored"
         _collect_row(job)
         _stage_keepers(job, staging, "unvectored")
-        for mode in power_modes(job["rtl_name"].strip()):
+        for mode in power_modes(job["rtl_name"].strip(), job.get("arch_params", "")):
             stage = f"pwr-vectored-{mode}"
             run_power_job(job, job_index, vectored=True, stim_mode=mode)
             stage = f"collect-vectored-{mode}"
@@ -184,6 +256,7 @@ def run_sweep_job(job: dict[str, str], job_index: int) -> str:
     except Exception as exc:  # noqa: BLE001 - a sweep must survive bad jobs
         _record_failure(job, stage, exc)
         _stage_keepers(job, staging, "failed")
+        _stash_failure_evidence(job, staging)
         _prune_job(job, staging)
         return f"failed:{stage}"
     _prune_job(job, staging)

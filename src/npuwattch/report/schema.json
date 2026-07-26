@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NPUWattch report.json (manual §3.6, npuwattch-report/1)",
+  "type": "object",
+  "required": ["schema", "design_name", "timestamp", "version", "tech", "clock",
+               "activity_source", "totals", "timing", "windows", "components",
+               "provenance"],
+  "properties": {
+    "schema": {"const": "npuwattch-report/1"},
+    "design_name": {"type": "string"},
+    "timestamp": {"type": "string"},
+    "version": {"type": "string"},
+    "git_commit": {"type": "string"},
+    "tech": {
+      "type": "object",
+      "required": ["node", "transistor", "corner", "voltage_offset_V", "temperature_C"],
+      "properties": {
+        "node": {"type": "string"},
+        "transistor": {"type": "string"},
+        "corner": {"type": "string"},
+        "voltage_offset_V": {"type": "number"},
+        "temperature_C": {"type": "number"}
+      }
+    },
+    "clock": {
+      "type": "object",
+      "required": ["frequency_MHz"],
+      "properties": {"frequency_MHz": {"type": "number"}}
+    },
+    "activity_source": {"type": "string"},
+    "model_tag": {"type": "string"},
+    "banners": {"type": "array", "items": {
+      "type": "object", "required": ["level", "text"],
+      "properties": {"level": {"enum": ["warn", "err"]}, "text": {"type": "string"}}}},
+    "totals": {
+      "type": "object",
+      "required": ["energy_pJ", "dyn_pJ", "leak_pJ", "dyn_pct", "leak_pct",
+                   "avg_power_mW", "area_um2", "cycles", "exec_time_s"],
+      "properties": {
+        "energy_pJ": {"type": "number"}, "dyn_pJ": {"type": "number"},
+        "leak_pJ": {"type": "number"}, "dyn_pct": {"type": "number"},
+        "leak_pct": {"type": "number"}, "avg_power_mW": {"type": "number"},
+        "area_um2": {"type": "number"}, "cycles": {"type": "number"},
+        "exec_time_s": {"type": "number"}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["f_max_MHz", "check_text"],
+      "properties": {"f_max_MHz": {"type": ["number", "null"]},
+                     "check_text": {"type": "string"}}
+    },
+    "windows": {"type": "array", "items": {
+      "type": "object",
+      "required": ["index", "label", "cycles", "dyn_pJ", "leak_pJ", "total_pJ",
+                   "avg_power_mW"],
+      "properties": {
+        "index": {"type": "integer"}, "label": {"type": "string"},
+        "cycles": {"type": "number"}, "dyn_pJ": {"type": "number"},
+        "leak_pJ": {"type": "number"}, "total_pJ": {"type": "number"},
+        "avg_power_mW": {"type": "number"}
+      }}},
+    "matrix": {"type": "object"},
+    "components": {"type": "array", "items": {
+      "type": "object",
+      "required": ["name", "cls", "model", "count", "dyn_energy_pJ",
+                   "leak_energy_pJ", "energy_pJ", "energy_pct", "leak_power_mW",
+                   "area_um2", "crit_path_ns", "activity_events"],
+      "properties": {
+        "name": {"type": "string"}, "cls": {"type": "string"},
+        "model": {"enum": ["cal", "const", "stub"]},
+        "count": {"type": "integer"}, "dyn_energy_pJ": {"type": "number"},
+        "leak_energy_pJ": {"type": "number"}, "energy_pJ": {"type": "number"},
+        "energy_pct": {"type": "number"}, "leak_power_mW": {"type": "number"},
+        "area_um2": {"type": "number"}, "crit_path_ns": {"type": "number"},
+        "activity_events": {"type": "number"},
+        "vectorless": {"type": "boolean"}, "user_defined": {"type": "boolean"}
+      }}},
+    "tree": {"type": ["object", "null"]},
+    "provenance": {
+      "type": "object",
+      "required": ["models", "inputs", "warnings"],
+      "properties": {
+        "models": {"type": "array"},
+        "model_note": {"type": "string"},
+        "inputs": {"type": "array", "items": {
+          "type": "object", "required": ["name"],
+          "properties": {"name": {"type": "string"},
+                         "sha": {"type": ["string", "null"]}}}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

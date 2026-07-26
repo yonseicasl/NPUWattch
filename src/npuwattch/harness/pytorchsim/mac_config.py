@@ -409,10 +409,18 @@ def _find_kernel_mlir(kernel_dir: Path) -> Path:
     ]
     if not candidates:
         raise MacInferenceError(f"no kernel .mlir in {kernel_dir}")
-    # Prefer the one that actually contains a linalg.matmul.
-    for p in candidates:
-        if "linalg.matmul" in p.read_text(encoding="utf-8", errors="ignore"):
-            return p
+    # Prefer the one that actually contains a linalg.matmul; >1 such is ambiguous.
+    matmul = [
+        p for p in candidates
+        if "linalg.matmul" in p.read_text(encoding="utf-8", errors="ignore")
+    ]
+    if len(matmul) > 1:
+        raise MacInferenceError(
+            f"{kernel_dir}: {len(matmul)} candidate kernel MLIRs contain linalg.matmul "
+            f"({', '.join(p.name for p in matmul)}); ambiguous — leave exactly one"
+        )
+    if matmul:
+        return matmul[0]
     return candidates[0]
 
 
@@ -434,4 +442,108 @@ def infer_mac_config_from_dir(
         lanes,
         meta_text=meta_text,
         pipeline_stages=pipeline_stages,
+    )
+
+
+# ---------------------------------------------------------------------------
+# meta.txt-only fallback (author delivery bundles ship no kernel MLIR)
+# ---------------------------------------------------------------------------
+
+def infer_mac_config_from_meta(
+    meta_text: str,
+    lanes: int,
+    *,
+    pipeline_stages: int = 2,
+) -> MacConfig:
+    """Infer a ``MacConfig`` from ``meta.txt`` alone — the MLIR-less fallback.
+
+    Author delivery bundles (``gem5_outputs/<hash>/``) carry only meta.txt +
+    gem5 stats; without ``linalg.matmul`` this path cannot *prove* the kernel is
+    a matmul, so the **caller must gate on TOGSim activity** (systolic cycles /
+    GEMM ops > 0) before calling. What meta.txt supports and what is assumed:
+
+    - operand dtype ← the 2-D ``attr=1`` (input) entries' torch dtype; 1-D
+      entries (biases) don't vote. Mixed dtypes pick the narrowest, with a
+      warning (same rule as the partial-int-lowering MLIR path).
+    - accumulator ← **assumed**: fp operands accumulate in f32 (f64 stays f64);
+      int uses the ``2·bits + ceil(log2(lanes))`` fallback rule.
+    - gemm_shape ← best-effort from two 2-D inputs sharing a K dim (either
+      orientation); ``None`` when ambiguous. Informational only.
+
+    ``confidence`` is always ``"low"``.
+    """
+    if lanes < 1:
+        raise MacInferenceError(f"lanes must be >= 1, got {lanes}")
+
+    entries = parse_meta(meta_text)
+    if not entries:
+        raise MacInferenceError("meta.txt has no parseable entries")
+
+    warnings: List[str] = []
+    provenance: Dict[str, str] = {}
+
+    inputs_2d = [e for e in entries if e.attr == 1 and len(e.shape) == 2]
+    voters = inputs_2d
+    if not voters:
+        voters = [e for e in entries if e.attr == 1]
+        if voters:
+            warnings.append(
+                "no 2-D input tensors in meta.txt; operand dtype taken from "
+                "non-matrix inputs"
+            )
+    if not voters:
+        raise MacInferenceError("meta.txt has no attr=1 (input) entries")
+
+    by_canonical = {e.dtype.canonical: e.dtype for e in voters}
+    if len(by_canonical) > 1:
+        operand = min(by_canonical.values(), key=lambda d: (d.bits, d.canonical))
+        warnings.append(
+            f"mixed input dtypes in meta.txt ({', '.join(sorted(by_canonical))}); "
+            f"using the narrowest ({operand.canonical})"
+        )
+    else:
+        operand = next(iter(by_canonical.values()))
+    provenance["operand_dtype"] = "meta.txt inputs (attr=1); no kernel MLIR"
+
+    # Accumulator is invisible in meta.txt — assume, and say so.
+    if operand.kind == "float":
+        acc_canonical = "f64" if operand.bits > 32 else "f32"
+        bits, exp, mant = _FLOAT_FORMATS[acc_canonical]
+        accum = DType("float", bits, acc_canonical, exp_bits=exp, mantissa_bits=mant)
+        provenance["accum_dtype"] = f"assumed {acc_canonical} (meta.txt-only)"
+    else:
+        acc_bits = _fallback_int_acc_width(operand.bits, lanes)
+        accum = DType("int", acc_bits, f"i{acc_bits}", signed=True)
+        provenance["accum_dtype"] = "fallback rule 2*bits+ceil(log2(lanes))"
+
+    primitive, cfg = _select_primitive(
+        operand, accum, lanes, pipeline_stages, lowering_ok=False
+    )
+    provenance["lanes"] = "caller (config vpu_num_lanes / systolicArrayWidth)"
+    provenance["pipeline_stages"] = "assumed (opLat=1 array; not derivable)"
+
+    # Best-effort (M, K, N): exactly two 2-D inputs sharing an inner dim.
+    gemm_shape: Optional[Tuple[int, int, int]] = None
+    if len(inputs_2d) == 2:
+        (m0, k0), (b0, b1) = inputs_2d[0].shape, inputs_2d[1].shape
+        if k0 == b0:
+            gemm_shape = (m0, k0, b1)
+        elif k0 == b1:                       # weights stored transposed
+            gemm_shape = (m0, k0, b0)
+
+    warnings.append(
+        "MAC config inferred from meta.txt only (no kernel MLIR); accumulator "
+        "format is assumed — energy for this kernel is lower-confidence"
+    )
+    return MacConfig(
+        primitive=primitive,
+        primitive_config=cfg,
+        operand_dtype=operand,
+        accum_dtype=accum,
+        lanes=lanes,
+        pipeline_stages=pipeline_stages,
+        confidence="low",
+        gemm_shape=gemm_shape,
+        warnings=tuple(warnings),
+        provenance=provenance,
     )

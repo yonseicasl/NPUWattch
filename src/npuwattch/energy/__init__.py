@@ -9,23 +9,41 @@ energy/area/power. The trained MLP models drop in as a calibrated
 
 from __future__ import annotations
 
+from .activity_io import read_activity_csv
 from .aggregate import (
     ComponentEnergy,
     RunEnergy,
     WindowEnergy,
+    aggregate_native,
     aggregate_run,
     aggregate_window,
     analyze_run,
 )
-from .unit_cost import StubUnitCostProvider, TechContext, UnitCostProvider
+from .provider_factory import ProviderChain, build_provider
+from .unit_cost import (
+    D2D_ENERGY_PER_BIT_PJ,
+    D2DLinkCostProvider,
+    StubUnitCostProvider,
+    TechContext,
+    UnitCostProvider,
+)
+from .vectorless import DEFAULT_VECTORLESS_ACTIVITY, vectorless_activity_rows
 
 __all__ = [
+    "D2D_ENERGY_PER_BIT_PJ",
+    "D2DLinkCostProvider",
+    "DEFAULT_VECTORLESS_ACTIVITY",
+    "vectorless_activity_rows",
+    "ProviderChain",
+    "build_provider",
     "ComponentEnergy",
     "RunEnergy",
     "WindowEnergy",
+    "aggregate_native",
     "aggregate_run",
     "aggregate_window",
     "analyze_run",
+    "read_activity_csv",
     "StubUnitCostProvider",
     "TechContext",
     "UnitCostProvider",

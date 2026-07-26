@@ -79,13 +79,19 @@ module {{ module_name }}_tb;
         repeat (2) @(posedge i_clk);
         i_rst_n = 1'b1;
 
+        // Edge-counted protocol: drive at a falling edge, sample at the NEXT
+        // falling edge, and drive the following case in the same time slot --
+        // each case sees exactly one rising edge at any clock period.  (The
+        // old fixed "#1 after posedge" settle crossed clock edges for periods
+        // below 2 ns and applied the held push/pop strobes several times;
+        // 2026-07-22: every fifo gate sim failed this way.)
+        @(negedge i_clk);
+        i_push = vec_push[0];
+        i_pop = vec_pop[0];
+        i_push_data = vec_push_data[0];
         for (int n = 0; n < NUM_CASES; n = n + 1) begin
-            @(negedge i_clk);
-            i_push = vec_push[n];
-            i_pop = vec_pop[n];
-            i_push_data = vec_push_data[n];
             @(posedge i_clk);
-            #1;
+            @(negedge i_clk);
             $display("fifo case=%0d push=%0b pop=%0b valid=%0b exp_valid=%0b data=%h exp=%h full=%0b empty=%0b",
                 n, i_push, i_pop, o_pop_valid, vec_expected_valid[n],
                 o_pop_data, vec_expected_data[n], o_full, o_empty);
@@ -95,6 +101,14 @@ module {{ module_name }}_tb;
                 (o_empty !== vec_expected_empty[n])) begin
                 errors = errors + 1;
                 $display("fifo mismatch at case %0d", n);
+            end
+            if (n + 1 < NUM_CASES) begin
+                i_push = vec_push[n+1];
+                i_pop = vec_pop[n+1];
+                i_push_data = vec_push_data[n+1];
+            end else begin
+                i_push = 1'b0;
+                i_pop = 1'b0;
             end
         end
 

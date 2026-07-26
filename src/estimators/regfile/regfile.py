@@ -39,14 +39,17 @@ ESTIMATOR_SPEC = {
         "train_timing": "train_timing_model",
     },
     "parameters": {
+        # Canonical names only (npuwattch.naming) — no aliases.
         "required": [
-            {"name": "node", "type": "int", "arch_keys": ["node", "technology", "tech_node"]},
-            {"name": "depth", "type": "int", "arch_keys": ["depth", "entries", "num_entries"]},
-            {"name": "bw", "type": "int", "arch_keys": ["bw", "width", "bitwidth", "datawidth"]},
+            {"name": "node", "type": "str"},
+            {"name": "mem_depth_per_bank", "type": "int"},
+            {"name": "data_width", "type": "int"},
         ],
         "optional": [
-            {"name": "n_banks", "type": "int", "arch_keys": ["n_banks", "banks"], "default": 1},
-            {"name": "n_ports", "type": "int", "arch_keys": ["n_ports", "ports", "num_ports", "nports"], "default": 1},
+            {"name": "mem_banks", "type": "int", "default": 1},
+            {"name": "mem_r_ports", "type": "int", "default": 1},
+            {"name": "mem_w_ports", "type": "int", "default": 1},
+            {"name": "mem_rw_ports", "type": "int", "default": 0},
         ],
     },
     "models": {

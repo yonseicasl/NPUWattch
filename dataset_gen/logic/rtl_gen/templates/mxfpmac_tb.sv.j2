@@ -5,6 +5,7 @@ module {{ module_name }}_tb;
     localparam int SCALE_EXP_BITS = {{ scale_exp_bits }};
     localparam int ACC_WIDTH = {{ acc_width }};
     localparam int TOTAL_ELEMS = {{ total_elems }};
+    localparam int PIPELINE_STAGES = {{ pipeline_stages }};
     localparam int NUM_CASES = {{ test_vectors|length }};
 
     logic i_clk;
@@ -111,7 +112,9 @@ module {{ module_name }}_tb;
             i_b = vec_b[n];
             i_scale_a = vec_scale_a[n];
             i_scale_b = vec_scale_b[n];
-            @(posedge i_clk);
+            // The DUT is stateless, so holding the operands for the full
+            // pipeline latency just re-feeds the same case down the pipe.
+            repeat (PIPELINE_STAGES) @(posedge i_clk);
             #1;
             $display("mxfpmac case=%0d desc=%s got=%0d exp=%0d valid=%0b",
                 n, vec_desc[n], o_result, $signed(vec_expected[n]), o_valid);
@@ -127,7 +130,7 @@ module {{ module_name }}_tb;
         i_b = '0;
         i_scale_a = '0;
         i_scale_b = '0;
-        @(posedge i_clk);
+        repeat (PIPELINE_STAGES) @(posedge i_clk);
         #1;
         if (o_valid !== 1'b0) begin
             errors = errors + 1;
