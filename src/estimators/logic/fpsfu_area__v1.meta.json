@@ -1,0 +1,57 @@
+{
+ "component": "fpsfu",
+ "model": "area",
+ "version": "v1",
+ "arch": [
+  64,
+  64
+ ],
+ "n_in": 16,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_exp_bits",
+  "log2_mantissa_bits",
+  "log2_sfu_segments",
+  "log2_pipeline_stages",
+  "sfu_op_exp",
+  "sfu_op_trig",
+  "sfu_op_hyp",
+  "sfu_op_erf",
+  "sfu_op_relu",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm"
+ ],
+ "stim_modes": [],
+ "target": "log10_um2",
+ "target_column": "pnr_total_area_um2",
+ "dataset_sha256": "8061c579d3bf3d7b94c11e26e09405771058d767a0af1401d91146dffac41469",
+ "seed": 42,
+ "split": {
+  "train": 864,
+  "val": 108,
+  "test": 108
+ },
+ "epochs_run": 537,
+ "val_mape": 0.03011934459209442,
+ "test_mape": 0.02815489207723201,
+ "test_spearman": 0.9984376041994152,
+ "per_mode_test_mape": {
+  "-": 0.02815489207723201
+ },
+ "per_node_test_mape": {
+  "10nm": 0.024657821683174076,
+  "16nm": 0.0267348013128345,
+  "20nm": 0.027998343090484743,
+  "5nm": 0.03033019700827247,
+  "7nm": 0.03064954610253557
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 18.24517059326172,
+ "date": "2026-07-29T22:40:32",
+ "torch": "2.13.0+cpu"
+}

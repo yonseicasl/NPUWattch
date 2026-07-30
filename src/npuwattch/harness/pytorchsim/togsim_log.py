@@ -80,6 +80,21 @@ _DMA = re.compile(
 )
 _TOTAL_EXEC = re.compile(r"Total execution cycles:\s+(\d+)")
 
+# Core [0] : NUMA local memory: 393216 requests, remote memory: 0 requests
+# Final-block line (one per core): the EXACT local/remote DRAM-request split —
+# replaces the NoC's uniform-traffic assumption for chiplet (anynet) runs.
+_NUMA = re.compile(
+    r"Core \[(\d+)\] : NUMA local memory:\s*(\d+) requests?,\s*"
+    r"remote memory:\s*(\d+) requests?"
+)
+
+# BookSim's own end-of-run stats echo (bare lines, no [timestamp] prefix):
+#   Injected packet length average = 1
+# The NoC flit model assumes 1 flit/packet; the LAST reported average is the
+# runtime check (and scale factor) for that assumption.
+_PKT_LEN = re.compile(r"^Injected packet length average\s*=\s*([\d.eE+-]+)\s*$",
+                      re.MULTILINE)
+
 # [DRAM] channel 5 | ... | 48 reads, 16 writes        (per-channel, cumulative)
 # [DRAM] channels 0..15 combined | ... | 772 reads, 256 writes
 _DRAM_CH = re.compile(r"\[DRAM\] channel (\d+) \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
@@ -208,6 +223,12 @@ class TogsimActivity:
     dram_reads: Optional[int] = None         # whole-chip DRAM requests (final)
     dram_writes: Optional[int] = None
     icnt_config: Optional[Dict[str, object]] = None   # BookSim [config] echo
+    #: NUMA request split, summed over cores (None when the log has no NUMA
+    #: line — pre-NUMA builds). local + remote should equal the DRAM total.
+    numa_local: Optional[int] = None
+    numa_remote: Optional[int] = None
+    #: BookSim's last "Injected packet length average" (None when absent).
+    booksim_avg_packet_length: Optional[float] = None
     per_core: Dict[int, Dict[str, object]] = field(default_factory=dict)
 
 
@@ -247,6 +268,17 @@ def parse_togsim_log(text: str,
     for m in _DMA.finditer(text):
         dma_last[int(m.group(1))] = (int(m.group(2)), int(m.group(3)), int(m.group(4)))
 
+    # NUMA local/remote request split: last line per core = cumulative.
+    numa_last: Dict[int, tuple] = {}
+    for m in _NUMA.finditer(text):
+        numa_last[int(m.group(1))] = (int(m.group(2)), int(m.group(3)))
+
+    pkt = _PKT_LEN.findall(text)
+    try:
+        avg_pkt_len = float(pkt[-1]) if pkt else None
+    except ValueError:
+        avg_pkt_len = None
+
     te = _TOTAL_EXEC.search(text)
     total_exec = int(te.group(1)) if te else None
 
@@ -266,11 +298,12 @@ def parse_togsim_log(text: str,
 
     per_core: Dict[int, Dict[str, object]] = {}
     core_ids = (set(c for c, _ in sys_last) | set(vec_last) | set(comp)
-                | set(mov) | set(dma_last))
+                | set(mov) | set(dma_last) | set(numa_last))
     for c in sorted(core_ids):
         arrays = {a: v for (cc, a), v in sys_last.items() if cc == c}
         g = comp.get(c, (0, 0, 0))
         d = dma_last.get(c, (0, 0, 0))
+        n = numa_last.get(c, (0, 0))
         per_core[c] = {
             "systolic_active_cycles": sum(arrays.values()),
             "arrays": arrays,
@@ -283,6 +316,8 @@ def parse_togsim_log(text: str,
             "dma_active_cycles": d[0],
             "dma_idle_cycles": d[1],
             "dma_responses": d[2],
+            "numa_local": n[0],
+            "numa_remote": n[1],
         }
 
     return TogsimActivity(
@@ -301,5 +336,8 @@ def parse_togsim_log(text: str,
         dram_reads=dram_reads,
         dram_writes=dram_writes,
         icnt_config=parse_icnt_config(text),
+        numa_local=(sum(l for l, _ in numa_last.values()) if numa_last else None),
+        numa_remote=(sum(r for _, r in numa_last.values()) if numa_last else None),
+        booksim_avg_packet_length=avg_pkt_len,
         per_core=per_core,
     )

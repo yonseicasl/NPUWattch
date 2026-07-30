@@ -173,6 +173,19 @@ def prepare_simulation_run(job: dict[str, str], run_dir: Path) -> Path:
     return filelist_path
 
 
+def _marginal_error_count(sim_log: Path) -> int:
+    """Total tolerated value mismatches reported by the TB's summary line
+    ("<tb> PASS marginal_errors=N"); 0 when the log is absent or clean."""
+    if not sim_log.exists():
+        return 0
+    total = 0
+    for match in re.finditer(
+        r"PASS marginal_errors=(\d+)", sim_log.read_text(encoding="utf-8", errors="replace")
+    ):
+        total += int(match.group(1))
+    return total
+
+
 def _check_direct_sim_outputs(run_dir: Path) -> str | None:
     """Replicate 04_sim.sh's pass/fail checks for direct ./simv re-runs.
 
@@ -243,6 +256,10 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
     # vectored power runs can pick their activity file.
     for mode_index, mode in enumerate(modes):
         simv_args = [
+            # Runtime half of +vcs+initreg (compile flag lives in 04_sim.sh):
+            # definite random flop values at time 0 instead of X, which would
+            # otherwise stick through the synthesized sync-reset logic.
+            "+vcs+initreg+random",
             f"+nw_clock_period_ps={period_ps}",
             f"+nw_power_mode={mode}",
         ]
@@ -296,6 +313,20 @@ def run_simulation_job(job: dict[str, str], job_index: int, *, verbose: bool = F
             )
             raise RuntimeError(
                 f"gate-level simulation failed for {run_id} (mode {mode}); see {sim_log}"
+            )
+        marginal = _marginal_error_count(sim_log)
+        if marginal:
+            log_event(
+                stage=STAGE_LOGIC_SIM,
+                status=STATUS_RUNNING,
+                message=(
+                    f"WARNING: functional check tolerated {marginal} value "
+                    f"mismatch(es) in mode {mode} (near-miss timing; power "
+                    "phase unaffected)"
+                ),
+                job=job,
+                run_id=run_id,
+                details={"sim_log": str(sim_log), "marginal_errors": marginal},
             )
         _stash_mode_outputs(run_dir, mode)
 

@@ -1,0 +1,51 @@
+{
+ "component": "fpmul",
+ "model": "timing",
+ "version": "v1",
+ "arch": [
+  64,
+  64
+ ],
+ "n_in": 10,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_exp_bits",
+  "log2_mantissa_bits",
+  "log2_pipeline_stages",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm"
+ ],
+ "stim_modes": [],
+ "target": "log10_ns",
+ "target_column": "pnr_crit_path_ns",
+ "dataset_sha256": "8061c579d3bf3d7b94c11e26e09405771058d767a0af1401d91146dffac41469",
+ "seed": 42,
+ "split": {
+  "train": 360,
+  "val": 45,
+  "test": 45
+ },
+ "epochs_run": 554,
+ "val_mape": 0.011122926138341427,
+ "test_mape": 0.009569609472476308,
+ "test_spearman": 0.9984507451198548,
+ "per_mode_test_mape": {
+  "-": 0.009569609472476308
+ },
+ "per_node_test_mape": {
+  "10nm": 0.011014749899415996,
+  "16nm": 0.015273429871668976,
+  "20nm": 0.011437038248145823,
+  "5nm": 0.0053751021595461745,
+  "7nm": 0.007100796427144846
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 17.615222930908203,
+ "date": "2026-07-29T22:29:26",
+ "torch": "2.13.0+cpu"
+}

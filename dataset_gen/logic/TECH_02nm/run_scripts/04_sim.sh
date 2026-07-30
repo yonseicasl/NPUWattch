@@ -81,7 +81,12 @@ if [ -n "${VCS_HOME:-}" ]; then
 fi
 
 set +e
-vcs -full64 -sverilog -timescale=1ns/1ps +notimingcheck -debug_access+all -f 04_sim.f -l vcs_compile.log -o simv
+# +vcs+initreg+random: give every sequential cell a definite random value at
+# time 0.  Power-up X otherwise sticks in 4-state gate sims through the
+# synthesized sync-reset datapath logic (X-pessimism), even though the
+# netlist resets correctly from any definite state.  The runtime choice is
+# passed to simv by autosim (+vcs+initreg+random).
+vcs -full64 -sverilog -timescale=1ns/1ps +notimingcheck +vcs+initreg+random -debug_access+all -f 04_sim.f -l vcs_compile.log -o simv
 VCS_STATUS="$?"
 set -e
 

@@ -1,0 +1,58 @@
+{
+ "component": "fpmul",
+ "model": "energy",
+ "version": "v1",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 12,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_exp_bits",
+  "log2_mantissa_bits",
+  "log2_pipeline_stages",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random"
+ ],
+ "stim_modes": [
+  "none",
+  "random"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "8061c579d3bf3d7b94c11e26e09405771058d767a0af1401d91146dffac41469",
+ "seed": 42,
+ "split": {
+  "train": 720,
+  "val": 90,
+  "test": 90
+ },
+ "epochs_run": 601,
+ "val_mape": 0.039272382855415344,
+ "test_mape": 0.04024336506897371,
+ "test_spearman": 0.998304317405441,
+ "per_mode_test_mape": {
+  "none": 0.03933003556429111,
+  "random": 0.04115669457365633
+ },
+ "per_node_test_mape": {
+  "10nm": 0.04579022157683315,
+  "16nm": 0.03887380362118603,
+  "20nm": 0.054672305506987436,
+  "5nm": 0.031374542089877167,
+  "7nm": 0.034542688161676036
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 17.615222930908203,
+ "date": "2026-07-29T22:28:42",
+ "torch": "2.13.0+cpu"
+}

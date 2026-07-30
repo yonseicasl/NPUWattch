@@ -19,9 +19,13 @@ Traffic: every BookSim packet in these runs is a single flit of ``flit_size``
 bytes (= ``dram_req_size_byte``), and each DRAM request contributes one request
 and one response packet — so total flits = ``2 × (dram_reads + dram_writes)``,
 verified exactly against the log's injected-rate × nodes × cycles on the author
-samples. Multi-router traversal splits (anynet) use a **uniform-traffic
-assumption** (warned): with R real routers, ``(R−1)/R`` of flits cross a
-die-to-die channel and traverse two routers.
+samples; the log's own "Injected packet length average" is re-checked at runtime
+and scales the flit totals (warned) if a build ever reports ≠ 1 flit/packet.
+Multi-router traversal splits (anynet) are **exact** when the log carries the
+per-core ``NUMA local/remote`` request counters (remote requests cross a
+die-to-die channel and a second switch); logs without them fall back to the
+**uniform-traffic assumption** (warned): with R real routers, ``(R−1)/R`` of
+flits cross a die-to-die channel and traverse two routers.
 
 The output feeds the generic compound mechanism: ``symbols`` become integer
 run-config expression symbols (``icnt_ports``/``icnt_routers``/``icnt_channels``
@@ -149,17 +153,29 @@ def _find_net_file(icnt: Dict[str, object], booksim_dir: Path) -> Path:
 
 
 def _flit_totals(act) -> Tuple[Optional[float], List[str]]:
-    """Total network flits for a window: 2 × (DRAM reads + writes).
+    """Total network flits for a window: 2 × (DRAM reads + writes) × flits/packet.
 
-    Every packet in PyTorchSim's BookSim runs is one flit (packet length average
-    = 1) of ``flit_size`` = ``dram_req_size_byte`` bytes, and each memory request
-    crosses the network twice (request + response)."""
+    Each memory request crosses the network twice (request + response). Packets
+    are single flits of ``flit_size`` = ``dram_req_size_byte`` bytes in every
+    sample seen so far; the log's own BookSim stats echo ("Injected packet
+    length average") is the runtime check — when it reports a different average
+    (a future build/config with multi-flit packets), flit totals scale by it
+    with a warning instead of silently undercounting."""
     if act.dram_reads is None or act.dram_writes is None:
         return None, [
             "log has no DRAM request totals; NoC structure is emitted but its "
             "dynamic energy cannot be charged"
         ]
-    return 2.0 * (act.dram_reads + act.dram_writes), []
+    flits = 2.0 * (act.dram_reads + act.dram_writes)
+    warnings: List[str] = []
+    apl = getattr(act, "booksim_avg_packet_length", None)
+    if apl is not None and apl > 0 and abs(apl - 1.0) > 1e-6:
+        flits *= apl
+        warnings.append(
+            f"BookSim reports packet length average {apl:g} (the model assumes "
+            f"1 flit/packet): flit totals scaled by {apl:g}"
+        )
+    return flits, warnings
 
 
 def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
@@ -237,17 +253,33 @@ def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
         ports = radices[-1]
         routers = len(real) + len(stray)
         channels = len(chans)
-        # Uniform-traffic split: aggregate BookSim stats cannot separate
-        # intra- from inter-router flits, so assume each flit's endpoints are
-        # uniformly distributed over the R switches.
-        inter_fraction = (routers - 1) / routers if routers > 1 else 0.0
-        if routers > 1:
-            warnings.append(
-                f"NoC traffic split is a uniform-traffic assumption: "
-                f"{inter_fraction:.2f} of flits are charged one die-to-die "
-                f"channel crossing and a second switch traversal (BookSim "
-                f"reports only network-wide aggregates)"
-            )
+        # Intra- vs inter-die traffic split. EXACT when the log carries the
+        # per-core NUMA request counters (local requests stay on-die, remote
+        # requests cross a die-to-die channel and a second switch — each
+        # request's two packets behave alike). Logs without the NUMA line
+        # (pre-NUMA builds) fall back to the uniform-traffic assumption.
+        numa_local = getattr(act, "numa_local", None)
+        numa_remote = getattr(act, "numa_remote", None)
+        if (routers > 1 and numa_local is not None and numa_remote is not None
+                and numa_local + numa_remote > 0):
+            inter_fraction = numa_remote / (numa_local + numa_remote)
+            if (act.dram_reads is not None and act.dram_writes is not None
+                    and numa_local + numa_remote
+                    != act.dram_reads + act.dram_writes):
+                warnings.append(
+                    f"NUMA request total {numa_local + numa_remote} != [DRAM] "
+                    f"request total {act.dram_reads + act.dram_writes}; the "
+                    f"d2d split still uses the NUMA local/remote ratio"
+                )
+        else:
+            inter_fraction = (routers - 1) / routers if routers > 1 else 0.0
+            if routers > 1:
+                warnings.append(
+                    f"NoC traffic split is a uniform-traffic assumption: "
+                    f"{inter_fraction:.2f} of flits are charged one die-to-die "
+                    f"channel crossing and a second switch traversal (the log "
+                    f"has no NUMA local/remote counters)"
+                )
     else:
         return NocDerivation(warnings=[
             f"NoC not emitted: unsupported BookSim topology {topology!r} "
@@ -261,6 +293,6 @@ def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
     warnings.extend(fw)
     if flits is not None and flits > 0:
         stats["icnt_xbar_flits"] = flits * (1.0 + inter_fraction)
-        if channels:
+        if channels and inter_fraction > 0:
             stats["icnt_d2d_flits"] = flits * inter_fraction
     return NocDerivation(symbols=symbols, stats=stats, warnings=warnings)

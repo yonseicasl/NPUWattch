@@ -53,6 +53,11 @@ out_of_scope:
     CustomVlaneIdx instruction counts are deliberately not collected: it is
     lane-index generation, not an SFU op, and its energy is negligible
   - >-
+    BAR / MEMORY_BAR (barrier) instruction counters are not collected:
+    synchronization is control-side work (scalar-core scope) and the stall
+    time it causes is already inside total_exec_cycles, so it is charged as
+    leakage over the window
+  - >-
     VCIX serializer/deserializer (the vector <-> systolic-array interface) is
     not modeled as a separate component: its push/pop events are already
     charged at both endpoints (w_reg writes, vpu_spad reads/writes), and

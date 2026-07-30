@@ -117,6 +117,22 @@ can be added without breaking older readers. Current schema per node:
   VDD, so that attribute is not always monotonic vs VDD (e.g. NAND3/NAND4,
   DFF/DFFR at some nodes). Per-state `leakage_power` groups and the INV_X1
   monotonicity gate are unaffected.
+- 2026-07-29/30 full re-characterization: all 25 corner dbs and all five
+  NDMs were regenerated from a single 51-cell re-characterization run
+  (`2026_0617/2026_0729_rechar/`) after fixing two leakage defects reported
+  by the NPUWattch logic workstream (`LEAKAGE_RECHAR_REPORT_20260729.md`):
+  the OR2_X4 drawn-layout crowbar defect at 20/16/10/7nm (shared
+  NOR/inverter diffusion strip — GDS repaired here and in `5_to_20nm`) and
+  stale Jan-2026 BUF_X32/INV_X32 netlists containing floating-gate devices
+  (re-extracted from the installed GDS). Leakage tables are now sane
+  (BUF_X32 = 2x BUF_X16 everywhere; OR2_X4 states ~1-2 nW); the only
+  remaining scanner flags are the known `cell_leakage_power : 0` DFF
+  entries (min-state settle artifact, deliberately unchanged). All
+  verification gates re-run PASS (db<->NDM parity 51/51, area==frame
+  1275/1275, frame-vs-GDS coverage 0 uncovered at every node). The 5nm NDM
+  build requires `primelib_cells_5nm_M1fix.lef` (the 2026_0716 release LEF
+  has fragmented MUX2 M1 OBS). Response doc:
+  `2026_0617/LEAKAGE_RECHAR_RESPONSE_20260730.md`.
 - Extraction runsets made self-contained on 2026-07-17: every
   `techlib_*/sram/lvs.rs` referenced two files on the now-unreachable
   `/home/i3dhdd1/...` mount (`#define FINFET_PDK`, line 26), which makes ICV
