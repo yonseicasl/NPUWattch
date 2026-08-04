@@ -31,7 +31,9 @@ except ImportError:  # pragma: no cover - py<3.8
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
 __all__ = ["TechContext", "UnitCostProvider", "StubUnitCostProvider",
-           "D2DLinkCostProvider", "D2D_ENERGY_PER_BIT_PJ"]
+           "D2DLinkCostProvider", "D2D_ENERGY_PER_BIT_PJ",
+           "HBMCostProvider", "HBM_ACT_ENERGY_PJ",
+           "HBM_ACCESS_ENERGY_PER_BIT_PJ", "HBM_REF_ENERGY_PJ"]
 
 
 @dataclass(frozen=True)
@@ -225,5 +227,97 @@ class D2DLinkCostProvider:
 
     def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float:
         if primitive != "d2dlink":
+            return self._delegate("crit_path", primitive, features)
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Analytic DRAM device model (per-command constants — no characterization flow)
+# ---------------------------------------------------------------------------
+
+#: HBM2 per-command energies. **Literature constants**, not measurements of our
+#: own: no public HBM power tool or vendor IDD datasheet exists, so these come
+#: from the detailed physical-floorplan model of
+#:
+#:   M. O'Connor, N. Chatterjee, D. Lee, J. Wilson, A. Agrawal, S. W. Keckler,
+#:   and W. J. Dally, "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
+#:   Bandwidth Systems," MICRO-50, 2017, Table 3 (HBM2 column).
+#:   DOI: 10.1145/3123939.3124545
+#:
+#: Row activation (precharge + activate, one 1 KB row) = 909 pJ. Access energy
+#: = 1.51 (pre-GSA) + 1.17 (post-GSA, 50% toggle) + 0.80 (I/O, 50% activity)
+#: = 3.48 pJ/bit, charged per RD/WR command × data_width; read and write are
+#: charged symmetrically (the paper does not split them). Refresh per REFab is
+#: derived first-order from the same activation energy (8 Gb channel ÷ 1 KB
+#: rows = 2^20 rows spread over JESD235's 16384 REF commands → 64 rows ×
+#: 909 pJ). Override any of the three per component via the canonical
+#: ``mem_act_energy_pJ`` / ``mem_access_energy_per_bit_pJ`` /
+#: ``mem_ref_energy_pJ`` attributes (the shipped dram compound pins them
+#: explicitly, with the citation, in its YAML).
+HBM_ACT_ENERGY_PJ = 909.0
+HBM_ACCESS_ENERGY_PER_BIT_PJ = 3.48
+HBM_REF_ENERGY_PJ = 58176.0
+
+
+@dataclass(frozen=True)
+class HBMCostProvider:
+    """Chain link answering primitive ``hbm`` with the analytic constants.
+
+    Per-event energy is selected by ``stim_mode``: ``activate`` / ``refresh``
+    return their per-command constants; ``read`` / ``write`` (and ``random``,
+    the vectorless anchor) return ``data_width × per-bit access energy``.
+    Leakage/area/timing are 0.0 — the DRAM die is not our silicon, and its
+    background/standby power is deliberately NOT modeled (vendor IDD values
+    are not public; declared out_of_scope in the projection). Everything else
+    delegates to ``fallback``; ``calibrated`` is inherited — a constant is
+    never calibration.
+    """
+
+    fallback: Any = None
+
+    @property
+    def calibrated(self) -> bool:
+        return bool(getattr(self.fallback, "calibrated", False))
+
+    def _delegate(self, method: str, primitive: str,
+                  features: Mapping[str, Any]) -> float:
+        if self.fallback is None:
+            raise ValueError(
+                f"hbm provider got primitive {primitive!r} and has no fallback"
+            )
+        return getattr(self.fallback, method)(primitive, features)
+
+    @staticmethod
+    def _const(features: Mapping[str, Any], key: str, default: float) -> float:
+        v = features.get(key)
+        return float(v) if isinstance(v, (int, float)) and v > 0 else default
+
+    def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "hbm":
+            return self._delegate("energy_per_cycle", primitive, features)
+        mode = features.get("stim_mode")
+        if mode == "activate":
+            return self._const(features, "mem_act_energy_pJ", HBM_ACT_ENERGY_PJ)
+        if mode == "refresh":
+            return self._const(features, "mem_ref_energy_pJ", HBM_REF_ENERGY_PJ)
+        if mode == "idle":
+            return 0.0
+        bits = int(features.get("data_width") or 0)
+        per_bit = self._const(features, "mem_access_energy_per_bit_pJ",
+                              HBM_ACCESS_ENERGY_PER_BIT_PJ)
+        return bits * per_bit                    # read / write / random
+
+    def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "hbm":
+            return self._delegate("leak_power", primitive, features)
+        return 0.0
+
+    def area(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "hbm":
+            return self._delegate("area", primitive, features)
+        return 0.0
+
+    def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float:
+        if primitive != "hbm":
             return self._delegate("crit_path", primitive, features)
         return 0.0

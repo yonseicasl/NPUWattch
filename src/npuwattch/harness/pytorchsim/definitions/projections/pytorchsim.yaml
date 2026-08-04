@@ -63,17 +63,23 @@ out_of_scope:
     charged at both endpoints (w_reg writes, vpu_spad reads/writes), and
     PyTorchSim exposes no serdes size parameters — the remaining mux/wire
     datapath is second-order
+  - >-
+    DRAM background/standby power and the NPU-side memory controller / HBM PHY
+    are not charged: vendor IDD/standby currents for HBM are not public (no
+    open HBM power tool exists), so the dram compound charges command energies
+    only (activate / read / write / refresh, constants cited from O'Connor &
+    Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic
+    (VMEM fills/drains, DMA engine, NoC flits) are charged by their own
+    compounds
 
 # Planned external power-model integrations, NOT implemented yet — each entry
-# is a WARNING every run (a temporary gap, unlike out_of_scope): delete the
-# entry when the integration lands and the energy is actually charged.
-third_party_pending:
-  - >-
-    DRAM device (HBM die) energy: planned via an external DRAM power tool API
-    (e.g. DRAMPower / Ramulator2's energy counters) fed by the log's [DRAM]
-    per-channel read/write request counts; the on-chip consequences of that
-    traffic (VMEM fills/drains, DMA engine datapath, NoC flits) ARE already
-    charged
+# would be a WARNING every run (a temporary gap, unlike out_of_scope) and is
+# deleted when the integration lands. DRAM device energy graduated from this
+# list on 2026-07-30: it is now charged by the `dram` compound below from
+# Ramulator2's "=== DRAM statistics ===" controller counters (no external tool
+# call needed — the log already carries the measured row hit/miss/conflict
+# split, and no public power tool models HBM anyway).
+third_party_pending: []
 
 compounds:
 
@@ -271,3 +277,40 @@ compounds:
         unit: flits
       elements:
         icnt_d2d: random
+
+  # --------------------------------------------------------------------------
+  # dram (HBM device energy — compounds/dram.yaml carries the cited constants)
+  # --------------------------------------------------------------------------
+  # Command counts come straight from Ramulator2's "=== DRAM statistics ==="
+  # controller block (activity.py): the measured row hit/miss/conflict split
+  # means ACT commands are exact, not assumed. Stats are chip aggregates
+  # (summed over channels), matching the per: chip element. Logs without the
+  # block fall back to [DRAM] request totals for read/write only (warned);
+  # dram_act_cmds / dram_ref_cmds are then absent and those actions are
+  # simply not bound.
+
+  dram:
+
+    dram_activate:                    # ACT+PRE per row miss/conflict
+      count_from:
+        stat: dram_act_cmds
+      elements:
+        dram_chan: activate
+
+    dram_read:                        # one read command = data_width bits out
+      count_from:
+        stat: dram_read_cmds
+      elements:
+        dram_chan: read
+
+    dram_write:                       # one write command = data_width bits in
+      count_from:
+        stat: dram_write_cmds
+      elements:
+        dram_chan: write
+
+    dram_refresh:                     # REFab maintenance command
+      count_from:
+        stat: dram_ref_cmds
+      elements:
+        dram_chan: refresh

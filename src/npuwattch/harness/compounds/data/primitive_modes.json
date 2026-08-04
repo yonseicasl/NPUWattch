@@ -1,5 +1,5 @@
 {
-  "_comment": "The per-primitive stim_mode vocabulary. Fully-resolved mirror of dataset_gen/logic/autosweep/sweep_spec.POWER_MODES (arithmetic-only modules resolve to the default ['random']); 'sram' mirrors the SRAM SPICE flow's stim modes (dataset_gen/sram, estimator energy_for_stim_mode); 'd2dlink' has no characterization flow at all (analytic pJ/bit constant, energy.unit_cost), so its single mode is 'random'. A (primitive, mode) pair not listed here is unpredictable and the loader rejects any projection that uses it. New modes are added in POWER_MODES + the module TB template first, then here. See docs/COMPOUND_SCHEMA.md §1 and dataset_gen/logic/autosweep/activity_modes.md.",
+  "_comment": "The per-primitive stim_mode vocabulary. Fully-resolved mirror of dataset_gen/logic/autosweep/sweep_spec.POWER_MODES (arithmetic-only modules resolve to the default ['random']); 'sram' mirrors the SRAM SPICE flow's stim modes (dataset_gen/sram, estimator energy_for_stim_mode); 'd2dlink' and 'hbm' have no characterization flow at all (analytic constants, energy.unit_cost): d2dlink's single mode is 'random'; hbm's modes are the DRAM command classes the Ramulator2 statistics distinguish (activate=ACT+PRE, read/write=column access incl. data movement + I/O, refresh=REFab; 'random' anchors the vectorless path at the read/write access energy). A (primitive, mode) pair not listed here is unpredictable and the loader rejects any projection that uses it. New modes are added in POWER_MODES + the module TB template first, then here. See docs/COMPOUND_SCHEMA.md §1 and dataset_gen/logic/autosweep/activity_modes.md.",
   "modes": {
     "sram":       ["random", "read", "write", "idle"],
     "regfile":    ["random", "read", "write", "idle"],
@@ -10,6 +10,7 @@
     "simplemux":  ["random", "valid25"],
     "crossbar":   ["random", "fixed_route", "valid25"],
     "d2dlink":    ["random"],
+    "hbm":        ["random", "activate", "read", "write", "refresh"],
     "fattree":    ["random", "fixed_route"],
     "foldedclos": ["random", "fixed_route"],
     "intadd":     ["random"],

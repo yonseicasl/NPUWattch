@@ -109,6 +109,15 @@ CANONICAL: Dict[str, Param] = dict([
     _p("mem_template", "str",
        "SRAM macro template for capacity-only specs: sram_64k | sram_256k "
        "(fixes data_width/depth; see src/estimators/sram)"),
+    # Analytic DRAM-device constants (the `hbm` primitive — an off-chip device,
+    # no characterization flow; defaults in energy.unit_cost cite the source).
+    _p("mem_act_energy_pJ", "float",
+       "DRAM row-activation energy per ACT (precharge + activate)", "pJ"),
+    _p("mem_access_energy_per_bit_pJ", "float",
+       "DRAM access energy per bit (column access + on-die data movement + "
+       "I/O), charged per read/write command x data_width", "pJ/bit"),
+    _p("mem_ref_energy_pJ", "float",
+       "DRAM refresh energy per maintenance (REFab) command", "pJ"),
 
     # -- interconnect -------------------------------------------------------
     _p("net_inputs", "int", "Source port count"),
@@ -299,6 +308,14 @@ PRIMITIVE_PARAMS: Dict[str, ParamSet] = {
     # per component in the description when the package/PHY is known.
     "d2dlink": ParamSet(required=("node", "data_width"),
                         optional=("net_energy_per_bit_pJ",)),
+    # DRAM device (HBM channel): an off-chip part with no characterization
+    # flow, priced by analytic per-command constants (energy.unit_cost — the
+    # defaults cite O'Connor & Chatterjee et al., MICRO 2017, Table 3).
+    # data_width = bits moved per read/write command (request size × 8).
+    "hbm": ParamSet(required=("node", "data_width"),
+                    optional=("mem_act_energy_pJ",
+                              "mem_access_energy_per_bit_pJ",
+                              "mem_ref_energy_pJ")),
 }
 
 #: Description ``class:`` strings → primitive. The class vocabulary is a thin

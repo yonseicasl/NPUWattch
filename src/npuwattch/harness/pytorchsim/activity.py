@@ -78,7 +78,15 @@ _SFU_FALLBACK_EXP_MANT = (8, 23)
 
 @dataclass(frozen=True)
 class KernelWindow:
-    """One kernel's architecture + activity, ready for a projection."""
+    """One kernel's architecture + activity, ready for a projection.
+
+    The name states the terminology bridge (user decision 2026-07-31): a
+    "window" is the core's harness-neutral time interval of the §3.3 activity
+    trace; in THIS harness one compiled kernel fills exactly one window, so
+    user-facing output calls these "kernels" while schema/code identifiers
+    keep "window" (other harnesses have windows that are not kernels — gem5
+    periodic dumps, Timeloop layers, the vectorless synthetic interval).
+    """
 
     index: int
     kernel_hash: str
@@ -247,6 +255,38 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
                     f"[DRAM] request total {stats['dram_requests']}; using the "
                     f"[DRAM] total (per-core split still uses the DMA shares)"
                 )
+
+        # DRAM device command counts (the analytic HBM energy model — the dram
+        # compound). Ramulator2's "=== DRAM statistics ===" controller block is
+        # the primary source: it carries the MEASURED row hit/miss/conflict
+        # split, so ACT(+PRE) commands = row_misses + row_conflicts and refresh
+        # = num_maintenance_reqs — no trace synthesis or hit-rate assumption.
+        # Logs without the block (older builds) fall back to the [DRAM] request
+        # totals: read/write energy is still charged, ACT/refresh is not.
+        ctrl = act.dram_ctrl
+        if ctrl is not None:
+            stats["dram_read_cmds"] = ctrl["num_read_reqs"]
+            stats["dram_write_cmds"] = ctrl["num_write_reqs"]
+            stats["dram_act_cmds"] = ctrl["row_misses"] + ctrl["row_conflicts"]
+            stats["dram_ref_cmds"] = ctrl["num_maintenance_reqs"]
+            if (act.dram_reads is not None
+                    and (ctrl["num_read_reqs"], ctrl["num_write_reqs"])
+                    != (act.dram_reads, act.dram_writes)):
+                warnings.append(
+                    f"{khash}: DRAM statistics block reports "
+                    f"{ctrl['num_read_reqs']} reads / {ctrl['num_write_reqs']} "
+                    f"writes but the [DRAM] interval totals sum to "
+                    f"{act.dram_reads} / {act.dram_writes}; device energy uses "
+                    f"the statistics block (VMEM/NoC traffic keeps the totals)"
+                )
+        elif act.dram_reads is not None:
+            stats["dram_read_cmds"] = act.dram_reads
+            stats["dram_write_cmds"] = act.dram_writes
+            warnings.append(
+                f"{khash}: log has no '=== DRAM statistics ===' block; DRAM "
+                f"read/write energy is charged from the [DRAM] request totals, "
+                f"but row-activation and refresh energy are NOT charged"
+            )
 
         # NoC (BookSim2): topology symbols (icnt_ports/routers/channels + the raw
         # booksim_* config ints) join the run-config expression symbols, and flit

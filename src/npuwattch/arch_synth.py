@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -72,7 +72,7 @@ PRIMITIVE_TO_CLASS: Dict[str, str] = {
 }
 
 # stim_mode → §3.3 event, per component family.
-_MEM_CLASSES = ("register_file", "regfile", "sram", "fifo")
+_MEM_CLASSES = ("register_file", "regfile", "sram", "fifo", "hbm")
 _LINK_CLASSES = ("crossbar", "noc", "wire", "d2dlink")
 _MEM_MODE_EVENT = {"read": "read", "write": "write", "idle": "idle", "random": "write"}
 
@@ -86,6 +86,18 @@ _XBAR_VALID_FRACTION = {"valid25": 0.25}
 # by a projection — excluded from the "uninterpreted activity" coverage warning.
 _META_STATS = frozenset({"total_exec_cycles", "numCycles"})
 
+# SFU op-count stats (gem5 committedInstType classes) — summed for the
+# per-window provenance record's "sfu_ops" headline number.
+_SFU_STAT_KEYS = ("CustomVexp", "CustomVexp2", "CustomVerf", "CustomVtanh",
+                  "CustomVsin", "CustomVcos")
+
+# TERMINOLOGY — window vs kernel (user decision 2026-07-31): "window" is the
+# CORE's harness-neutral unit — a time interval [cycle_start, cycle_end] of the
+# §3.3 activity trace. It is NOT a synonym for "kernel": gem5 periodic dumps,
+# Timeloop layers, and the vectorless synthetic interval are windows without
+# being kernels. The PyTorchSim harness maps one compiled kernel to one window
+# BY CONSTRUCTION, so user-facing output for those runs (console, report) says
+# "kernel" — the schema column below and code identifiers stay "window".
 ACTIVITY_COLUMNS: Tuple[str, ...] = (
     "window", "cycle_start", "cycle_end", "component", "event", "mode", "count",
 )
@@ -117,6 +129,12 @@ class EmittedArch:
     #: Kernel hash per activity window, in window order — provenance for the
     #: per-window energy display (the §3.3 CSV itself carries only indices).
     window_labels: List[str] = field(default_factory=list)
+    #: Per-window provenance record (window order), built from the PARSED data:
+    #: {"window", "kernel", "kind": mac|fused|non_mac, "dtype", "dtype_source":
+    #: own|borrowed:<hash>|fallback_fp32, "systolic_active_cycles",
+    #: "vector_active_cycles", "sfu_ops", "dram_requests", "exec_cycles"}.
+    #: Console prints these at -v>=2; report.json carries them always.
+    window_provenance: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -751,13 +769,14 @@ def synthesize_run(
 
     all_windows = read_run(togsim_dir, gem5_dir, base_config=base_config,
                            booksim_dir=booksim_dir)
-    windows = [w for w in all_windows if w.mac_config is not None]
-    if not windows:
-        reasons = sorted({x for w in all_windows for x in w.warnings})
-        raise ValueError(
-            f"no MAC kernels found (togsim: {togsim_dir}, gem5: {gem5_dir})"
-            + (" — " + "; ".join(reasons) if reasons else "")
-        )
+    # Non-MAC kernel windows (softmax/layernorm/elementwise — no linalg.matmul)
+    # are KEPT since 2026-07-30: they bind the non-systolic compounds
+    # (vpu/fpsfu/spads/dma/dram/noc). The templated vfu/spads elements still
+    # need a datapath dtype, borrowed from the run's first MAC kernel (the
+    # physical array is uniform within a run); a run with NO MAC kernel at all
+    # falls back to an assumed fp32 datapath + WARNING.
+    windows = list(all_windows)
+    mac_windows = [w for w in windows if w.mac_config is not None]
 
     warnings: List[str] = []
     # Planned-but-unbuilt external integrations are WARNINGS (a temporary gap,
@@ -777,35 +796,45 @@ def synthesize_run(
             x if x.startswith(w.kernel_hash) else f"{w.kernel_hash}: {x}"
             for x in w.warnings
         )
-    # A window without a MAC config cannot be bound (the compound placeholders
-    # need one), so it is dropped — but if it carried real activity (a pure
-    # SFU/vector kernel, DMA traffic), that energy is silently lost. Say so.
-    for w in all_windows:
-        if w.mac_config is not None:
-            continue
-        busy = sorted(k for k, v in (w.stats or {}).items()
-                      if v and k not in _META_STATS)
-        if busy:
-            shown = ", ".join(busy[:5]) + (", …" if len(busy) > 5 else "")
-            warnings.append(
-                f"{w.kernel_hash}: window dropped (no MAC config) but carries "
-                f"activity ({shown}) — its energy is EXCLUDED from the results"
-            )
-    resolved0 = resolve_compound(compound, windows[0].mac_config)
+    # Representative MacConfig: the run's first MAC kernel; a run with no MAC
+    # kernel gets the fp32 fallback (assumption unbacked by run evidence →
+    # WARNING; the borrowed-dtype case is a sanctioned assumption → INFO note).
     lanes0 = windows[0].lanes
-    for w in windows[1:]:
+    if mac_windows:
+        rep = mac_windows[0]
+        rep_mac = rep.mac_config
+        non_mac = [w for w in windows if w.mac_config is None]
+        if non_mac:
+            notes.append(
+                f"{len(non_mac)} non-MAC kernel window(s) charged on the "
+                f"non-systolic compounds only (no systolic activity); the "
+                f"vfu/spads datapath dtype ({rep_mac.operand_dtype.canonical}) "
+                f"is borrowed from MAC kernel {rep.kernel_hash} — the physical "
+                f"array is uniform within a run"
+            )
+    else:
+        from .harness.pytorchsim.mac_config import fallback_fp32_mac_config
+        rep_mac = fallback_fp32_mac_config(lanes0)
+        warnings.append(
+            "run has no MAC kernel: non-MAC windows are charged at an ASSUMED "
+            "fp32 (e8m23) datapath for the templated vfu/spads elements — no "
+            "kernel in this run evidences the real dtype"
+        )
+    resolved0 = resolve_compound(compound, rep_mac)
+    for w in windows:
         if w.lanes != lanes0:
             raise ValueError(
                 f"inconsistent lanes across kernels ({lanes0} vs {w.lanes}); "
                 "the physical array must be uniform within a run"
             )
+    for w in mac_windows[1:]:
         rw = resolve_compound(compound, w.mac_config)
         if set(rw) != set(resolved0):
-            warnings.append(f"kernel {w.kernel_hash} has a different element set; using {windows[0].kernel_hash}")
+            warnings.append(f"kernel {w.kernel_hash} has a different element set; using {mac_windows[0].kernel_hash}")
         elif any(rw[e].config != resolved0[e].config for e in resolved0):
             warnings.append(
                 f"kernel {w.kernel_hash} reconfigures the array "
-                f"(config differs from {windows[0].kernel_hash}); description uses the first"
+                f"(config differs from {mac_windows[0].kernel_hash}); description uses the first"
             )
 
     cfg0 = windows[0].config or {}
@@ -883,7 +912,7 @@ def synthesize_run(
                              select_primitive_by=aux.select_primitive_by,
                              elements={ename: el},
                              default_mode=aux.default_mode),
-                    windows[0].mac_config, extra_symbols,
+                    rep_mac, extra_symbols,
                 )
                 resolved_aux[ename] = one[ename]
             except CompoundBundleError as e:
@@ -898,9 +927,15 @@ def synthesize_run(
         ports_by_element.update(pb)
         per_by_element.update(aper)
 
+    # Non-MAC windows bind with the representative MacConfig (the systolic
+    # actions still bind only where their stats carry activity); the effective
+    # windows also feed build_activity, whose bytes/vectors unit conversion
+    # reads the operand dtype.
+    eff_windows = [w if w.mac_config is not None
+                   else dc_replace(w, mac_config=rep_mac) for w in windows]
     bound_per_window = []
     seen_notes: set = set()
-    for w in windows:
+    for w in eff_windows:
         skipped: List[str] = []
         bounds = sum((bind_window(w, projection, c, pm, skipped=skipped)
                       for c in aux_compounds),
@@ -914,7 +949,7 @@ def synthesize_run(
                 seen_notes.add(msg)
                 warnings.append(msg)
     rows, total_cycles, act_warn = build_activity(
-        windows, bound_per_window, class_by_element, prefix=prefix,
+        eff_windows, bound_per_window, class_by_element, prefix=prefix,
         exec_cycles=[w.exec_cycles for w in windows],
         name_by_element=name_by_element,
         word_bits_by_element=word_bits_by_element,
@@ -937,6 +972,38 @@ def synthesize_run(
         warnings.append(f"hierarchy view unavailable: {e}")
         hierarchy = None
 
+    # Per-window provenance from the PARSED data (kind is derived, never
+    # guessed): a window with its own MacConfig is `mac`, `fused` when SFU or
+    # vector activity rode along in the same kernel; a window without one is
+    # `non_mac` (charged via the borrowed/fallback dtype).
+    provenance: List[Dict[str, Any]] = []
+    for i, w in enumerate(windows):
+        s = w.stats or {}
+        sys_c = int(s.get("systolic_active_cycles", 0) or 0)
+        vec_c = int(s.get("vector_active_cycles", 0) or 0)
+        sfu = int(sum(s.get(k, 0) or 0 for k in _SFU_STAT_KEYS))
+        if w.mac_config is None:
+            kind = "non_mac"
+            dtype_source = (f"borrowed:{mac_windows[0].kernel_hash}"
+                            if mac_windows else "fallback_fp32")
+            dtype = rep_mac.operand_dtype.canonical
+        else:
+            kind = "fused" if sys_c and (vec_c or sfu) else "mac"
+            dtype_source = "own"
+            dtype = w.mac_config.operand_dtype.canonical
+        provenance.append({
+            "window": i,
+            "kernel": w.kernel_hash,
+            "kind": kind,
+            "dtype": dtype,
+            "dtype_source": dtype_source,
+            "systolic_active_cycles": sys_c,
+            "vector_active_cycles": vec_c,
+            "sfu_ops": sfu,
+            "dram_requests": int(s.get("dram_requests", 0) or 0),
+            "exec_cycles": w.exec_cycles,
+        })
+
     return EmittedArch(
         description=description,
         activity_rows=rows,
@@ -945,4 +1012,5 @@ def synthesize_run(
         notes=notes,
         hierarchy=hierarchy,
         window_labels=[w.kernel_hash for w in windows],
+        window_provenance=provenance,
     )

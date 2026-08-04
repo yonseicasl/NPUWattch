@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 __all__ = ["TogsimActivity", "TogsimLogError", "parse_config",
-           "parse_icnt_config", "parse_togsim_log"]
+           "parse_dram_ctrl_stats", "parse_icnt_config", "parse_togsim_log"]
 
 
 class TogsimLogError(ValueError):
@@ -99,6 +99,22 @@ _PKT_LEN = re.compile(r"^Injected packet length average\s*=\s*([\d.eE+-]+)\s*$",
 # [DRAM] channels 0..15 combined | ... | 772 reads, 256 writes
 _DRAM_CH = re.compile(r"\[DRAM\] channel (\d+) \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
 _DRAM_ALL = re.compile(r"\[DRAM\] channels [\d.]+ combined \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
+
+# Ramulator2's end-of-run controller statistics: a "=== DRAM statistics ==="
+# marker, then one "--- channel N ---" YAML-ish block per channel. The
+# controller counters are what the analytic DRAM energy model charges from:
+# ACT(+PRE) commands = row_misses + row_conflicts (open-row policy: a miss or a
+# conflict each activates a row), RD/WR = num_read/write_reqs, refresh =
+# num_maintenance_reqs. The anchored patterns deliberately do NOT match the
+# derived per-kind lines (`read_row_hits: …`) or per-core lines
+# (`read_row_hits_core_0: …`) — only the bare controller totals.
+_DRAM_STATS_MARKER = "=== DRAM statistics ==="
+_DRAM_STATS_CH = re.compile(r"^---\s*channel\s+(\d+)\s*---")
+_DRAM_CTRL_KEYS = ("num_read_reqs", "num_write_reqs", "num_maintenance_reqs",
+                   "row_hits", "row_misses", "row_conflicts")
+_DRAM_CTRL_LINE = re.compile(
+    r"^\s*(" + "|".join(_DRAM_CTRL_KEYS) + r"):\s*(\d+)\s*$"
+)
 
 
 def _coerce(raw: str) -> object:
@@ -173,6 +189,42 @@ def parse_icnt_config(text: str) -> Optional[Dict[str, object]]:
     return icnt or None
 
 
+def parse_dram_ctrl_stats(text: str) -> Optional[Dict[str, int]]:
+    """Ramulator2's per-channel controller counters, summed over channels.
+
+    Reads the log's final ``=== DRAM statistics ===`` block (the LAST marker
+    when several appear). Returns ``None`` when the log has no such block
+    (older TOGSim builds) or when no channel reports a request counter —
+    callers then fall back to the ``[DRAM]`` request totals, losing the
+    row-activation / refresh split. Channels repeated in the block keep their
+    last occurrence (same last-wins convention as the periodic stat lines).
+    """
+    idx = text.rfind(_DRAM_STATS_MARKER)
+    if idx < 0:
+        return None
+    per_channel: Dict[int, Dict[str, int]] = {}
+    current: Optional[Dict[str, int]] = None
+    for line in text[idx + len(_DRAM_STATS_MARKER):].splitlines():
+        m = _DRAM_STATS_CH.match(line.strip())
+        if m:
+            current = per_channel.setdefault(int(m.group(1)), {})
+            current.clear()                 # repeated channel: last block wins
+            continue
+        if current is None:
+            continue
+        m = _DRAM_CTRL_LINE.match(line)
+        if m:
+            current[m.group(1)] = int(m.group(2))
+    channels = {c: v for c, v in per_channel.items()
+                if "num_read_reqs" in v or "num_write_reqs" in v}
+    if not channels:
+        return None
+    totals = {k: sum(v.get(k, 0) for v in channels.values())
+              for k in _DRAM_CTRL_KEYS}
+    totals["channels"] = len(channels)
+    return totals
+
+
 def parse_kernel_hash(text: str) -> str:
     """The kernel hash joining this log to its ``outputs/<hash>/`` dir.
 
@@ -229,6 +281,11 @@ class TogsimActivity:
     numa_remote: Optional[int] = None
     #: BookSim's last "Injected packet length average" (None when absent).
     booksim_avg_packet_length: Optional[float] = None
+    #: Ramulator2 controller totals from the "=== DRAM statistics ===" block
+    #: (summed over channels: num_read/write_reqs, num_maintenance_reqs,
+    #: row_hits/misses/conflicts, + 'channels'). None for logs without the
+    #: block — the analytic DRAM model then degrades (no ACT/refresh split).
+    dram_ctrl: Optional[Dict[str, int]] = None
     per_core: Dict[int, Dict[str, object]] = field(default_factory=dict)
 
 
@@ -339,5 +396,6 @@ def parse_togsim_log(text: str,
         numa_local=(sum(l for l, _ in numa_last.values()) if numa_last else None),
         numa_remote=(sum(r for _, r in numa_last.values()) if numa_last else None),
         booksim_avg_packet_length=avg_pkt_len,
+        dram_ctrl=parse_dram_ctrl_stats(text),
         per_core=per_core,
     )

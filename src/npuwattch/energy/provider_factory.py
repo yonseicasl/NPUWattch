@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
-from .unit_cost import D2DLinkCostProvider, StubUnitCostProvider
+from .unit_cost import D2DLinkCostProvider, HBMCostProvider, StubUnitCostProvider
 
 __all__ = ["ProviderChain", "build_provider"]
 
@@ -61,9 +61,10 @@ def build_provider(
         host.scan_estimators()
 
     provider = fallback if fallback is not None else StubUnitCostProvider()
-    # The analytic d2dlink constant sits just above the placeholder base, so
-    # calibrated estimator links always win for their own primitive.
+    # The analytic constants (d2dlink, hbm) sit just above the placeholder
+    # base, so calibrated estimator links always win for their own primitive.
     provider = D2DLinkCostProvider(fallback=provider)
+    provider = HBMCostProvider(fallback=provider)
     calibrated: List[str] = []
     notes: List[str] = []
 
@@ -87,6 +88,6 @@ def build_provider(
     return ProviderChain(
         provider=provider,
         calibrated_primitives=tuple(calibrated),
-        constant_primitives=("d2dlink",),
+        constant_primitives=("d2dlink", "hbm"),
         notes=tuple(notes),
     )

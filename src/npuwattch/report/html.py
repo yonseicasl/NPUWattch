@@ -112,6 +112,7 @@ def build_context(
     activity_rows: Sequence[Mapping[str, Any]] = (),
     inputs: Sequence[Tuple[str, Optional[Path]]] = (),
     vectorless: Optional[float] = None,         # activity fraction when defaulted
+    window_provenance: Sequence[Mapping[str, Any]] = (),  # harness per-kernel records
 ) -> Dict[str, Any]:
     """One plain-data dict driving both ``report.html`` and ``report.json``."""
     from .tree import to_dict as tree_to_dict
@@ -171,15 +172,31 @@ def build_context(
         })
 
     # -- windows + component × window matrix ---------------------------------
+    kinds = {p["window"]: p["kind"] for p in window_provenance}
     windows = [{
         "index": i,
         "label": w.kernel_hash,
+        "kind": kinds.get(i),                   # mac|fused|non_mac (harness runs)
         "cycles": w.exec_cycles,
         "dyn_pJ": w.dyn_energy_pJ, "dyn_str": fmt_si(w.dyn_energy_pJ, "pJ"),
         "leak_pJ": w.leak_energy_pJ, "leak_str": fmt_si(w.leak_energy_pJ, "pJ"),
         "total_pJ": w.total_energy_pJ, "total_str": fmt_si(w.total_energy_pJ, "pJ"),
         "avg_power_mW": w.avg_power_mW, "power_str": fmt_si(w.avg_power_mW, "mW"),
     } for i, w in enumerate(run.windows)]
+
+    # GEMM vs non-GEMM split (only meaningful when non-MAC kernels exist).
+    kernel_split = None
+    if any(k == "non_mac" for k in kinds.values()):
+        non_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
+                      if kinds.get(i) == "non_mac")
+        mac_tot = run.total_energy_pJ - non_tot
+        kernel_split = {
+            "gemm_pJ": mac_tot, "gemm_str": fmt_si(mac_tot, "pJ"),
+            "non_gemm_pJ": non_tot, "non_gemm_str": fmt_si(non_tot, "pJ"),
+            "non_gemm_pct": round(
+                100.0 * non_tot / (run.total_energy_pJ or 1.0), 1),
+            "non_gemm_windows": sum(1 for k in kinds.values() if k == "non_mac"),
+        }
 
     active = [c["name"] for c in components
               if any(w.components[c["name"]].dyn_energy_pJ for w in run.windows)]
@@ -281,6 +298,12 @@ def build_context(
             "check_text": check_text, "check_color": check_color,
         },
         "windows": windows,
+        "kernel_split": kernel_split,
+        # window/kernel terminology (user decision 2026-07-31): "window" is
+        # the core's harness-neutral time-interval term; PyTorchSim-harness
+        # runs (window_provenance present) address end users as "kernel"
+        # since there one kernel == one window by construction.
+        "window_term": "kernel" if window_provenance else "window",
         "matrix": matrix,
         "components": components,
         "tree": tree_to_dict(hierarchy) if hierarchy is not None else None,
@@ -295,6 +318,10 @@ def build_context(
             "inputs": input_entries,
             "warnings": list(warnings),
             "notes": list(notes),
+            # Per-kernel provenance parsed from the run (harness mode): kind,
+            # dtype origin, headline activity counters. Always present in the
+            # JSON regardless of console verbosity.
+            "windows": [dict(p) for p in window_provenance],
         },
     }
 

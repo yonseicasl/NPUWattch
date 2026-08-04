@@ -338,6 +338,20 @@ def _run_harness(args) -> int:
     for n in emitted.notes:
         print(f"[INFO] {n}")
 
+    # Per-kernel provenance (parsed data: kind / dtype origin / headline
+    # counters). One line per kernel is too chatty for the default output of a
+    # many-kernel model run, so it sits at -v>=2 (the per-window-detail tier);
+    # report.json carries it unconditionally.
+    if args.verbose >= 2 and emitted.window_provenance:
+        print(f"[INFO] Per-kernel provenance "
+              f"({len(emitted.window_provenance)} kernel(s)):")
+        for p in emitted.window_provenance:
+            print(f"[INFO]   window {p['window']}: {p['kernel']}  "
+                  f"kind={p['kind']}  dtype={p['dtype']} ({p['dtype_source']})  "
+                  f"systolic={p['systolic_active_cycles']}  "
+                  f"vector={p['vector_active_cycles']}  sfu={p['sfu_ops']}  "
+                  f"dram_reqs={p['dram_requests']}  cycles={p['exec_cycles']}")
+
     # Optionally persist the native artifacts for inspection / re-runs.
     if args.out_dir is not None:
         desc_path, act_path = write_arch(emitted, args.out_dir)
@@ -352,7 +366,8 @@ def _run_harness(args) -> int:
         default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
         window_labels=emitted.window_labels,
     )
-    _print_run_energy(run_energy, chain, verbose=args.verbose)
+    _print_run_energy(run_energy, chain, verbose=args.verbose,
+                      window_provenance=emitted.window_provenance)
 
     run_root = Path(args.togsim_dir).resolve().parent if args.togsim_dir else None
     inputs = [(f"togsim: {args.togsim_dir}", None),
@@ -366,13 +381,15 @@ def _run_harness(args) -> int:
         design_name=(run_root.name if run_root is not None else args.harness),
         activity_source=f"{args.harness} harness (simulator logs)",
         inputs=inputs,
+        window_provenance=emitted.window_provenance,
     )
     return 0
 
 
 def _maybe_write_report(args, *, run, description, tech, chain, rows,
                         hierarchy, warnings, design_name, activity_source,
-                        vectorless=None, inputs=(), notes=()) -> None:
+                        vectorless=None, inputs=(), notes=(),
+                        window_provenance=()) -> None:
     """Write report.html + report.json when ``--report DIR`` was given.
 
     Report generation is presentation: a failure here warns and leaves the
@@ -387,7 +404,7 @@ def _maybe_write_report(args, *, run, description, tech, chain, rows,
             run, description, tech=tech, design_name=design_name,
             activity_source=activity_source, chain=chain, hierarchy=hierarchy,
             warnings=warnings, notes=notes, activity_rows=rows, inputs=inputs,
-            vectorless=vectorless,
+            vectorless=vectorless, window_provenance=window_provenance,
         )
         html_path, json_path = write_report(ctx, args.report_dir)
         print(f"[INFO] Wrote report:      {html_path}")
@@ -399,30 +416,66 @@ def _maybe_write_report(args, *, run, description, tech, chain, rows,
             traceback.print_exc()
 
 
-def _print_window_energy(run, verbose: int = 0) -> None:
+def _print_window_energy(run, verbose: int = 0,
+                         window_provenance=None) -> None:
     """Per-window (per-kernel) §6 energy: one line per window, the run total
     below being exactly their accumulation, then a component × window matrix
     of dynamic energy (idle, leakage-only components are omitted from the
     matrix — they are visible in the accumulated summary).
+
+    ``window_provenance`` (harness runs): adds a ``kind`` column
+    (mac/fused/non_mac) and, when non-MAC kernels are present, GEMM vs
+    non-GEMM subtotal lines — the "how much energy is outside the systolic
+    array" split a DSE comparison needs at a glance.
+
+    TERMINOLOGY (user decision 2026-07-31, after a PyTorchSim-authors meeting
+    asked "what is a window?"): ``window`` is the CORE's harness-neutral term —
+    a time interval of the §3.3 activity trace (gem5 periodic dumps, Timeloop
+    layers, the vectorless synthetic interval are all windows but NOT kernels).
+    In the PyTorchSim harness one kernel == one window by construction, so
+    END-USER text for those runs says "kernel" (the presence of
+    ``window_provenance`` is exactly the marker of such a run); schema/code
+    identifiers stay ``window``.
     """
     n = len(run.windows)
+    kinds = {}
+    if window_provenance:
+        kinds = {p["window"]: p["kind"] for p in window_provenance}
+    term = "kernel" if window_provenance else "window"
+    kcol = 9 if kinds else 0
     print("\n" + "=" * 100)
-    print(f"[INFO] Per-window energy ({n} window{'s' if n != 1 else ''})")
+    print(f"[INFO] Per-{term} energy ({n} {term}{'s' if n != 1 else ''})")
     print("-" * 100)
-    print(f"{'window':<8}{'kernel':<15}{'cycles':>10}{'dyn (pJ)':>16}"
+    khdr = f"{'kind':<{kcol}}" if kinds else ""
+    print(f"{'#':<8}{'kernel':<15}{khdr}{'cycles':>10}{'dyn (pJ)':>16}"
           f"{'leak (pJ)':>16}{'total (pJ)':>16}{'avg power (mW)':>17}")
     for i, w in enumerate(run.windows):
-        print(f"{i:<8}{w.kernel_hash:<15}{w.exec_cycles:>10}"
+        kcell = f"{kinds.get(i, '?'):<{kcol}}" if kinds else ""
+        print(f"{i:<8}{w.kernel_hash:<15}{kcell}{w.exec_cycles:>10}"
               f"{w.dyn_energy_pJ:>16.4g}{w.leak_energy_pJ:>16.4g}"
               f"{w.total_energy_pJ:>16.4g}{w.avg_power_mW:>17.4g}")
+    if kinds and any(k == "non_mac" for k in kinds.values()):
+        mac_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
+                      if kinds.get(i) != "non_mac")
+        non_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
+                      if kinds.get(i) == "non_mac")
+        total = mac_tot + non_tot
+        pct = (100.0 * non_tot / total) if total else 0.0
+        n_non = sum(1 for k in kinds.values() if k == "non_mac")
+        print("-" * 100)
+        print(f"[INFO] GEMM kernels (mac/fused): {mac_tot:.4g} pJ "
+              f"({n - n_non} window(s)); non-GEMM kernels: {non_tot:.4g} pJ "
+              f"({n_non} window(s), {pct:.1f}% of total)")
     print("-" * 100)
-    _print_window_component_matrix(run)
+    _print_window_component_matrix(run, term=term)
 
 
-def _print_window_component_matrix(run) -> None:
+def _print_window_component_matrix(run, term: str = "window") -> None:
     """Per-kernel component energy: component rows × window columns (dynamic
     pJ), chunked into column groups so the table stays inside the console
-    width. Kernel-level component energy was a user request (2026-07-21)."""
+    width. Kernel-level component energy was a user request (2026-07-21).
+    ``term`` follows the window/kernel terminology rule (see
+    ``_print_window_energy``)."""
     if not run.windows:
         return
     all_names = list(run.windows[0].components)
@@ -432,7 +485,7 @@ def _print_window_component_matrix(run) -> None:
         return
     name_w, col_w = 28, 12
     per_chunk = max(1, (100 - name_w) // col_w)
-    print(f"[INFO] Per-window component energy (dynamic, pJ)")
+    print(f"[INFO] Per-{term} component energy (dynamic, pJ)")
     print("-" * 100)
     for start in range(0, len(run.windows), per_chunk):
         chunk = run.windows[start:start + per_chunk]
@@ -453,7 +506,8 @@ def _print_window_component_matrix(run) -> None:
     print("-" * 100)
 
 
-def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0) -> None:
+def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
+                      window_provenance=None) -> None:
     """Print a compact §6 energy summary (per-component + run totals).
 
     Calibration is reported **per component**, since it arrives per primitive:
@@ -462,7 +516,8 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0) -> None
     primitives (`d2dlink`, a literature pJ/bit) get their own `const` bucket —
     they are neither calibrated nor placeholder.
     """
-    _print_window_energy(run, verbose=verbose)
+    _print_window_energy(run, verbose=verbose,
+                         window_provenance=window_provenance)
 
     calibrated_prims = tuple(getattr(chain, "calibrated_primitives", ()) or ())
     constant_prims = tuple(getattr(chain, "constant_primitives", ()) or ())

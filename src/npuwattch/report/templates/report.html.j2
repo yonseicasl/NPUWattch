@@ -118,22 +118,29 @@
     {% if windows %}
       <div class="chart">{{ svg.windows }}</div>
       <div class="tblwrap"><table>
-        <thead><tr><th>Window</th><th>Kernel</th><th>Cycles</th>
+        <thead><tr><th>#</th><th>Kernel</th>{% if kernel_split %}<th>Kind</th>{% endif %}<th>Cycles</th>
           <th>Dynamic</th><th>Leakage</th><th>Total</th><th>Avg power</th></tr></thead>
         <tbody>
         {% for w in windows %}
           <tr><td>{{ w.index }}</td><td><code>{{ w.label }}</code></td>
+            {% if kernel_split %}<td>{{ w.kind or "?" }}</td>{% endif %}
             <td>{{ w.cycles }}</td><td>{{ w.dyn_str }}</td><td>{{ w.leak_str }}</td>
             <td>{{ w.total_str }}</td><td>{{ w.power_str }}</td></tr>
         {% endfor %}
         </tbody>
-        <tfoot><tr><td colspan="2">Run total</td><td>{{ totals.cycles }}</td>
+        <tfoot><tr><td colspan="{{ 3 if kernel_split else 2 }}">Run total</td><td>{{ totals.cycles }}</td>
           <td>{{ totals.dyn_str }}</td><td>{{ totals.leak_str }}</td>
           <td>{{ totals.energy_str }}</td><td>{{ totals.avg_power_str }}</td></tr></tfoot>
       </table></div>
+      {% if kernel_split %}
+      <p class="sub">GEMM kernels: {{ kernel_split.gemm_str }} &nbsp;·&nbsp;
+        non-GEMM kernels: {{ kernel_split.non_gemm_str }}
+        ({{ kernel_split.non_gemm_windows }} kernel(s),
+        {{ kernel_split.non_gemm_pct }}% of total)</p>
+      {% endif %}
       {% if matrix.rows %}
-      <h2 style="margin-top:18px">Per-window component energy
-        <span class="sub">dynamic energy per kernel; leakage-only components omitted</span></h2>
+      <h2 style="margin-top:18px">Per-{{ window_term }} component energy
+        <span class="sub">dynamic energy per {{ window_term }}; leakage-only components omitted</span></h2>
       <div class="tblwrap"><table>
         <thead><tr><th>Component</th>
           {% for w in windows %}<th><code>{{ w.label }}</code></th>{% endfor %}

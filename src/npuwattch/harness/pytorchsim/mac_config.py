@@ -161,6 +161,30 @@ class MacConfig:
     provenance: Dict[str, str] = field(default_factory=dict)
 
 
+def fallback_fp32_mac_config(lanes: int, *, pipeline_stages: int = 2) -> "MacConfig":
+    """The zero-evidence fallback: an fp32 (e8m23) datapath, confidence 'low'.
+
+    Used when a run contains NO MAC kernel at all, so there is no kernel to
+    borrow a representative dtype from — the non-MAC windows still need one to
+    resolve the templated vfu/spads elements. fp32 is the SFU fallback
+    convention (§_SFU_FALLBACK_EXP_MANT) applied to the datapath; callers must
+    surface a WARNING (an assumption unbacked by any run evidence).
+    """
+    operand = parse_dtype("f32")
+    primitive, cfg = _select_primitive(operand, operand, lanes, pipeline_stages,
+                                       lowering_ok=True)
+    return MacConfig(
+        primitive=primitive,
+        primitive_config=cfg,
+        operand_dtype=operand,
+        accum_dtype=operand,
+        lanes=lanes,
+        pipeline_stages=pipeline_stages,
+        confidence="low",
+        provenance={"source": "fallback_fp32 (no MAC kernel in the run)"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # meta.txt parsing
 # ---------------------------------------------------------------------------
