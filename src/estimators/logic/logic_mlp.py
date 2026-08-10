@@ -7,10 +7,11 @@ state_dict-only ``.pt`` with all transforms frozen in the JSON sidecars
 
 Differences from SRAM, driven by what the logic sweep measures:
 
-- one model per **(component, metric)**: 7 components (fpadd/fpmul/fpmac/
-  intadd/intmul/intmac/fpsfu; mxfpmac joins when its sweep completes) ×
-  4 metrics (energy/leakage/timing/area) — quartets are named
-  ``<component>_<metric>__v1.*``;
+- one model per **(component, metric)**: 14 components (7 arithmetic +
+  mxfpmac + the NoC/memory blocks crossbar/fifo/regfile/fattree/simplemux/
+  foldedclos, joined 2026-08-09) × 4 metrics (energy/leakage/timing/area) —
+  quartets are named ``<component>_<metric>__<VERSION>.*``; categorical
+  params (mxfpmac ``input_format``) are one-hot via CATEGORICAL_COLUMNS;
 - ``stim_mode`` is a one-hot INPUT for the power metrics (energy/leakage):
   the projection layer requests per-mode unit costs (COMPOUND_SCHEMA §6).
   ``none`` (the unvectored row) is included as a mode per the 2026-07-28
@@ -37,9 +38,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import torch
 from torch import nn
 
-VERSION = "v1"
+VERSION = "v2"   # v2 2026-08-09: clean leakage libs (BUF_X32/OR2_X4 re-char,
+                 # no node exclusion) + re-pipelined fpadd/fpmul/fpmac RTL
 
-COMPONENTS = ("fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac", "fpsfu")
+COMPONENTS = ("fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac", "fpsfu",
+              # joined 2026-08-09 once their sweeps completed:
+              "mxfpmac", "crossbar", "fifo", "regfile", "fattree",
+              "simplemux", "foldedclos")
 METRICS = ("energy", "leakage", "timing", "area")
 
 #: dataset CSV column -> metric target (absolute log10 of these, linear units)
@@ -68,12 +73,30 @@ PARAM_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "intmul": ("a_width", "b_width", "out_width", "pipeline_stages"),
     "intmac": ("a_width", "b_width", "out_width", "acc_width", "pipeline_stages"),
     "fpsfu": ("exp_bits", "mantissa_bits", "sfu_segments", "pipeline_stages"),
+    # a missing/empty pipeline_stages cell = 1 (the pre-07-21 mxfpmac
+    # template is combinational; train_logic defaults it)
+    "mxfpmac": ("block_elems", "num_blocks", "pipeline_stages"),
+    "crossbar": ("data_width", "num_inputs", "num_outputs"),
+    "fifo": ("width", "depth"),
+    "regfile": ("width", "depth", "num_read_ports", "num_write_ports"),
+    "fattree": ("data_width", "radix", "num_levels", "oversubscription"),
+    "simplemux": ("data_width", "num_inputs"),
+    "foldedclos": ("data_width", "terminals_per_leaf", "num_leaves",
+                   "num_spines", "oversubscription"),
 }
 
 #: binary design flags (0/1 inputs, unscaled)
 FLAG_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "fpsfu": ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf",
               "sfu_op_relu"),
+}
+
+#: categorical design params, one-hot encoded (unscaled). Frozen
+#: (column, value-order) pairs — the order IS the feature order.
+CATEGORICAL_COLUMNS: Dict[str, Tuple[Tuple[str, Tuple[str, ...]], ...]] = {
+    "mxfpmac": (("input_format", ("mxfp4_e2m1", "mxfp6_e2m3", "mxfp6_e3m2",
+                                  "mxfp8_e4m3", "mxfp8_e5m2", "mxint8",
+                                  "bf16")),),
 }
 
 #: frozen stim_mode one-hot order per component (mirrors POWER_MODES + 'none',
@@ -86,6 +109,17 @@ STIM_MODES: Dict[str, Tuple[str, ...]] = {
     "fpmac": ("none", "random", "hold_b", "sparse50", "idle"),
     "intmac": ("none", "random", "hold_b", "sparse50", "idle"),
     "fpsfu": ("none", "random", "exp", "trig", "hyp", "erf", "idle"),
+    "mxfpmac": ("none", "random", "hold_scale", "sparse50", "idle"),
+    # crossbar/simplemux/foldedclos: 'none' DROPPED per the 2026-08-09 A/B
+    # (the user's 07-28 rule: drop only on clear damage) — including it cost
+    # 2.5-7.7%p energy MAPE on these small combinational blocks
+    # (crossbar 11.5->8.9, simplemux 9.0->6.5, foldedclos 16.6->9.0).
+    "crossbar": ("random", "fixed_route", "valid25"),
+    "fifo": ("none", "random", "stream", "idle"),
+    "regfile": ("none", "random", "read", "write", "idle"),
+    "fattree": ("none", "random", "fixed_route"),
+    "simplemux": ("random", "valid25"),
+    "foldedclos": ("random", "fixed_route"),
 }
 
 DEFAULT_ARCH: Dict[str, List[int]] = {
@@ -111,6 +145,9 @@ def base_feature_names(component: str, metric: str) -> List[str]:
     names = ["log10_node_nm", "log10_clock_ns"]
     names += [f"log2_{c}" for c in PARAM_COLUMNS[component]]
     names += list(FLAG_COLUMNS.get(component, ()))
+    names += [f"{col}_is_{v}"
+              for col, values in CATEGORICAL_COLUMNS.get(component, ())
+              for v in values]
     names += [f"node_is_{n}nm" for n in NODE_LIST]
     return names
 
@@ -120,11 +157,20 @@ def _n_continuous(component: str) -> int:
 
 
 def base_features(component: str, nm: int, clock_ns: float,
-                  params: Mapping[str, float]) -> List[float]:
+                  params: Mapping[str, Any]) -> List[float]:
     f = [math.log10(nm), math.log10(clock_ns)]
-    f += [math.log2(max(float(params[c]), 1.0)) for c in PARAM_COLUMNS[component]]
+    # floor at 2^-8, NOT 1: fattree/foldedclos oversubscription is fractional
+    # (0.25/0.5/1.0) and must stay distinguishable after the log transform
+    f += [math.log2(max(float(params[c]), 2.0 ** -8))
+          for c in PARAM_COLUMNS[component]]
     f += [1.0 if float(params.get(c, 0)) else 0.0
           for c in FLAG_COLUMNS.get(component, ())]
+    for col, values in CATEGORICAL_COLUMNS.get(component, ()):
+        v = str(params[col])
+        if v not in values:
+            raise ValueError(f"{component}.{col}: unknown category {v!r} "
+                             f"(known: {values})")
+        f += [1.0 if v == known else 0.0 for known in values]
     f += [1.0 if nm == n else 0.0 for n in NODE_LIST]
     return f
 

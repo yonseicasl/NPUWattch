@@ -1,0 +1,68 @@
+{
+ "component": "regfile",
+ "model": "energy",
+ "version": "v2",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 16,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_width",
+  "log2_depth",
+  "log2_num_read_ports",
+  "log2_num_write_ports",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random",
+  "mode_read",
+  "mode_write",
+  "mode_idle"
+ ],
+ "stim_modes": [
+  "none",
+  "random",
+  "read",
+  "write",
+  "idle"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+ "seed": 42,
+ "split": {
+  "train": 1840,
+  "val": 230,
+  "test": 230
+ },
+ "epochs_run": 693,
+ "val_mape": 0.0500795878469944,
+ "test_mape": 0.03628143739177888,
+ "test_spearman": 0.997741141915545,
+ "per_mode_test_mape": {
+  "idle": 0.03327032876346084,
+  "none": 0.03157788862231051,
+  "random": 0.03714644210302289,
+  "read": 0.039766897972008095,
+  "write": 0.03964562949809201
+ },
+ "per_node_test_mape": {
+  "10nm": 0.0335712758256542,
+  "16nm": 0.02940255434335676,
+  "20nm": 0.05244115505867645,
+  "5nm": 0.03661767339177611,
+  "7nm": 0.028660191546959597
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 197.72296142578125,
+ "date": "2026-08-09T21:41:48",
+ "torch": "2.13.0+cpu"
+}

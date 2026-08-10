@@ -1,27 +1,20 @@
 from __future__ import annotations
 
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from autocommon import (
-    JOB_LIST,
     MASTER_TCL_DIR,
     NW_LOGIC_DIR,
     STAGE_PNR,
     STATUS_DONE,
     STATUS_ERROR,
     STATUS_RUNNING,
-    STATUS_START,
-    STATUS_TERMINATED,
     find_tech_corner,
-    group_jobs_by_node,
     log_event,
     normalize_node,
-    read_jobs,
     recreate_run_dir,
     run_id_for_job,
-    run_jobs_for_node,
     run_logged_command,
 )
 
@@ -148,51 +141,3 @@ def run_pnr_job(job: dict[str, str], job_index: int, *, verbose: bool = False) -
             "def": str(def_path),
         },
     )
-
-
-def run_pnr_for_node(
-    node: str, jobs: list[dict[str, str]], *, verbose: bool = False, jobs_per_node: int = 1
-) -> None:
-    log_event(stage=STAGE_PNR, status=STATUS_START, message="node PnR worker started", node=node)
-    run_jobs_for_node(
-        jobs,
-        lambda job, index: run_pnr_job(job, index, verbose=verbose),
-        jobs_per_node=jobs_per_node,
-    )
-    log_event(stage=STAGE_PNR, status=STATUS_DONE, message="node PnR worker complete", node=node)
-
-
-def run_pnr_from_manifest(
-    path: Path = JOB_LIST, *, verbose: bool = False, jobs_per_node: int = 1
-) -> None:
-    jobs = read_jobs(path)
-    grouped = group_jobs_by_node(jobs)
-    log_event(
-        stage=STAGE_PNR,
-        status=STATUS_START,
-        message="PnR stage started",
-        details={"nodes": sorted(grouped), "jobs_per_node": jobs_per_node},
-    )
-
-    with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
-        futures = {
-            executor.submit(
-                run_pnr_for_node, node, node_jobs, verbose=verbose, jobs_per_node=jobs_per_node
-            ): node
-            for node, node_jobs in grouped.items()
-        }
-        for future in as_completed(futures):
-            node = futures[future]
-            try:
-                future.result()
-            except Exception as exc:
-                log_event(
-                    stage=STAGE_PNR,
-                    status=STATUS_TERMINATED,
-                    message=f"node PnR worker terminated: {exc}",
-                    node=node,
-                    details={"error_type": type(exc).__name__},
-                )
-                raise
-
-    log_event(stage=STAGE_PNR, status=STATUS_DONE, message="PnR stage complete")

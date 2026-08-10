@@ -1,28 +1,21 @@
 from __future__ import annotations
 
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from autocommon import (
-    JOB_LIST,
     MASTER_TCL_DIR,
     NW_LOGIC_DIR,
     STAGE_POWER_SIM,
     STATUS_DONE,
     STATUS_ERROR,
     STATUS_RUNNING,
-    STATUS_START,
-    STATUS_TERMINATED,
     clock_period_ns,
     find_tech_corner,
-    group_jobs_by_node,
     log_event,
     normalize_node,
-    read_jobs,
     recreate_run_dir,
     run_id_for_job,
-    run_jobs_for_node,
     run_logged_command,
 )
 
@@ -185,74 +178,3 @@ def run_power_job(
             "report": str(report_path),
         },
     )
-
-
-def run_power_for_node(
-    node: str,
-    jobs: list[dict[str, str]],
-    *,
-    verbose: bool = False,
-    vectored: bool = False,
-    stim_mode: str = "random",
-    jobs_per_node: int = 1,
-) -> None:
-    log_event(stage=STAGE_POWER_SIM, status=STATUS_START, message="node power worker started", node=node)
-    run_jobs_for_node(
-        jobs,
-        lambda job, index: run_power_job(
-            job, index, verbose=verbose, vectored=vectored, stim_mode=stim_mode
-        ),
-        jobs_per_node=jobs_per_node,
-    )
-    log_event(stage=STAGE_POWER_SIM, status=STATUS_DONE, message="node power worker complete", node=node)
-
-
-def run_power_from_manifest(
-    path: Path = JOB_LIST,
-    *,
-    verbose: bool = False,
-    vectored: bool = False,
-    stim_mode: str = "random",
-    jobs_per_node: int = 1,
-) -> None:
-    jobs = read_jobs(path)
-    grouped = group_jobs_by_node(jobs)
-    log_event(
-        stage=STAGE_POWER_SIM,
-        status=STATUS_START,
-        message="PrimeTime power stage started",
-        details={
-            "nodes": sorted(grouped),
-            "mode": f"vectored:{stim_mode}" if vectored else "unvectored",
-            "jobs_per_node": jobs_per_node,
-        },
-    )
-
-    with ThreadPoolExecutor(max_workers=max(1, len(grouped))) as executor:
-        futures = {
-            executor.submit(
-                run_power_for_node,
-                node,
-                node_jobs,
-                verbose=verbose,
-                vectored=vectored,
-                stim_mode=stim_mode,
-                jobs_per_node=jobs_per_node,
-            ): node
-            for node, node_jobs in grouped.items()
-        }
-        for future in as_completed(futures):
-            node = futures[future]
-            try:
-                future.result()
-            except Exception as exc:
-                log_event(
-                    stage=STAGE_POWER_SIM,
-                    status=STATUS_TERMINATED,
-                    message=f"node power worker terminated: {exc}",
-                    node=node,
-                    details={"error_type": type(exc).__name__},
-                )
-                raise
-
-    log_event(stage=STAGE_POWER_SIM, status=STATUS_DONE, message="PrimeTime power stage complete")

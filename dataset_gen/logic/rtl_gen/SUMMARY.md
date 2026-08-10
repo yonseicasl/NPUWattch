@@ -38,7 +38,8 @@ Common arithmetic parameters:
 - `b_width`: bit width of input operand B.
 - `out_width`: bit width of the visible result.
 - `acc_width`: internal accumulator width for MAC units.
-- `pipeline_stages`: registered pipeline depth. Valid range is 2 to 5.
+- `pipeline_stages`: registered pipeline depth. Valid range is 2 to 5 for the
+  integer units; the fp units have their own ranges (see below).
 
 Storage parameters:
 - `width`: data bit width.
@@ -49,7 +50,35 @@ Storage parameters:
 Floating-point parameters:
 - `exp_bits`: IEEE-like exponent field width.
 - `mantissa_bits`: fraction field width, excluding the implicit leading bit.
-- `pipeline_stages`: registered pipeline depth. Valid range is 2 to 5.
+- `pipeline_stages`: registered pipeline depth = latency in cycles. REAL stage
+  distribution since 2026-08-05 — never output delay banks. `fpadd` and
+  `fpmul` each describe their datapath as EIGHT combinational segments and let
+  `pipeline_plan.plan_cuts` place the `pipeline_stages - 2` cuts so the
+  heaviest stage is as light as possible, so the range is **2 to 9**:
+    - fpadd: unpack | compare/swap | align shift | add/sub | leading-zero
+      count | exponent resolve | normalize + GRS | round + pack
+    - fpmul: unpack | significand partial products | product combine |
+      leading-zero count | normalize | subnormal shift | round | pack
+  The significand multiplier is decomposed into exact hi/lo partial products
+  (`A*B = A*B[BH-1:0] + (A*B[SIGW-1:BH] << BH)`) so the multiply itself can be
+  cut instead of forming one indivisible tree. In both units the zero/Inf/NaN
+  result is resolved early and rides the pipe as one value + one valid bit, so
+  the late class mux stays short and the raw operands are not carried along.
+- `fpmac` `pipeline_stages`: the TOTAL latency, split between the embedded
+  `fpmul` and `fpadd` by `pipeline_plan.split_mac_stages` (it balances the two
+  units' heaviest stages); range **4 to 18**, and `ps=4` (mul 2 + add 2) is
+  structurally what the generator called `ps=2` before 2026-08-05. `i_c` is
+  delayed by `MUL_STAGES` banks so it meets the product; the multiply's
+  exception flags are delayed by `ADD_STAGES` so the ORed `o_ovfl`/`o_udfl`
+  describe one operation (the old version ORed flags several cycles apart).
+
+  Why this changed: the pre-2026-08-05 templates built `pipeline_stages - 2`
+  output shift-register banks, so a deeper pipeline bought latency and
+  sequential area while leaving the critical path untouched. The sweep
+  measured exactly that — `pnr_crit_path_ns` was flat across `pipeline_stages`
+  at every node (5nm fpadd: 0.570 ns at ps 2, 3 and 5 alike), which teaches
+  the timing MLP that pipeline depth does not matter and then drags the
+  harness f_max check for any deeply pipelined FP unit.
 
 SFU (fpsfu) parameters (docs/DESIGN_SFU_DMA.md; `sfu_model.py` is the
 bit-exact single source of the PWL tables and TB expectations):
@@ -139,7 +168,15 @@ period, default 10000; the autosweep sim stage passes the job's clock),
 - Support signed integer width sweeps directly.
 - Support exponent/mantissa sweeps directly.
 - Support node-facing NoC topology sweeps directly.
-- Support pipeline depths from 2 to 5.
+- Support pipeline depths from 2 to 5 for the integer units; the fp units go
+  deeper because they distribute their cuts (fpadd/fpmul 2-9, fpmac 4-18,
+  fpsfu 4-10).
+- **Never spend a pipeline stage on an output delay bank.** Every added stage
+  must cut the datapath; if a unit has run out of segments to split, that is
+  its maximum depth, and the generator must reject anything deeper rather than
+  pad with shift registers. A stage that does not move the critical path still
+  shows up in the dataset as latency and sequential area, so the models learn
+  a false depth/timing relationship from it.
 
 ## Notes
 

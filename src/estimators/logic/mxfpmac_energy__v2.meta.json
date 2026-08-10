@@ -1,0 +1,74 @@
+{
+ "component": "mxfpmac",
+ "model": "energy",
+ "version": "v2",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 22,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_block_elems",
+  "log2_num_blocks",
+  "log2_pipeline_stages",
+  "input_format_is_mxfp4_e2m1",
+  "input_format_is_mxfp6_e2m3",
+  "input_format_is_mxfp6_e3m2",
+  "input_format_is_mxfp8_e4m3",
+  "input_format_is_mxfp8_e5m2",
+  "input_format_is_mxint8",
+  "input_format_is_bf16",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random",
+  "mode_hold_scale",
+  "mode_sparse50",
+  "mode_idle"
+ ],
+ "stim_modes": [
+  "none",
+  "random",
+  "hold_scale",
+  "sparse50",
+  "idle"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+ "seed": 42,
+ "split": {
+  "train": 4765,
+  "val": 595,
+  "test": 595
+ },
+ "epochs_run": 426,
+ "val_mape": 0.07087595015764236,
+ "test_mape": 0.06417041197614048,
+ "test_spearman": 0.9961386607091735,
+ "per_mode_test_mape": {
+  "hold_scale": 0.07205831992430405,
+  "idle": 0.06339671480911573,
+  "none": 0.05503861163359289,
+  "random": 0.060274322607700936,
+  "sparse50": 0.07008409090598863
+ },
+ "per_node_test_mape": {
+  "10nm": 0.052264915476771485,
+  "16nm": 0.06787528996312664,
+  "20nm": 0.04901545578368677,
+  "5nm": 0.07104039280378786,
+  "7nm": 0.07383222455107008
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 8.392681121826172,
+ "date": "2026-08-09T21:37:09",
+ "torch": "2.13.0+cpu"
+}

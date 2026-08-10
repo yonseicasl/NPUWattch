@@ -9,6 +9,17 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from .float_model import FloatFormat, emit_add_vectors, emit_mac_vectors, emit_mul_vectors
 from .int_model import emit_intadd_vectors, emit_intmac_vectors, emit_intmul_vectors
 from .mxfp_model import acc_width_from_format, emit_mxfpmac_vectors, get_mxfp_format
+from .pipeline_plan import (
+    FPADD_SEGMENTS,
+    FPMUL_SEGMENTS,
+    describe_plan,
+    fpadd_weights,
+    fpmac_stage_bounds,
+    fpmul_weights,
+    max_stages,
+    plan_cuts,
+    split_mac_stages,
+)
 from .sfu_model import SfuSpec, emit_fpsfu_vectors, emit_tables
 from .storage_model import emit_fifo_vectors, emit_regfile_vectors
 
@@ -48,22 +59,69 @@ def _write_text(path: Path, text: str) -> Path:
     return path
 
 
-def _common_context(module_name: str, exp_bits: int, mantissa_bits: int, pipeline_stages: int) -> dict[str, Any]:
+def _plan_comment(names, weights, cuts) -> str:
+    """Stage plan as an RTL comment block (one line per pipeline stage)."""
+    return "\n".join(
+        "//   " + line
+        for line in describe_plan(names, weights, cuts).splitlines()
+    )
+
+
+def _check_fp_format(exp_bits: int, mantissa_bits: int) -> None:
     if exp_bits < 3:
         raise ValueError("exp_bits must be >= 3")
     if mantissa_bits < 2:
         raise ValueError("mantissa_bits must be >= 2")
-    if pipeline_stages < 2 or pipeline_stages > 5:
-        raise ValueError("pipeline_stages must be in [2, 5]")
+
+
+def _common_context(module_name: str, exp_bits: int, mantissa_bits: int, pipeline_stages: int) -> dict[str, Any]:
+    """Context shared by the fp templates and their TBs.
+
+    ``pipeline_stages`` is the unit's latency in cycles: one input capture
+    bank, ``pipeline_stages - 2`` cuts distributed over the datapath segments
+    by :mod:`pipeline_plan`, one output register. The upper bound is the
+    number of segments plus one -- past that there is nothing left to split,
+    and appending delay banks (what fpadd/fpmul/fpmac did until 2026-08-05)
+    buys latency and flops without touching the critical path.
+    """
+    _check_fp_format(exp_bits, mantissa_bits)
     return {
         "module_name": module_name,
         "exp_bits": int(exp_bits),
         "mantissa_bits": int(mantissa_bits),
         "pipeline_stages": int(pipeline_stages),
         "fp_width": int(exp_bits) + int(mantissa_bits) + 1,
-        "mac_latency": int(pipeline_stages) + 2,
+        "mac_latency": int(pipeline_stages),
         "power_cycles": DEFAULT_POWER_CYCLES,
     }
+
+
+def _fpadd_context(exp_bits: int, mantissa_bits: int, pipeline_stages: int) -> dict[str, Any]:
+    _check_fp_format(exp_bits, mantissa_bits)
+    weights = fpadd_weights(exp_bits, mantissa_bits)
+    limit = max_stages(len(weights))
+    if pipeline_stages < 2 or pipeline_stages > limit:
+        raise ValueError(f"fpadd pipeline_stages must be in [2, {limit}]")
+    cuts = plan_cuts(weights, pipeline_stages)
+    context = _common_context("fpadd", exp_bits, mantissa_bits, pipeline_stages)
+    context["cuts"] = list(cuts)
+    context["stage_plan"] = _plan_comment(FPADD_SEGMENTS, weights, cuts)
+    return context
+
+
+def _fpmul_context(exp_bits: int, mantissa_bits: int, pipeline_stages: int) -> dict[str, Any]:
+    _check_fp_format(exp_bits, mantissa_bits)
+    weights = fpmul_weights(exp_bits, mantissa_bits)
+    limit = max_stages(len(weights))
+    if pipeline_stages < 2 or pipeline_stages > limit:
+        raise ValueError(f"fpmul pipeline_stages must be in [2, {limit}]")
+    cuts = plan_cuts(weights, pipeline_stages)
+    context = _common_context("fpmul", exp_bits, mantissa_bits, pipeline_stages)
+    context["cuts"] = list(cuts)
+    context["stage_plan"] = _plan_comment(FPMUL_SEGMENTS, weights, cuts)
+    # Significand split point for the exact hi/lo partial-product decomposition.
+    context["b_half"] = max(1, (int(mantissa_bits) + 1) // 2)
+    return context
 
 
 def _int_context(
@@ -204,7 +262,7 @@ def gen_fpadd(
     pipeline_stages: int = 2,
     output_root: Path | None = None,
 ) -> dict[str, Path]:
-    context = _common_context("fpadd", exp_bits, mantissa_bits, pipeline_stages)
+    context = _fpadd_context(exp_bits, mantissa_bits, pipeline_stages)
     fmt = FloatFormat(exp_bits=exp_bits, mantissa_bits=mantissa_bits)
     context["test_vectors"] = emit_add_vectors(fmt)
     unit_dir = _unit_dir("fpadd", output_root)
@@ -221,7 +279,7 @@ def gen_fpmul(
     pipeline_stages: int = 2,
     output_root: Path | None = None,
 ) -> dict[str, Path]:
-    context = _common_context("fpmul", exp_bits, mantissa_bits, pipeline_stages)
+    context = _fpmul_context(exp_bits, mantissa_bits, pipeline_stages)
     fmt = FloatFormat(exp_bits=exp_bits, mantissa_bits=mantissa_bits)
     context["test_vectors"] = emit_mul_vectors(fmt)
     unit_dir = _unit_dir("fpmul", output_root)
@@ -235,19 +293,32 @@ def gen_fpmac(
     *,
     exp_bits: int = 8,
     mantissa_bits: int = 23,
-    pipeline_stages: int = 2,
+    pipeline_stages: int = 4,
     output_root: Path | None = None,
 ) -> dict[str, Path]:
+    """Multiply-accumulate built from an embedded fpmul and fpadd.
+
+    ``pipeline_stages`` is the total latency; it is split between the two
+    units (never spent on output delay banks), so the minimum is 4 -- two
+    stages each, the shallowest either unit supports.
+    """
+    _check_fp_format(exp_bits, mantissa_bits)
+    low, high = fpmac_stage_bounds(exp_bits, mantissa_bits)
+    if pipeline_stages < low or pipeline_stages > high:
+        raise ValueError(f"fpmac pipeline_stages must be in [{low}, {high}]")
+    mul_stages, add_stages = split_mac_stages(exp_bits, mantissa_bits, pipeline_stages)
     context = _common_context("fpmac", exp_bits, mantissa_bits, pipeline_stages)
+    context["mul_stages"] = mul_stages
+    context["add_stages"] = add_stages
     fmt = FloatFormat(exp_bits=exp_bits, mantissa_bits=mantissa_bits)
     context["test_vectors"] = emit_mac_vectors(fmt)
     context["embedded_fpmul"] = _render(
         "fpmul.sv.j2",
-        _common_context("fpmul", exp_bits, mantissa_bits, 2),
+        _fpmul_context(exp_bits, mantissa_bits, mul_stages),
     )
     context["embedded_fpadd"] = _render(
         "fpadd.sv.j2",
-        _common_context("fpadd", exp_bits, mantissa_bits, 2),
+        _fpadd_context(exp_bits, mantissa_bits, add_stages),
     )
     unit_dir = _unit_dir("fpmac", output_root)
     return {

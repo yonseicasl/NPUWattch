@@ -1,0 +1,79 @@
+{
+ "component": "fpsfu",
+ "model": "energy",
+ "version": "v2",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 23,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_exp_bits",
+  "log2_mantissa_bits",
+  "log2_sfu_segments",
+  "log2_pipeline_stages",
+  "sfu_op_exp",
+  "sfu_op_trig",
+  "sfu_op_hyp",
+  "sfu_op_erf",
+  "sfu_op_relu",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random",
+  "mode_exp",
+  "mode_trig",
+  "mode_hyp",
+  "mode_erf",
+  "mode_idle"
+ ],
+ "stim_modes": [
+  "none",
+  "random",
+  "exp",
+  "trig",
+  "hyp",
+  "erf",
+  "idle"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+ "seed": 42,
+ "split": {
+  "train": 4042,
+  "val": 493,
+  "test": 505
+ },
+ "epochs_run": 439,
+ "val_mape": 0.05091117322444916,
+ "test_mape": 0.05048307825804417,
+ "test_spearman": 0.9968361027229238,
+ "per_mode_test_mape": {
+  "erf": 0.03936133792320058,
+  "exp": 0.030036530323167367,
+  "hyp": 0.049696604568246906,
+  "idle": 0.07203166184484357,
+  "none": 0.048868644422601984,
+  "random": 0.04816397870028954,
+  "trig": 0.0373633200390261
+ },
+ "per_node_test_mape": {
+  "10nm": 0.039609545488398096,
+  "16nm": 0.046692017404241545,
+  "20nm": 0.07574981176099083,
+  "5nm": 0.03611971753109617,
+  "7nm": 0.05265346374238126
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 19.688512802124023,
+ "date": "2026-08-09T21:34:18",
+ "torch": "2.13.0+cpu"
+}

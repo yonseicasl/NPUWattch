@@ -1,0 +1,58 @@
+{
+ "component": "mxfpmac",
+ "model": "area",
+ "version": "v2",
+ "arch": [
+  64,
+  64
+ ],
+ "n_in": 17,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_block_elems",
+  "log2_num_blocks",
+  "log2_pipeline_stages",
+  "input_format_is_mxfp4_e2m1",
+  "input_format_is_mxfp6_e2m3",
+  "input_format_is_mxfp6_e3m2",
+  "input_format_is_mxfp8_e4m3",
+  "input_format_is_mxfp8_e5m2",
+  "input_format_is_mxint8",
+  "input_format_is_bf16",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm"
+ ],
+ "stim_modes": [],
+ "target": "log10_um2",
+ "target_column": "pnr_total_area_um2",
+ "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+ "seed": 42,
+ "split": {
+  "train": 953,
+  "val": 119,
+  "test": 119
+ },
+ "epochs_run": 570,
+ "val_mape": 0.02710251323878765,
+ "test_mape": 0.03301807041352055,
+ "test_spearman": 0.9957484688790771,
+ "per_mode_test_mape": {
+  "-": 0.03301807041352055
+ },
+ "per_node_test_mape": {
+  "10nm": 0.029186559710329393,
+  "16nm": 0.030630604060901574,
+  "20nm": 0.03118761442456244,
+  "5nm": 0.030445292103876545,
+  "7nm": 0.041423279826899445
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+ "loss_max_min_ratio": 8.392681121826172,
+ "date": "2026-08-09T21:40:18",
+ "torch": "2.13.0+cpu"
+}

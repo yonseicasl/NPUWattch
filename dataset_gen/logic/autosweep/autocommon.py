@@ -5,11 +5,10 @@ import json
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 AUTOSWEEP_DIR = Path(__file__).resolve().parent
@@ -308,39 +307,6 @@ def rtl_variant_dir_name(job: dict[str, str]) -> str:
         sanitize_name_token(value) for _, value in parse_arch_param_items(job.get("arch_params", ""))
     ]
     return "_".join([rtl_name, *arch_tokens])
-
-
-def run_jobs_for_node(
-    jobs: list[dict[str, str]],
-    job_runner: Callable[[dict[str, str], int], None],
-    *,
-    jobs_per_node: int = 1,
-) -> None:
-    """Run job_runner(job, index) over a node's jobs, jobs_per_node at a time.
-
-    Concurrency is safe because every stage works in its own run directory and
-    RTL lives in per-variant directories; the practical bound is EDA license
-    seats (total concurrent tools = nodes x jobs_per_node). On the first
-    failure, not-yet-started jobs are cancelled to match the sequential
-    fail-fast behavior; already-running jobs finish.
-    """
-    if jobs_per_node <= 1:
-        for index, job in enumerate(jobs, start=1):
-            job_runner(job, index)
-        return
-
-    with ThreadPoolExecutor(max_workers=jobs_per_node) as pool:
-        futures = {
-            pool.submit(job_runner, job, index): index
-            for index, job in enumerate(jobs, start=1)
-        }
-        try:
-            for future in as_completed(futures):
-                future.result()
-        except Exception:
-            for future in futures:
-                future.cancel()
-            raise
 
 
 def group_jobs_by_node(jobs: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:

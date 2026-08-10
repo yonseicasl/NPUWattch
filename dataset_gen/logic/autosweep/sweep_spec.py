@@ -124,6 +124,21 @@ def _intmac():
             yield f"a_width={a};b_width={b};out_width={acc};acc_width={acc};pipeline_stages={pipe}"
 
 
+# Pipeline depths for the fp arithmetic units, widened 2026-08-05 when
+# fpadd/fpmul/fpmac stopped appending output delay banks and started
+# distributing their register cuts over the datapath (rtl_gen/pipeline_plan.py).
+# Under the old structure pnr_crit_path_ns was flat across pipeline_stages at
+# every node, so the timing MLP had no signal to learn from; these points now
+# span the achievable range.
+#   fpadd/fpmul: 8 segments -> ps in [2, 9]. Endpoints plus 3 and 5, where the
+#     modelled stage weight drops fastest (fp32: 59 -> 32 -> 17 -> 10).
+#   fpmac: latency = fpmul stages + fpadd stages -> ps in [4, 18]. ps=4 is
+#     mul 2 + add 2, i.e. exactly the pre-2026-08-05 ps=2 structure, which
+#     keeps the shallow end of the old dataset comparable.
+FP_PIPELINE_STAGES = (2, 3, 5, 9)
+FPMAC_PIPELINE_STAGES = (4, 8, 12, 18)
+
+
 def _fp(pipes):
     for exp, mant in FP_FORMATS:
         for pipe in pipes:
@@ -183,49 +198,128 @@ def _fifo():
     yield "width=512;depth=16"
 
 
+# --- NoC grids -------------------------------------------------------------
+# Expanded 2026-08-09 (user request): the v2 MLPs showed these four blocks are
+# config-starved (15-19 configs vs fifo 32 / regfile 46 → 8-16% energy MAPE vs
+# ~3%). Each generator first replays its ORIGINAL grid verbatim (so completed
+# dataset rows resume/skip cleanly), then adds a denser grid behind a dedup
+# guard. Port-bit caps raised 2048/2560 → 4096: doubles the largest block
+# (~intmac-class PnR, still tractable) and halves the log-space extrapolation
+# gap to the BookSim fly xbar region (radix 32-64 × 256b) the NoC emitter
+# prices.
+
+
 def _simplemux():
+    seen = set()
     for dw in (16, 32, 64, 128, 256):
         for n in (2, 4, 8, 16):
             if n * dw <= 2048:
+                seen.add(f"data_width={dw};num_inputs={n}")
                 yield f"data_width={dw};num_inputs={n}"
+    # expansion: deepen the mux-tree axis (n=32/64) — timing tracks ceil(log2 n)
+    for dw in (16, 32, 64, 128, 256):
+        for n in (2, 4, 8, 16, 32, 64):
+            cfg = f"data_width={dw};num_inputs={n}"
+            if n * dw <= 4096 and cfg not in seen:
+                seen.add(cfg)
+                yield cfg
 
 
 def _crossbar():
+    seen = set()
     for dw in (32, 64, 128):
         for ni, no in ((2, 2), (4, 4), (8, 8), (16, 16), (8, 4), (16, 8), (4, 8)):
             if (ni + no) * dw <= 2560:
+                seen.add(f"data_width={dw};num_inputs={ni};num_outputs={no}")
                 yield f"data_width={dw};num_inputs={ni};num_outputs={no}"
+    # expansion: dw 256 end (BookSim flit width), symmetric 32x32, and a full
+    # asymmetric fan-in/fan-out family (concentrators AND distributors)
+    for dw in (32, 64, 128, 256):
+        for ni, no in ((2, 2), (4, 4), (8, 8), (16, 16), (32, 32),
+                       (2, 4), (4, 2), (2, 8), (8, 2), (4, 8), (8, 4),
+                       (4, 16), (16, 4), (8, 16), (16, 8), (16, 32), (32, 16)):
+            cfg = f"data_width={dw};num_inputs={ni};num_outputs={no}"
+            if (ni + no) * dw <= 4096 and cfg not in seen:
+                seen.add(cfg)
+                yield cfg
 
 
 def _fattree():
+    seen = set()
     for radix, levels in ((2, 2), (2, 3), (2, 4), (2, 5), (4, 2), (4, 3)):
         nodes = radix ** levels
         for dw in (32, 64, 128):
             if nodes * dw <= 2048:
-                yield f"data_width={dw};radix={radix};num_levels={levels};oversubscription=1.0"
+                cfg = f"data_width={dw};radix={radix};num_levels={levels};oversubscription=1.0"
+                seen.add(cfg)
+                yield cfg
     for radix, levels, dw in ((4, 2, 32), (4, 2, 64), (2, 4, 32)):
-        yield f"data_width={dw};radix={radix};num_levels={levels};oversubscription=0.5"
+        cfg = f"data_width={dw};radix={radix};num_levels={levels};oversubscription=0.5"
+        seen.add(cfg)
+        yield cfg
+    # expansion: radix 8, deeper radix-2 trees, dw 256, and the
+    # oversubscription AXIS (0.5 everywhere, 0.25 on the larger trees) — the
+    # fractional osub feature previously had 3 corner points of support
+    for radix, levels in ((2, 2), (2, 3), (2, 4), (2, 5), (2, 6),
+                          (4, 2), (4, 3), (8, 2)):
+        nodes = radix ** levels
+        for dw in (32, 64, 128, 256):
+            if nodes * dw > 4096:
+                continue
+            for osub in (1.0, 0.5, 0.25):
+                if osub == 0.25 and nodes < 32:
+                    continue
+                cfg = (f"data_width={dw};radix={radix};num_levels={levels};"
+                       f"oversubscription={osub}")
+                if cfg not in seen:
+                    seen.add(cfg)
+                    yield cfg
 
 
 def _foldedclos():
+    seen = set()
     for tpl, leaves, spines in ((2, 2, 2), (4, 4, 2), (4, 4, 4), (8, 4, 4), (4, 8, 4), (8, 8, 4)):
         nodes = tpl * leaves
         for dw in (32, 64):
             if nodes * dw <= 2048:
-                yield (
+                cfg = (
                     f"data_width={dw};terminals_per_leaf={tpl};num_leaves={leaves};"
                     f"num_spines={spines};oversubscription=1.0"
                 )
+                seen.add(cfg)
+                yield cfg
     for tpl, leaves, spines, dw, osub in (
         (4, 4, 4, 32, 0.5),
         (8, 4, 4, 32, 0.5),
         (4, 4, 4, 32, 0.25),
         (4, 8, 4, 32, 0.5),
     ):
-        yield (
+        cfg = (
             f"data_width={dw};terminals_per_leaf={tpl};num_leaves={leaves};"
             f"num_spines={spines};oversubscription={osub}"
         )
+        seen.add(cfg)
+        yield cfg
+    # expansion: vary the spine axis independently of leaves/terminals, add
+    # dw 128 for the small fabrics, and give oversubscription real support
+    # (0.5 everywhere; 0.25 where terminals_per_leaf >= 8 so it changes the
+    # active-uplink count meaningfully)
+    for tpl, leaves, spines in ((2, 2, 2), (2, 4, 2), (4, 2, 2), (2, 8, 4),
+                                (4, 4, 2), (4, 4, 4), (4, 4, 8), (8, 4, 4),
+                                (4, 8, 4), (8, 8, 4), (8, 8, 8), (16, 4, 4)):
+        nodes = tpl * leaves
+        for dw in (32, 64, 128):
+            if nodes * dw > 4096:
+                continue
+            for osub in (1.0, 0.5, 0.25):
+                if osub == 0.25 and tpl < 8:
+                    continue
+                cfg = (f"data_width={dw};terminals_per_leaf={tpl};"
+                       f"num_leaves={leaves};num_spines={spines};"
+                       f"oversubscription={osub}")
+                if cfg not in seen:
+                    seen.add(cfg)
+                    yield cfg
 
 
 # fpsfu op-group combos: each group alone (isolates its table/logic cost),
@@ -263,9 +357,9 @@ _GENERATORS = {
     "intadd": _intadd,
     "intmul": _intmul,
     "intmac": _intmac,
-    "fpadd": lambda: _fp((2, 3, 5)),
-    "fpmul": lambda: _fp((2, 3, 5)),
-    "fpmac": lambda: _fp((2, 5)),
+    "fpadd": lambda: _fp(FP_PIPELINE_STAGES),
+    "fpmul": lambda: _fp(FP_PIPELINE_STAGES),
+    "fpmac": lambda: _fp(FPMAC_PIPELINE_STAGES),
     "fpsfu": _fpsfu,
     "mxfpmac": _mxfpmac,
     "regfile": _regfile,

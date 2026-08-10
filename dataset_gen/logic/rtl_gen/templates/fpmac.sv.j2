@@ -1,3 +1,23 @@
+// fpmac -- fused-instantiation multiply-accumulate: o_result = i_a * i_b + i_c.
+//
+// Pipeline: REAL stage distribution (no output delay banks). PIPELINE_STAGES is
+// the total latency and is split across the two embedded units by
+// `pipeline_plan.split_mac_stages`, which balances the heaviest stage of the
+// multiplier against the heaviest stage of the adder; each unit then
+// distributes its own share over its eight segments. This variant uses
+//   fpmul PIPELINE_STAGES = {{ mul_stages }}, fpadd PIPELINE_STAGES = {{ add_stages }}
+// and its latency is {{ mul_stages }} + {{ add_stages }} = {{ pipeline_stages }} cycles.
+//
+// i_c is delayed by MUL_STAGES banks so it reaches the adder in the cycle the
+// product does. The multiply's exception flags are delayed by ADD_STAGES so the
+// ORed o_ovfl/o_udfl describe one operation rather than two different ones in
+// flight (the pre-2026-08-05 version ORed flags that were PIPELINE_STAGES-2
+// cycles apart).
+//
+// The cut placement inside the embedded units is generation-time, so the
+// PIPELINE_STAGES parameters below are the values this file was generated for
+// and are carried for the flow/TB interface -- overriding them at elaboration
+// moves neither the cuts nor the latency.
 module {{ module_name }} #(
     parameter int EXPONENT_BITS = {{ exp_bits }},
     parameter int MANTISSA_BITS = {{ mantissa_bits }},
@@ -13,11 +33,9 @@ module {{ module_name }} #(
     output logic                                 o_udfl
 );
 
-    localparam int FP_WIDTH = EXPONENT_BITS + MANTISSA_BITS + 1;
-    localparam int EXTRA_STAGES = PIPELINE_STAGES - 2;
-
-    logic [FP_WIDTH-1:0] c_pipe0;
-    logic [FP_WIDTH-1:0] c_pipe1;
+    localparam int FP_WIDTH   = EXPONENT_BITS + MANTISSA_BITS + 1;
+    localparam int MUL_STAGES = {{ mul_stages }};
+    localparam int ADD_STAGES = {{ add_stages }};
 
     logic [FP_WIDTH-1:0] mul_product;
     logic                mul_ovfl;
@@ -26,26 +44,26 @@ module {{ module_name }} #(
     logic                add_ovfl;
     logic                add_udfl;
 
-    logic [FP_WIDTH-1:0] result_pipe [0:EXTRA_STAGES];
-    logic                ovfl_pipe   [0:EXTRA_STAGES];
-    logic                udfl_pipe   [0:EXTRA_STAGES];
-
-    integer idx;
+    // ---- addend alignment: i_c arrives with the product ------------------
+    logic [FP_WIDTH-1:0] c_pipe [0:MUL_STAGES-1];
 
     always_ff @(posedge i_clk) begin
         if (!i_rst_n) begin
-            c_pipe0 <= '0;
-            c_pipe1 <= '0;
+            for (int s = 0; s < MUL_STAGES; s = s + 1) begin
+                c_pipe[s] <= '0;
+            end
         end else begin
-            c_pipe0 <= i_c;
-            c_pipe1 <= c_pipe0;
+            c_pipe[0] <= i_c;
+            for (int s = 1; s < MUL_STAGES; s = s + 1) begin
+                c_pipe[s] <= c_pipe[s-1];
+            end
         end
     end
 
     fpmul #(
         .EXPONENT_BITS(EXPONENT_BITS),
         .MANTISSA_BITS(MANTISSA_BITS),
-        .PIPELINE_STAGES(2)
+        .PIPELINE_STAGES(MUL_STAGES)
     ) u_mul (
         .i_a(i_a),
         .i_b(i_b),
@@ -59,10 +77,10 @@ module {{ module_name }} #(
     fpadd #(
         .EXPONENT_BITS(EXPONENT_BITS),
         .MANTISSA_BITS(MANTISSA_BITS),
-        .PIPELINE_STAGES(2)
+        .PIPELINE_STAGES(ADD_STAGES)
     ) u_add (
         .i_a(mul_product),
-        .i_b(c_pipe1),
+        .i_b(c_pipe[MUL_STAGES-1]),
         .i_clk(i_clk),
         .i_rst_n(i_rst_n),
         .o_sum(add_result),
@@ -70,30 +88,29 @@ module {{ module_name }} #(
         .o_udfl(add_udfl)
     );
 
+    // ---- exception alignment: multiply flags follow the product ----------
+    logic mul_ovfl_pipe [0:ADD_STAGES-1];
+    logic mul_udfl_pipe [0:ADD_STAGES-1];
+
     always_ff @(posedge i_clk) begin
         if (!i_rst_n) begin
-            for (idx = 0; idx < EXTRA_STAGES; idx = idx + 1) begin
-                result_pipe[idx] <= '0;
-                ovfl_pipe[idx] <= 1'b0;
-                udfl_pipe[idx] <= 1'b0;
+            for (int s = 0; s < ADD_STAGES; s = s + 1) begin
+                mul_ovfl_pipe[s] <= 1'b0;
+                mul_udfl_pipe[s] <= 1'b0;
             end
         end else begin
-            if (EXTRA_STAGES > 0) begin
-                result_pipe[0] <= add_result;
-                ovfl_pipe[0] <= mul_ovfl | add_ovfl;
-                udfl_pipe[0] <= mul_udfl | add_udfl;
-                for (idx = 1; idx < EXTRA_STAGES; idx = idx + 1) begin
-                    result_pipe[idx] <= result_pipe[idx-1];
-                    ovfl_pipe[idx] <= ovfl_pipe[idx-1];
-                    udfl_pipe[idx] <= udfl_pipe[idx-1];
-                end
+            mul_ovfl_pipe[0] <= mul_ovfl;
+            mul_udfl_pipe[0] <= mul_udfl;
+            for (int s = 1; s < ADD_STAGES; s = s + 1) begin
+                mul_ovfl_pipe[s] <= mul_ovfl_pipe[s-1];
+                mul_udfl_pipe[s] <= mul_udfl_pipe[s-1];
             end
         end
     end
 
-    assign o_result = (EXTRA_STAGES == 0) ? add_result : result_pipe[EXTRA_STAGES-1];
-    assign o_ovfl = (EXTRA_STAGES == 0) ? (mul_ovfl | add_ovfl) : ovfl_pipe[EXTRA_STAGES-1];
-    assign o_udfl = (EXTRA_STAGES == 0) ? (mul_udfl | add_udfl) : udfl_pipe[EXTRA_STAGES-1];
+    assign o_result = add_result;
+    assign o_ovfl = mul_ovfl_pipe[ADD_STAGES-1] | add_ovfl;
+    assign o_udfl = mul_udfl_pipe[ADD_STAGES-1] | add_udfl;
 
 endmodule
 

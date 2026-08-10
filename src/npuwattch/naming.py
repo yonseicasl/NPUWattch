@@ -85,7 +85,8 @@ CANONICAL: Dict[str, Param] = dict([
     _p("node", "str", "Technology node string, e.g. '7nm'"),
     _p("data_width", "int", "Primary datapath width", "bits"),
     _p("pipeline_stages", "int",
-       "Registered pipeline depth (range is primitive-specific: most 2-5, "
+       "Registered pipeline depth = latency in cycles (range is "
+       "primitive-specific: int units 2-5, fpadd/fpmul 2-9, fpmac 4-18, "
        "fpsfu 4-10)"),
     _p("number_format", "str", "Numeric family: int | fp | mx"),
 

@@ -1,15 +1,21 @@
 """Storage-bounded sweep driver: one full flow chain per job, then prune.
 
-Unlike the stage-wise run_batch stages (all jobs' syn, then all jobs' pnr,
-...), this driver pipelines each job through
+The driver pipelines each job (RTL must already be rendered: run_batch rtl)
+through
 
-    syn -> pnr -> pex -> sim (one gate-level run per stimulus mode)
+    syn -> pnr [-> clock rederivation -> syn -> pnr]
+        -> pex -> sim (one gate-level run per stimulus mode)
         -> pwr(unvectored)          -> CSV row
         -> pwr(vectored, mode) x N  -> CSV row each   (N = power_modes(module))
     -> archive report texts -> delete the run directories
 
 so the heavy EDA artifacts on disk at any moment belong only to the jobs
 currently executing (nodes x jobs_per_node of them), not to the whole sweep.
+
+Clock self-correction: probe periods are synthesis-only estimates, so a
+post-PnR setup violation beyond the sim margin does not fail the job -- the
+sweep derives a slower clock from the measured slack, persists it into the
+manifest, and re-runs syn+PnR (up to two rederivations per job).
 
 Crash resume: a job whose dataset CSV already holds the unvectored row AND
 one vectored row per stimulus mode of its module is skipped, so re-running
@@ -18,15 +24,18 @@ flip side of the storage bounding: because run directories are deleted after
 collection, adding a NEW mode to POWER_MODES later re-runs the whole EDA
 chain for the affected jobs -- extend the mode list before a sweep, not
 after.  Failures are recorded in sweep_failures.tsv and do not stop the
-sweep.
+sweep; run_batch rerun-failed patches their clocks and retires the log.
 """
 from __future__ import annotations
 
 import csv
+import math
+import os
 import re
 import shutil
 import tarfile
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -35,12 +44,14 @@ from autocommon import (
     JOB_LIST,
     NW_LOGIC_DIR,
     group_jobs_by_node,
+    log_event,
     normalize_node,
     read_jobs,
     run_id_for_job,
 )
 from autopex import run_pex_job
 from autopnr import run_pnr_job
+from autoprobe import CLOCK_GRID_NS
 from autopwr import run_power_job
 from autosim import run_simulation_job
 from autosynth import CLOCK_UNCERTAINTY_NS, run_synthesis_job
@@ -74,6 +85,7 @@ _STAGE_DIRS = tuple(_KEEP)
 
 _CSV_LOCK = threading.Lock()
 _FAIL_LOCK = threading.Lock()
+_MANIFEST_LOCK = threading.Lock()
 
 
 def _tech_dir(job: dict[str, str]) -> Path:
@@ -83,37 +95,42 @@ def _tech_dir(job: dict[str, str]) -> Path:
 _QOR_GROUP_RE = re.compile(r"Timing Path Group\s+'([^']+)'")
 _QOR_SLACK_RE = re.compile(r"Critical Path Slack:\s+(-?[0-9.]+)")
 
-# The gate trips only when a violation eats into the margin the SIMULATION
-# actually has.  STA slack includes the 0.2 ns clock uncertainty, which is
-# jitter margin that does not exist in the jitter-free SDF sim: a run at STA
-# slack s still has s + 0.2 ns of real sim margin.  ICC2 routinely lands a
-# few hundredths negative after DC met (2026-07-26: p50 of gate hits was
-# -0.03, 97% within the uncertainty).
-#
-# 2026-07-27 (sweep policy): the gate is no longer the arbiter of dataset
-# validity -- the TBs tolerate definite-value mismatches ("PASS
-# marginal_errors=N") because random-stimulus toggle statistics do not
-# depend on numerically exact captures, and only unknown (X) outputs abort.
-# The gate therefore only discards clocks so far past fmax that the whole
-# netlist would compute garbage: 1.5x the uncertainty past zero.
+# The timing gate trips only when a violation eats into the margin the
+# SIMULATION actually has.  STA slack includes the 0.2 ns clock uncertainty,
+# which is jitter margin that does not exist in the jitter-free SDF sim, and
+# the TBs tolerate definite-value mismatches ("PASS marginal_errors=N")
+# because random-stimulus toggle statistics do not depend on numerically
+# exact captures (only unknown/X outputs abort).  The gate therefore only
+# reacts to clocks so far past fmax that the whole netlist would compute
+# garbage: 1.5x the uncertainty past zero.  A tripped gate is not a failure
+# -- the sweep rederives a slower clock from the measured slack and moves on
+# (probe periods are synthesis-only estimates; PnR routing can exceed their
+# margin, 2026-08-07: 119 jobs, mxfpmac in2reg and comb-NoC in2out worst).
 PNR_GATE_SLACK_NS = -(CLOCK_UNCERTAINTY_NS * 1.5)
 
+# Attempts per job: the first rederivation uses the measured post-PnR slack,
+# so it normally lands in one step; the second absorbs PnR noise on the new
+# netlist.  Only an exhausted job is recorded as a pnr-timing failure.
+PNR_CLOCK_ATTEMPTS = 3
 
-def _check_pnr_timing(job: dict[str, str]) -> None:
-    """Fail fast on post-PnR setup violations deep enough to corrupt the SDF
-    gate sim (2026-07-20: 162/164 sim failures were unmet clocks), instead of
-    letting the netlist reach sim where they surface as confusing checker
-    FAILs.  Raises RuntimeError listing every path group below
-    PNR_GATE_SLACK_NS; silently returns if the qor report is missing (the
-    gate is advisory, not load-bearing).
-    """
+# Added on top of the recovered slack before snapping up to the clock grid.
+REDERIVE_MARGIN_NS = 0.05
+
+# Path groups whose SDC budget is T/2: recovering slack s there needs the
+# period to grow by 2*s (reg2reg / 'clk' needs s).
+_HALF_BUDGET_TAGS = ("in2reg", "in2out", "reg2out")
+
+
+def _pnr_violations(job: dict[str, str]) -> list[tuple[str, float]]:
+    """(path group, slack) pairs beyond PNR_GATE_SLACK_NS in this job's
+    post-PnR qor report; empty when timing is usable (or the report is
+    missing -- the gate is advisory, not load-bearing)."""
     qor_path = _tech_dir(job) / "02_pnr" / run_id_for_job(job) / "qor.rpt"
     if not qor_path.exists():
-        return
-    text = qor_path.read_text(encoding="utf-8", errors="replace")
-    violated: list[str] = []
+        return []
+    violations: list[tuple[str, float]] = []
     group = None
-    for line in text.splitlines():
+    for line in qor_path.read_text(encoding="utf-8", errors="replace").splitlines():
         group_match = _QOR_GROUP_RE.search(line)
         if group_match:
             group = group_match.group(1)
@@ -122,14 +139,111 @@ def _check_pnr_timing(job: dict[str, str]) -> None:
         if slack_match and group is not None:
             slack = float(slack_match.group(1))
             if slack < PNR_GATE_SLACK_NS:
-                violated.append(f"{group} slack {slack:g}")
+                violations.append((group, slack))
             group = None
-    if violated:
-        raise RuntimeError(
-            "post-PnR setup timing violated beyond the sim margin "
-            f"(threshold {PNR_GATE_SLACK_NS:g}: " + "; ".join(violated) + ") -- "
-            "the job clock is not achievable; gen-jobs should derive a slower one"
-        )
+    return violations
+
+
+def _violation_text(violations: list[tuple[str, float]]) -> str:
+    return "; ".join(f"{group} slack {slack:g}" for group, slack in violations)
+
+
+def rederived_period_ns(period_ns: float, violations: list[tuple[str, float]]) -> float:
+    """Slower clock period that clears the measured violations, snapped up to
+    the manifest clock grid (strictly slower than the input)."""
+    need = max(
+        (2.0 if any(tag in group for tag in _HALF_BUDGET_TAGS) else 1.0) * -slack
+        for group, slack in violations
+    )
+    target = period_ns + need + REDERIVE_MARGIN_NS
+    slower = math.ceil(target / CLOCK_GRID_NS - 1e-9) * CLOCK_GRID_NS
+    if slower <= period_ns + 1e-9:
+        slower = period_ns + CLOCK_GRID_NS
+    return round(slower, 6)
+
+
+def _patch_manifest_clocks(
+    path: Path, proposals: dict[tuple[str, str, str, str], float], *, backup: bool
+) -> dict[tuple[str, str, str, str], float]:
+    """Rewrite manifest rows' clocks and return the final periods.
+
+    proposals maps (rtl_name, arch_params, node, clock_period_ns as written)
+    to a proposed period.  A proposal colliding with another clock of the
+    same (rtl, arch, node) is bumped by grid steps so the config keeps
+    distinct clocks (dataset diversity).  Comments and row order are
+    preserved; the write is atomic.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    col: dict[str, int] = {}
+    rows: list[tuple[int, list[str]]] = []
+    for index, line in enumerate(lines):
+        if line.startswith("#") or not line.strip():
+            continue
+        if not col:
+            col = {name: j for j, name in enumerate(line.split("\t"))}
+            continue
+        rows.append((index, line.split("\t")))
+
+    def config_of(fields: list[str]) -> tuple[str, str, str]:
+        return fields[col["rtl_name"]], fields[col["arch_params"]], fields[col["node"]]
+
+    periods: dict[tuple[str, str, str], set[float]] = defaultdict(set)
+    for _, fields in rows:
+        periods[config_of(fields)].add(round(float(fields[col["clock_period_ns"]]), 6))
+
+    finals: dict[tuple[str, str, str, str], float] = {}
+    for index, fields in rows:
+        key = (*config_of(fields), fields[col["clock_period_ns"]])
+        if key not in proposals:
+            continue
+        config = config_of(fields)
+        periods[config].discard(round(float(fields[col["clock_period_ns"]]), 6))
+        period = round(proposals[key], 6)
+        while period in periods[config]:
+            period = round(period + CLOCK_GRID_NS, 6)
+        periods[config].add(period)
+        fields[col["clock_period_ns"]] = f"{period:g}"
+        fields[col["clock_freq_mhz"]] = f"{1000.0 / period:.6g}"
+        lines[index] = "\t".join(fields)
+        finals[key] = period
+
+    missing = set(proposals) - set(finals)
+    if missing:
+        raise KeyError(f"manifest rows not found for clock patch: {sorted(missing)}")
+    if backup:
+        shutil.copyfile(path, path.with_suffix(".prev"))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return finals
+
+
+def _slow_down_job(job: dict[str, str], violations: list[tuple[str, float]]) -> None:
+    """Move the job to a clock that clears the measured violations: persist it
+    to the manifest (resume and future sweeps start there) and drop the
+    too-fast attempt's artifacts before the run_id changes."""
+    old_run_id = run_id_for_job(job)
+    old_period = job["clock_period_ns"]
+    key = (job["rtl_name"], job["arch_params"], job["node"], old_period)
+    proposal = rederived_period_ns(float(old_period), violations)
+    with _MANIFEST_LOCK:
+        final = _patch_manifest_clocks(JOB_LIST, {key: proposal}, backup=False)[key]
+    tech_dir = _tech_dir(job)
+    for stage_dir in ("01_syn", "02_pnr"):
+        shutil.rmtree(tech_dir / stage_dir / old_run_id, ignore_errors=True)
+    job["clock_period_ns"] = f"{final:g}"
+    job["clock_freq_mhz"] = f"{1000.0 / final:.6g}"
+    detail = _violation_text(violations)
+    print(
+        f"[sweep] {old_run_id}: clock rederived to {job['clock_freq_mhz']} MHz ({detail})",
+        flush=True,
+    )
+    log_event(
+        stage="pnr-timing",
+        status="running",
+        message=f"clock rederived: {old_period} -> {job['clock_period_ns']} ns ({detail})",
+        job=job,
+    )
 
 
 def _collected_modes(job: dict[str, str]) -> set[tuple[str, str]]:
@@ -233,22 +347,38 @@ def _record_failure(job: dict[str, str], stage: str, error: Exception) -> None:
             )
 
 
+def _new_staging(job: dict[str, str]) -> Path:
+    staging = SWEEP_REPORTS_DIR / f".staging_{run_id_for_job(job)}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    return staging
+
+
 def run_sweep_job(job: dict[str, str], job_index: int) -> str:
     """Full chain for one job; returns 'done' | 'skipped' | 'failed:<stage>'."""
-    run_id = run_id_for_job(job)
     if _required_modes(job) <= _collected_modes(job):
         return "skipped"
 
-    staging = SWEEP_REPORTS_DIR / f".staging_{run_id}"
-    shutil.rmtree(staging, ignore_errors=True)
-    staging.mkdir(parents=True, exist_ok=True)
+    staging: Path | None = None
     stage = "syn"
     try:
-        run_synthesis_job(job, job_index)
-        stage = "pnr"
-        run_pnr_job(job, job_index)
-        stage = "pnr-timing"
-        _check_pnr_timing(job)
+        for attempt in range(PNR_CLOCK_ATTEMPTS):
+            stage = "syn"
+            run_synthesis_job(job, job_index)
+            stage = "pnr"
+            run_pnr_job(job, job_index)
+            stage = "pnr-timing"
+            violations = _pnr_violations(job)
+            if not violations:
+                break
+            if attempt == PNR_CLOCK_ATTEMPTS - 1:
+                raise RuntimeError(
+                    f"post-PnR setup timing still violated after "
+                    f"{PNR_CLOCK_ATTEMPTS - 1} clock rederivations "
+                    f"(threshold {PNR_GATE_SLACK_NS:g}: {_violation_text(violations)})"
+                )
+            _slow_down_job(job, violations)
+        staging = _new_staging(job)
         stage = "pex"
         run_pex_job(job, job_index)
         stage = "sim"
@@ -266,6 +396,8 @@ def run_sweep_job(job: dict[str, str], job_index: int) -> str:
             _stage_keepers(job, staging, f"vectored_{mode}")
     except Exception as exc:  # noqa: BLE001 - a sweep must survive bad jobs
         _record_failure(job, stage, exc)
+        if staging is None:
+            staging = _new_staging(job)
         _stage_keepers(job, staging, "failed")
         _stash_failure_evidence(job, staging)
         _prune_job(job, staging)
@@ -325,4 +457,64 @@ def run_sweep(
     print(
         f"sweep complete: {totals['done']} done, {totals['skipped']} skipped, "
         f"{totals['failed']} failed (see {SWEEP_FAILURES})"
+    )
+
+
+_FAILURE_SLACK_RE = re.compile(r"([A-Za-z0-9_*]+) slack (-?[0-9.]+)")
+
+
+def rerun_failed(jobs_path: Path = JOB_LIST, failures_path: Path = SWEEP_FAILURES) -> None:
+    """Move recorded pnr-timing failures to achievable clocks, then retire the
+    failure log so the next sweep run starts clean.
+
+    The sweep now rederives clocks in-flight; this applies the same math to
+    failures recorded before that existed (or by exhausted retries), using the
+    slack numbers embedded in the failure messages, so the next run starts
+    each job directly at the corrected clock instead of rediscovering the
+    violation with a wasted syn+PnR round.  Failures from other stages need
+    no patching: jobs without complete dataset rows rerun automatically.
+    """
+    if not failures_path.exists():
+        print(f"rerun-failed: no failure log at {failures_path}; nothing to do")
+        return
+    failures: dict[str, tuple[str, str]] = {}
+    with failures_path.open(newline="", encoding="utf-8") as fp:
+        for row in csv.DictReader(fp, delimiter="\t"):
+            failures[row["run_id"]] = (row["stage"], row["error"])
+
+    by_run_id = {run_id_for_job(job): job for job in read_jobs(jobs_path)}
+    proposals: dict[tuple[str, str, str, str], float] = {}
+    run_ids: dict[tuple[str, str, str, str], str] = {}
+    passthrough = 0
+    unmatched = 0
+    for run_id, (stage, message) in sorted(failures.items()):
+        job = by_run_id.get(run_id)
+        if job is None:
+            unmatched += 1
+            continue
+        violations = (
+            [(group.strip("*"), float(slack)) for group, slack in _FAILURE_SLACK_RE.findall(message)]
+            if stage == "pnr-timing"
+            else []
+        )
+        if not violations:
+            passthrough += 1
+            continue
+        key = (job["rtl_name"], job["arch_params"], job["node"], job["clock_period_ns"])
+        proposals[key] = rederived_period_ns(float(job["clock_period_ns"]), violations)
+        run_ids[key] = run_id
+
+    if proposals:
+        finals = _patch_manifest_clocks(jobs_path, proposals, backup=True)
+        for key in sorted(finals):
+            old_mhz = 1000.0 / float(key[3])
+            new_mhz = 1000.0 / finals[key]
+            print(f"rerun-failed: {run_ids[key]}: {old_mhz:.6g} -> {new_mhz:.6g} MHz")
+        print(f"rerun-failed: manifest backed up to {jobs_path.with_suffix('.prev')}")
+
+    retired = failures_path.with_suffix(".prev.tsv")
+    shutil.move(failures_path, retired)
+    print(
+        f"rerun-failed: {len(proposals)} clock(s) patched, {passthrough} failure(s) "
+        f"rerun as-is, {unmatched} without a manifest row; log retired to {retired}"
     )

@@ -101,9 +101,14 @@ def _mk(component: str, metric: str, row: Dict[str, str],
                         "params": row.get("arch_params"), "node": node,
                         "clock_ns": clock_ns, "mode": mode, "value": value})
         return None
-    params = {c: float(row[c]) for c in lmlp.PARAM_COLUMNS[component]}
+    # empty numeric param = 1 (pre-07-21 mxfpmac rows lack pipeline_stages:
+    # that template is combinational = 1 stage)
+    params = {c: float(row[c]) if row.get(c, "") not in ("", None) else 1.0
+              for c in lmlp.PARAM_COLUMNS[component]}
     params.update({c: float(row.get(c, 0) or 0)
                    for c in lmlp.FLAG_COLUMNS.get(component, ())})
+    params.update({col: row[col]
+                   for col, _ in lmlp.CATEGORICAL_COLUMNS.get(component, ())})
     x = lmlp.feature_vector(component, metric, lmlp.node_nm(node), clock_ns,
                             params, mode or None)
     return Sample(component=component, node=node, clock_ns=clock_ns,
@@ -441,6 +446,9 @@ def ab_none(component: str, samples: List[Sample], arch: List[int],
             with_none: TrainResult, test_s: List[Sample]) -> Dict[str, Any]:
     """Retrain the energy model WITHOUT the 'none' rows; compare both on the
     same non-none test rows — the evidence basis for dropping 'none' later."""
+    if "none" not in lmlp.STIM_MODES[component]:
+        return {"skipped": "'none' already excluded from this component's "
+                           "vocabulary (dropped per an earlier A/B)"}
     test_ex = [s for s in test_s if s.mode != "none"]
     if not test_ex:
         return {"skipped": "no non-none test rows"}

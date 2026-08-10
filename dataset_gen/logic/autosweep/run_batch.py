@@ -3,6 +3,20 @@
 # jinja2 (rtl_gen) — a hardcoded python3.11 bypassed the env and failed on
 # import. On this server the bare system python3 is 3.6 and dies on the
 # `from __future__` line below; activate the env first.
+"""One-way dataset sweep workflow:
+
+    probe -> gen-jobs -> rtl -> sweep
+
+probe measures per-config minimum periods (synthesis-only), gen-jobs derives
+two clocks per config x node from them, rtl renders every RTL variant + TB,
+and sweep pipelines each job through syn -> pnr -> pex -> sim -> pwr ->
+collect with storage bounding.  The sweep self-corrects clocks that PnR
+proves unachievable (rederived from measured slack, persisted back into the
+manifest), so probe estimates never have to be perfect.
+
+rerun-failed patches the manifest clocks for failures recorded by earlier
+sweeps and retires the failure log; scoreboard summarizes progress.
+"""
 from __future__ import annotations
 
 import argparse
@@ -16,88 +30,40 @@ if sys.version_info < (3, 9):
     )
 
 
-from autocollect import collect_from_manifest  # noqa: E402
 from autocommon import summarize_scoreboard  # noqa: E402
-from autopex import run_pex_from_manifest  # noqa: E402
 from autoprobe import generate_sweep_manifest, run_probe  # noqa: E402
-from autopnr import run_pnr_from_manifest  # noqa: E402
-from autopwr import run_power_from_manifest  # noqa: E402
 from autortl import generate_rtl_from_manifest  # noqa: E402
-from autosim import run_simulation_from_manifest  # noqa: E402
-from autosweeprun import run_sweep  # noqa: E402
-from autosynth import run_synthesis_from_manifest  # noqa: E402
+from autosweeprun import rerun_failed, run_sweep  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Manage the logic autosweep workflow.")
-    parser.add_argument(
-        "-verbose",
-        action="store_true",
-        help="stream the currently running Synopsys tool output to stdout while also saving the log",
-    )
-    parser.add_argument(
-        "-vectored",
-        action="store_true",
-        help="use gate-level simulation activity for 05_pwr instead of default unvectored activity",
-    )
-    parser.add_argument(
-        "-stim-mode",
-        dest="stim_mode",
-        default="random",
-        help="stimulus class for the standalone '-vectored pwr' stage (default "
-        "random; see sweep_spec.POWER_MODES). The sweep stage runs every mode "
-        "of each module by itself and ignores this flag",
-    )
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "-jobs-per-node",
         dest="jobs_per_node",
         type=int,
         default=1,
-        help="concurrent jobs per node worker in the EDA stages (default 1; "
+        help="concurrent jobs per node worker for probe/sweep (default 1; "
         "total concurrent tools = nodes x this, bounded by EDA license seats)",
     )
     parser.add_argument(
         "-nodes",
         dest="nodes",
         default=None,
-        help="comma-separated node filter for the probe/gen-jobs/sweep stages, "
-        "e.g. -nodes 3 or -nodes 20,16. Use it to bring up a newly added node "
-        "without re-running finished ones (default: probe/gen-jobs cover "
-        "sweep_spec.SWEEP_NODES; sweep runs every manifest row)",
+        help="comma-separated node filter for probe/gen-jobs/sweep, e.g. "
+        "-nodes 3 or -nodes 20,16, to bring up a new node without re-running "
+        "finished ones (default: probe/gen-jobs cover sweep_spec.SWEEP_NODES; "
+        "sweep runs every manifest row)",
     )
     parser.add_argument(
         "stage",
-        nargs="?",
-        default="all",
-        choices=[
-            "all",
-            "rtl",
-            "rtl-gen",
-            "syn",
-            "pnr",
-            "pex",
-            "sim",
-            "logic-sim",
-            "pwr",
-            "05_pwr",
-            "collect",
-            "data-collection",
-            "scoreboard",
-            "probe",
-            "gen-jobs",
-            "sweep",
-        ],
-        help="workflow stage to run (probe/gen-jobs/sweep drive the dataset sweep)",
+        choices=["probe", "gen-jobs", "rtl", "sweep", "rerun-failed", "scoreboard"],
+        help="workflow stage to run (one-way order: probe, gen-jobs, rtl, sweep)",
     )
     args = parser.parse_args()
 
     if args.jobs_per_node < 1:
         parser.error("-jobs-per-node must be >= 1")
-
-    if args.stim_mode != "random" and not (
-        args.vectored and args.stage in {"all", "pwr", "05_pwr"}
-    ):
-        parser.error("-stim-mode only applies to the pwr stage with -vectored")
 
     nodes: tuple[str, ...] | None = None
     if args.nodes:
@@ -107,39 +73,18 @@ def main() -> int:
         if args.stage not in {"probe", "gen-jobs", "sweep"}:
             parser.error("-nodes only applies to the probe/gen-jobs/sweep stages")
 
-    if args.stage == "scoreboard":
-        print(json.dumps(summarize_scoreboard(), indent=2, sort_keys=True))
-        return 0
-
     if args.stage == "probe":
         run_probe(jobs_per_node=args.jobs_per_node, nodes=nodes)
-        return 0
-    if args.stage == "gen-jobs":
+    elif args.stage == "gen-jobs":
         generate_sweep_manifest(nodes=nodes)
-        return 0
-    if args.stage == "sweep":
-        run_sweep(jobs_per_node=args.jobs_per_node, nodes=nodes)
-        return 0
-
-    if args.stage in {"all", "rtl", "rtl-gen"}:
+    elif args.stage == "rtl":
         generate_rtl_from_manifest()
-    if args.stage in {"all", "syn"}:
-        run_synthesis_from_manifest(verbose=args.verbose, jobs_per_node=args.jobs_per_node)
-    if args.stage in {"all", "pnr"}:
-        run_pnr_from_manifest(verbose=args.verbose, jobs_per_node=args.jobs_per_node)
-    if args.stage in {"all", "pex"}:
-        run_pex_from_manifest(verbose=args.verbose, jobs_per_node=args.jobs_per_node)
-    if args.stage in {"all", "sim", "logic-sim"}:
-        run_simulation_from_manifest(verbose=args.verbose, jobs_per_node=args.jobs_per_node)
-    if args.stage in {"all", "pwr", "05_pwr"}:
-        run_power_from_manifest(
-            verbose=args.verbose,
-            vectored=args.vectored,
-            stim_mode=args.stim_mode,
-            jobs_per_node=args.jobs_per_node,
-        )
-    if args.stage in {"all", "collect", "data-collection"}:
-        collect_from_manifest()
+    elif args.stage == "sweep":
+        run_sweep(jobs_per_node=args.jobs_per_node, nodes=nodes)
+    elif args.stage == "rerun-failed":
+        rerun_failed()
+    else:
+        print(json.dumps(summarize_scoreboard(), indent=2, sort_keys=True))
     return 0
 
 

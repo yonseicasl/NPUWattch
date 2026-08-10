@@ -297,6 +297,15 @@ def _fallback_int_acc_width(operand_bits: int, lanes: int) -> int:
     return 2 * operand_bits + math.ceil(math.log2(lanes)) if lanes > 1 else 2 * operand_bits
 
 
+#: Shallowest fpmac the RTL generator builds. Its ``pipeline_stages`` is the
+#: total latency, split between an embedded fpmul and fpadd that need two
+#: stages each, so 4 is the floor -- and ps=4 (mul 2 + add 2) is structurally
+#: the same datapath the pre-2026-08-05 generator called ps=2, when the extra
+#: stages were output delay banks rather than register cuts. intmac keeps the
+#: 2-5 convention, so the clamp is fpmac-only.
+_FPMAC_MIN_STAGES = 4
+
+
 def _select_primitive(
     operand: DType,
     accum: DType,
@@ -309,7 +318,7 @@ def _select_primitive(
         return "fpmac", {
             "exp_bits": operand.exp_bits,
             "mantissa_bits": operand.mantissa_bits,
-            "pipeline_stages": pipeline_stages,
+            "pipeline_stages": max(pipeline_stages, _FPMAC_MIN_STAGES),
         }
     if operand.kind == "int":
         if lowering_ok and accum.kind == "int":

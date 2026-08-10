@@ -8,9 +8,9 @@ power) from a job manifest, mirroring the SRAM autosweep
 ```
 autosweep/
 ├── jobs              # THE job manifest — one TSV row per design point
-├── run_batch.py      # runs the manifest, stage by stage (see Usage)
+├── run_batch.py      # the one-way workflow CLI: probe → gen-jobs → rtl → sweep
 ├── autocommon.py     # manifest/catalog parsing, run-id naming, scoreboard
-├── autortl.py        # stage: rtl-gen   (rtl_gen/ generators → .sv + TB)
+├── autortl.py        # stage: rtl       (rtl_gen/ generators → .sv + TB)
 ├── autosynth.py      # stage: syn       (Design Compiler)
 ├── autopnr.py        # stage: pnr       (IC Compiler II)
 ├── autopex.py        # stage: pex       (StarRC)
@@ -21,7 +21,8 @@ autosweep/
 ├── autoprobe.py      # stage: probe (T_min per config×node) + gen-jobs (manifest)
 ├── autosweeprun.py   # stage: sweep (storage-bounded per-job pipeline, resumable)
 ├── probe_results.tsv # probe output; ok rows are skipped on probe re-runs
-├── sweep_failures.tsv# sweep failures (run_id, stage, error); sweep continues past them
+├── sweep_failures.tsv# sweep failures (run_id, stage, error); sweep continues past
+│                     # them; `rerun-failed` consumes and retires this file
 └── scoreboard.jsonl  # append-only event log (one JSON object per line)
 ```
 
@@ -52,21 +53,27 @@ stage's run directory.
 
 ## Usage
 
+The workflow is one-way — each command consumes the previous one's output:
+
 ```bash
-python3.11 run_batch.py                 # all stages, whole manifest
-python3.11 run_batch.py syn             # one stage: rtl|syn|pnr|pex|sim|pwr|collect
-python3.11 run_batch.py -verbose pnr    # stream tool output while logging
-python3.11 run_batch.py -vectored pwr   # power from gate-sim activity
-python3.11 run_batch.py -jobs-per-node 2 syn  # 2 concurrent jobs per node worker
-python3.11 run_batch.py collect         # parse reports into ../datasets/
-python3.11 run_batch.py scoreboard      # stage × status summary (JSON)
+python3 run_batch.py probe -jobs-per-node 2   # overnight: T_min per config×node
+python3 run_batch.py gen-jobs                 # seconds: writes the jobs manifest
+python3 run_batch.py rtl                      # seconds: renders every RTL variant + TB
+python3 run_batch.py sweep -jobs-per-node 2   # days: the storage-bounded sweep
+python3 run_batch.py rerun-failed             # patch clocks for recorded failures, retire the log
+python3 run_batch.py scoreboard               # stage × status summary (JSON)
 ```
 
-Requires Python ≥ 3.9 (plus `jinja2` for the rtl-gen stage) and the
+Requires Python ≥ 3.9 (plus `jinja2` for the rtl stage) and the
 Synopsys tool wrappers in `TECH_<NN>nm/run_scripts/` on a licensed host.
+To debug one design point by hand, run the stage scripts directly
+(`TECH_<NN>nm/run_scripts/<stage>.sh <run_id>`).
 
 ## Stages
 
+The sweep pipelines every job through the stages below (there is no
+stage-wise batch mode — `rtl` is the only stage with its own command,
+because TB regeneration must be possible between sweep runs).
 Every EDA stage works the same way: for each job it (1) resolves the tech
 corner (db/ndm/tf/TLUPlus/map/nxtgrd) from `tech_libs/catalog.json`,
 (2) instantiates the matching master script from `../master_tcl/` with
@@ -80,7 +87,7 @@ owns its run directory and RTL variant directory); size N by the EDA
 license pool — total concurrent tools = nodes × N — and by host cores
 (each ICC2 run claims up to 16).
 
-1. **rtl-gen** (`autortl.py`) — deduplicates the manifest by
+1. **rtl** (`autortl.py`) — deduplicates the manifest by
    `(rtl_name, arch_params)` and calls the `gen_<rtl_name>` generator from
    `../rtl_gen/`, emitting `rtl_gen/rtl/<variant>/<name>/<name>.sv` + the
    self-checking `<name>_tb.sv`, where `<variant>` is `<name>_<arch tokens>`
@@ -127,16 +134,23 @@ license pool — total concurrent tools = nodes × N — and by host cores
    `+nw_power_seed`) can be appended to `04_sim.sh <run_id> [plusargs...]`.
    Outputs: `sim.saif` (toggle window = exactly the power phase; the
    vectored-power activity input) and `sim.vcd` (functional-phase debug
-   trace only — dumping stops when the power phase starts). The job clock
-   must be timing-clean for the netlist: an SDF gate sim of a WNS < 0 design
-   corrupts its own functional checks and the run aborts before writing
-   activity — fix the design point, don't relax the sim clock, or the
-   activity no longer matches the row's frequency.
+   trace only — dumping stops when the power phase starts).
+   Sim policy (2026-07/08): VCS runs with `+vcs+initreg+random` — every
+   sequential cell gets a definite random value at time 0, because power-up
+   X otherwise sticks through the synthesized sync-reset datapath
+   (X-pessimism) even though the netlist resets correctly from any definite
+   state. The functional check tolerates definite-value mismatches
+   (`PASS marginal_errors=N`, logged as a scoreboard warning): they are
+   near-miss-timing artifacts of the sampled instant and the power phase's
+   random-stimulus toggle statistics do not depend on them. Unknown (X)
+   outputs still abort — they mean the sim itself is broken and the SAIF
+   would be garbage.
 6. **pwr** (`autopwr.py`, `05_pwr.tcl`) — PrimeTime PX on the PnR netlist
-   with the PEX SPEF back-annotated. Default is **unvectored** (vectorless
-   activity, the project-wide 10 % convention); `-vectored` instead reads
-   the logic-sim `sim.saif` (preferred — its duration covers exactly the
-   TB power phase; `sim.vcd` is only a fallback). Keeper: `power.rpt`.
+   with the PEX SPEF back-annotated. The sweep runs it once **unvectored**
+   (vectorless activity, the project-wide 10 % convention) and once
+   **vectored** per stimulus mode, reading that mode's logic-sim
+   `sim_<mode>.saif` (its duration covers exactly the TB power phase).
+   Keeper: `power.rpt`.
 
 7. **collect** (`autocollect.py`) — parses the report files the stages above
    write and appends one row per design point to
@@ -179,8 +193,7 @@ MACs: `random`/`hold_b`/`sparse50`/`idle`). The TB dispatches on the
 sim runs per mode (shared VCS compile) producing `sim_<mode>.saif`, and one
 vectored PrimeTime run consumes each. Rows are keyed by
 `(flow_run_id, power_activity_mode, stim_mode)`; unvectored rows carry
-`stim_mode=none`. The sweep stage runs every mode automatically; stage-wise,
-`run_batch.py pwr -vectored -stim-mode <m>` runs one class. Full mode table
+`stim_mode=none`. The sweep runs every mode automatically. Full mode table
 and mechanics: `activity_modes.md`. **Add new modes before a sweep** — run
 dirs are pruned after collection, so a mode added later re-runs the whole EDA
 chain for the affected jobs.
@@ -226,14 +239,15 @@ each stimulus class adds only one simv re-run plus one PT run.
 Areas are library units (um2); power is converted to mW from whatever unit the
 PrimeTime report declares. `dyn_energy_pJ` is `dyn_power_mW * clock_period_ns`.
 
-## Dataset sweep (probe → gen-jobs → sweep)
+## Dataset sweep (probe → gen-jobs → rtl → sweep)
 
-The full dataset run is three commands, each safe to interrupt and re-run
+The full dataset run is four commands, each safe to interrupt and re-run
 (designed for a shared server, e.g. inside tmux):
 
 ```bash
 python3 run_batch.py probe -jobs-per-node 2    # overnight: T_min per config×node
 python3 run_batch.py gen-jobs                  # seconds: writes the jobs manifest
+python3 run_batch.py rtl                       # seconds: renders every RTL variant + TB
 python3 run_batch.py sweep -jobs-per-node 2    # days: the storage-bounded sweep
 ```
 
@@ -244,19 +258,36 @@ python3 run_batch.py sweep -jobs-per-node 2    # days: the storage-bounded sweep
    deleted right after parsing.
 2. **gen-jobs** derives two clocks per (config, node) — tight = 1.2×T_min,
    relaxed = 2×T_min, ceil'd to a 0.25 ns grid — and writes the manifest
-   (backing up the previous one to `jobs.prev`). The 1.2× margin absorbs the
-   observed syn→PnR timing degradation so vectored rows stay timing-clean.
+   (backing up the previous one to `jobs.prev`). The margins are only a
+   starting estimate: probe timing is synthesis-only, and the sweep corrects
+   clocks that PnR proves unachievable (below).
 3. **sweep** pipelines each job through
    syn→pnr→pex→sim (one gate-level run per stimulus mode)→pwr(unvectored)→CSV
    →[pwr(vectored, mode)→CSV per mode], then archives the report texts to
    `../sweep_reports/<run_id>.reports.tar.gz` and deletes the run
    directories. Disk at any moment holds only the jobs in flight
    (nodes × `-jobs-per-node`), not the whole sweep (~350 GB unpruned).
+   **Clock self-correction**: after PnR, a setup violation beyond the sim
+   margin (any path group below −1.5× the 0.2 ns clock uncertainty) does
+   not fail the job — the sweep rederives a slower clock from the measured
+   slack (in2reg/in2out/reg2out slack counts double, their SDC budget is
+   T/2), snaps up to the 0.25 ns grid avoiding the config's other clock,
+   **persists the new clock into the manifest**, and re-runs syn+PnR at it
+   (up to two rederivations; only an exhausted job is recorded as a
+   `pnr-timing` failure). The dataset row carries the clock that actually
+   ran.
    **Crash resume**: a job is skipped when its dataset CSV already has the
    unvectored row plus one vectored row per stimulus mode of its module, so
    re-running the same command continues where it stopped. A failing job is
-   recorded in `sweep_failures.tsv` (its report texts still archived) and
-   the sweep moves on.
+   recorded in `sweep_failures.tsv` (its report texts still archived, plus
+   netlist+SDF+annotation log as failure evidence) and the sweep moves on.
+
+After a sweep pass, `run_batch.py rerun-failed` reads `sweep_failures.tsv`,
+patches the manifest clock of every recorded `pnr-timing` failure using the
+slack embedded in its message (same math as the in-flight rederivation, so
+the next pass starts directly at the corrected clock), and retires the log
+to `sweep_failures.prev.tsv`. Failures from other stages need no patching —
+jobs without complete dataset rows rerun automatically.
 
 ### Adding a node later (incremental sweep)
 
@@ -286,12 +317,13 @@ python3 run_batch.py sweep -nodes 3 -jobs-per-node 4   # sweep those rows
   keeps the manifest scoped.
 
 To re-examine a collected row, start from its report archive; to reproduce
-it fully, re-run that single design point with the per-stage commands above.
+it fully, run the stage scripts directly
+(`TECH_<NN>nm/run_scripts/<stage>.sh <run_id>`).
 
 ### Adding a module later (incremental sweep)
 
-A new primitive needs code in three places, then the ordinary three commands
-— no manual job-list surgery and no re-run of finished modules:
+A new primitive needs code in three places, then the ordinary workflow
+commands — no manual job-list surgery and no re-run of finished modules:
 
 1. **Generator + templates** (`rtl_gen/`): a `gen_<name>()` entry point and
    the `<name>.sv.j2` / `<name>_tb.sv.j2` templates. The TB must follow the
@@ -305,7 +337,7 @@ A new primitive needs code in three places, then the ordinary three commands
    chain for the affected jobs). Modes must be dispatched in the TB template
    in the same change; an un-dispatched TB `$fatal()`s on any non-random
    mode rather than silently measuring random activity.
-3. **Run as usual**: `probe` → `gen-jobs` → `sweep`. Resume keys make the
+3. **Run as usual**: `probe` → `gen-jobs` → `rtl` → `sweep`. Resume keys make the
    addition incremental for free: probe skips every (config, node) already
    `ok` in `probe_results.tsv` — only the new module's configurations run —
    and sweep skips jobs whose dataset rows are complete, so only the new
