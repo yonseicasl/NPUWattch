@@ -26,8 +26,12 @@ The host never imports this package — the contract is file-shaped:
    `unit_costs` (dict), `unit_cost_provider` (a `UnitCostProvider` object for
    the §6 energy-aggregation path). On any invalid input they print
    `[ERROR] sram: …` and return `None` — they never raise at the host.
-3. **Routing**: `npuwattch_class_mapper.reclassify_estimator` sends any
-   regfile-classed component with `n_banks·depth·bw > 32768` bits here.
+3. **Routing**: the harness that reads the description decides. For
+   Accelergy/Timeloop inputs that is
+   `harness/timeloop/vocabulary.reclassify_regfile_as_sram`, which sends any
+   regfile-classed component with `mem_banks·mem_depth_per_bank·data_width >
+   32768` bits here (the rule moved out of the retired
+   `npuwattch_class_mapper` on 2026-08-12).
 
 Key feature-dict conventions: `depth` = **words per bank**; `bw` = word width
 in bits; `toggle_rate` = fraction of data bits flipping per write access

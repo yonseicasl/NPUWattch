@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .activity import BoundAction, KernelWindow, bind_window, read_run
 from .definitions import DEFINITIONS_DIR, load_definitions
+from .energy_table import EnergyTable, EnergyTableError, load_energy_table
 from .hierarchy import build_hierarchy
 from .instances import expand_bounds
 from .gem5_stats import parse_sections, sum_committed_inst, sum_stat
@@ -48,14 +49,18 @@ def _ingest(inputs, tech, **opts):
     hash) raises from ``read_run``/``synthesize_run``.
     """
     from ...arch_synth import synthesize_run
+    from .energy_table import load_energy_table
     from .run_config import load_config_yml
 
     config_path = inputs.get("config")
     base_config = load_config_yml(config_path) if config_path else None
     booksim = inputs.get("booksim")
+    etable_path = inputs.get("energy_table")
+    energy_table = load_energy_table(etable_path) if etable_path else None
     return synthesize_run(Path(inputs["togsim"]), Path(inputs["gem5"]), tech,
                           base_config=base_config,
                           booksim_dir=Path(booksim) if booksim else None,
+                          energy_table=energy_table,
                           **opts)
 
 
@@ -93,6 +98,15 @@ HARNESS_SPEC = {
                     "anynet NoC topologies (their .net network file); fly NoCs "
                     "are self-contained in the log's BookSim config echo",
         },
+        "energy_table": {
+            "flag": "--energy-table",
+            "required": False,
+            "kind": "file",
+            "hint": "the run's DRAM energy-cost table yml (the config's "
+                    "energy_cost_table_path, e.g. hbm2.yml) — overrides the "
+                    "dram compound's built-in constants with the run's own; "
+                    "without it the built-in cited HBM2 constants are charged",
+        },
     },
     "ingest": _ingest,
 }
@@ -129,6 +143,10 @@ __all__ = [
     # definitions bundle
     "DEFINITIONS_DIR",
     "load_definitions",
+    # DRAM energy table (--energy-table)
+    "EnergyTable",
+    "EnergyTableError",
+    "load_energy_table",
     # harness registration
     "HARNESS_SPEC",
 ]

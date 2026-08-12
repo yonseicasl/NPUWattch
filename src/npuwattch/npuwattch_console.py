@@ -21,7 +21,6 @@ from npuwattch.npuwattch_parser import (
 )
 from npuwattch.npuwattch_estimator_host import EstimatorHost
 from npuwattch.yaml_flattener_accelergy_v4 import flatten_accelergy_v04_yaml
-from npuwattch.npuwattch_db import build_database, NPUWattchDatabase, ComponentEntry
 
 
 #: Harness-mode clock fallback when neither --clock-mhz nor the log provides one.
@@ -48,8 +47,30 @@ def _print_tree(root, source: str) -> None:
     print("-" * 100)
 
 
+#: Where each estimator's real trainer lives. The plugin `train_*` entrypoints
+#: were a prototype affordance (one CSV, one metric, no audits); the models this
+#: build ships are produced by these standalone scripts, which own the split,
+#: the adaptive loss and the checkpoint quartet (manual §5).
+_TRAINERS = {
+    "logic": "src/estimators/logic/train_logic.py",
+    "sram": "src/estimators/sram/train_sram.py",
+}
+
+
 def _run_training(args, host: EstimatorHost) -> int:
     """Run model training mode."""
+    spec = host.get_spec(args.train_estimator) or {}
+    entrypoints = spec.get("entrypoints") or {}
+    if not any(k.startswith("train") for k in entrypoints):
+        script = _TRAINERS.get(args.train_estimator)
+        print(f"[ERROR] Estimator {args.train_estimator!r} declares no training "
+              f"entrypoint.")
+        if script:
+            print(f"[INFO] Its models are trained by {script} — run that "
+                  f"directly (it owns the group split, the adaptive loss and "
+                  f"the checkpoint quartet; manual §5).")
+        return 1
+
     print(f"[INFO] Starting training mode")
     print(f"[INFO] Estimator: {args.train_estimator}")
     print(f"[INFO] Model type: {args.train_model_type}")
@@ -74,7 +95,10 @@ def _run_training(args, host: EstimatorHost) -> int:
     print("[INFO] Training completed successfully!")
     return 0
 
-def _run_native_estimator(args, description) -> int:
+def _run_native_estimator(args, description, *, hierarchy=None,
+                          tree_source: str = "flat native description; "
+                                             "dot-grouped",
+                          announce: bool = True) -> int:
     """Direct native path: `-d description.yaml (npuwattch:) [-l activity.csv]` → §6.
 
     The native description is self-contained — technology/PVT and clock come from its
@@ -83,6 +107,10 @@ def _run_native_estimator(args, description) -> int:
     ``aggregate_native`` core the harness path uses. Without ``-l`` the run is a
     **VECTORLESS** estimate: synthetic activity at 25 % of random switching
     (``--vectorless-activity`` overrides; manual §6).
+
+    ``hierarchy`` lets a caller supply an already-built tree — the Accelergy route
+    hands over the hierarchy *declared* in its YAML rather than the one
+    reconstructed from dotted component names.
     """
     from npuwattch.energy import (
         DEFAULT_VECTORLESS_ACTIVITY,
@@ -93,15 +121,16 @@ def _run_native_estimator(args, description) -> int:
         vectorless_activity_rows,
     )
 
-    print("[INFO] Native NPUWattch description detected (§3.1)")
+    if announce:
+        print("[INFO] Native NPUWattch description detected (§3.1)")
 
     if args.tree:
         # The tree is a VIEW: it must never block the run (per-component energy
         # accounting below is what actually matters). Failure → warn, continue.
         try:
             from npuwattch.report import tree_from_native
-            _print_tree(tree_from_native(description),
-                        "flat native description; dot-grouped")
+            _print_tree(hierarchy if hierarchy is not None
+                        else tree_from_native(description), tree_source)
         except Exception as e:
             print(f"[WARNING] --tree: hierarchy view unavailable: {e}")
 
@@ -171,12 +200,12 @@ def _run_native_estimator(args, description) -> int:
                       verbose=args.verbose)
 
     desc_path = Path(args.description_files[0])
-    hierarchy = None
-    try:
-        from npuwattch.report import tree_from_native
-        hierarchy = tree_from_native(description)
-    except Exception as e:                       # view only — never fatal
-        naming_warnings.append(f"hierarchy view unavailable: {e}")
+    if hierarchy is None:
+        try:
+            from npuwattch.report import tree_from_native
+            hierarchy = tree_from_native(description)
+        except Exception as e:                   # view only — never fatal
+            naming_warnings.append(f"hierarchy view unavailable: {e}")
     vectorless = None
     if not args.activity_logs:
         vectorless = (args.vectorless_activity
@@ -197,88 +226,98 @@ def _run_native_estimator(args, description) -> int:
     return 0
 
 
-def _run_estimator(args) -> int:
-    """Run estimator (normal) mode."""
-    print("[INFO] Starting estimator mode")
-    print("=" * 100)
+def _run_accelergy_estimator(args, arch_path: Path) -> int:
+    """`-d architecture.yaml` (Accelergy `architecture:` root) → §6.
 
-    # Native NPUWattch description (`npuwattch:` root) takes the native §6 path.
-    # Accelergy-style (`architecture:` root) keeps the legacy flatten+estimate path
-    # until it moves under `--harness timeloop`.
-    if args.description_files:
-        try:
-            loaded = load_description_files([Path(args.description_files[0])])
-        except Exception as e:
-            print(f"[ERROR] Failed to read description {args.description_files[0]}: {e}")
-            return 1
-        content = loaded[0] if loaded else {}
-        if isinstance(content, dict) and "npuwattch" in content:
-            return _run_native_estimator(args, content)
-        print("[INFO] Accelergy-style description detected "
-              "(this path moves under --harness timeloop in a future release).")
-        if args.report_dir is not None:
-            print("[WARNING] --report requires the native §6 path (native "
-                  "description or --harness); ignored for the legacy Accelergy "
-                  "flow.")
+    The Timeloop harness converts the description to native §3.1 (its ingest is
+    the only Accelergy-aware step), and the run continues down the same path a
+    native description takes — same provider chain, same window accounting, same
+    ``--report``. This replaced the old flatten+per-component-plugin path on
+    2026-08-12; see ``harness/timeloop/ingest.py`` for what changed and why.
 
-    # Initialize estimator host
-    host = EstimatorHost(verbose=args.verbose)
-    host.scan_estimators()
+    Technology/PVT come from the CLI flags here, because an Accelergy
+    description has no NPUWattch ``technology:`` block (its per-component
+    ``technology:`` attribute is reported as a disagreement, not obeyed).
+    """
+    from npuwattch.energy import TechContext
+    from npuwattch.harness import HarnessError
+    from npuwattch.harness.timeloop import description_from_accelergy
 
+    print("[INFO] Accelergy/Timeloop description detected — ingesting through "
+          "the 'timeloop' harness, then the native §6 path")
+    tech = TechContext(
+        node=args.node,
+        transistor=args.transistor,
+        corner=args.corner,
+        voltage_offset_V=args.voltage_offset_V,
+        temperature_C=args.temperature_C,
+        clock_mhz=args.clock_mhz,
+    )
     try:
-        # Process each description file
-        flattened_files: List[Path] = []
-        databases: List[NPUWattchDatabase] = []
-
-        for desc_file in args.description_files:
-            desc_path = Path(desc_file)
-            flattened_path = desc_path.parent / f"{desc_path.stem}_flattened{desc_path.suffix}"
-
-            if args.tree:
-                # Harness-owned builder: the Accelergy path belongs to the
-                # (future) Timeloop harness, so its tree builder lives there.
-                # NB the declared hierarchy itself is NOT just this view — the
-                # flatten+estimate below keeps every declared component's own
-                # identity/energy; only the tree display is optional.
-                try:
-                    from npuwattch.harness.timeloop.tree import tree_from_accelergy
-                    _print_tree(tree_from_accelergy(desc_path),
-                                "declared in the Accelergy description")
-                except Exception as e:
-                    print(f"[WARNING] --tree: hierarchy view unavailable: {e}")
-
-            # Flatten the YAML
-            print(f"[INFO] Flattening {desc_path}...")
-            flatten_accelergy_v04_yaml(
-                input_yaml=str(desc_path),
-                output_yaml=str(flattened_path),
-                print_tree=(args.verbose >= 1),
-            )
-            flattened_files.append(flattened_path)
-
-            # Build database
-            db = build_database(
-                yaml_path=flattened_path,
-                verbose=args.verbose,
-            )
-            databases.append(db)
-
-        # Report available estimators
-        if args.verbose >= 1:
-            host.report_to_console()
-
-        # Run estimation on each database
-        host.estimate_databases(databases)
-
-        print("\n[INFO] Estimation completed.")
-        return 0
-
+        description, warnings, notes = description_from_accelergy(
+            arch_path, tech, default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
+            verbose=args.verbose)
+    except (HarnessError, ValueError) as e:
+        print(f"[ERROR] timeloop harness: {e}")
+        return 1
     except Exception as e:
-        print(f"[ERROR] Estimation failed: {e}")
+        print(f"[ERROR] timeloop harness: ingest failed: {e}")
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
         return 1
+
+    for w in warnings:
+        print(f"[WARNING] {w}")
+    for n in notes:
+        print(f"[INFO] {n}")
+
+    hierarchy = None
+    try:
+        from npuwattch.harness.timeloop.tree import tree_from_accelergy
+        hierarchy = tree_from_accelergy(arch_path)
+    except Exception as e:                       # view only — never fatal
+        print(f"[WARNING] hierarchy view unavailable: {e}")
+
+    return _run_native_estimator(
+        args, description, hierarchy=hierarchy, announce=False,
+        tree_source="declared in the Accelergy description")
+
+
+def _run_estimator(args) -> int:
+    """Run estimator (normal) mode.
+
+    Two description flavors, one core: a native NPUWattch description
+    (``npuwattch:`` root) goes straight to §6; an Accelergy/Timeloop one
+    (``architecture:`` root) is converted to native by the timeloop harness
+    first and then follows the identical path.
+    """
+    print("[INFO] Starting estimator mode")
+    print("=" * 100)
+
+    if not args.description_files:
+        print("[ERROR] Estimator mode requires -d/--description")
+        return 1
+    desc_path = Path(args.description_files[0])
+    if len(args.description_files) > 1:
+        print(f"[ERROR] Estimator mode expects one description, got "
+              f"{len(args.description_files)}")
+        return 1
+    if not desc_path.is_file():
+        print(f"[ERROR] Description not found: {desc_path}")
+        return 1
+    # Flavor detection, not validation. A native description is plain YAML, so
+    # a plain load settles it; an Accelergy one carries `!Container`/`!Component`
+    # tags that only the flattener's loader knows, so a load failure here is a
+    # vote for the Accelergy route rather than an error — that parser is the
+    # authority on its own format and reports its own problems.
+    try:
+        content = (load_description_files([desc_path]) or [{}])[0]
+    except Exception:
+        content = None
+    if isinstance(content, dict) and "npuwattch" in content:
+        return _run_native_estimator(args, content)
+    return _run_accelergy_estimator(args, desc_path)
 
 
 def _run_harness(args) -> int:
@@ -304,12 +343,19 @@ def _run_harness(args) -> int:
         clock_mhz=args.clock_mhz,
     )
 
+    # One CLI flag per named input, across all harnesses. Only the flags the
+    # user actually passed are forwarded — the registry rejects inputs the
+    # selected harness does not declare, which is how `--harness timeloop
+    # --togsim-dir X` becomes an error instead of a silently ignored flag.
+    harness_inputs = {"togsim": args.togsim_dir, "gem5": args.gem5_dir,
+                      "config": args.config_yml, "booksim": args.booksim_dir,
+                      "energy_table": args.energy_table,
+                      "arch": args.arch_yaml}
     try:
         # Clock precedence: --clock-mhz (in tech) > harness log > 200 MHz fallback.
         emitted = run_harness(
             args.harness,
-            {"togsim": args.togsim_dir, "gem5": args.gem5_dir,
-             "config": args.config_yml, "booksim": args.booksim_dir},
+            {k: v for k, v in harness_inputs.items() if v is not None},
             tech,
             default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
         )
@@ -366,21 +412,38 @@ def _run_harness(args) -> int:
         default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
         window_labels=emitted.window_labels,
     )
-    _print_run_energy(run_energy, chain, verbose=args.verbose,
-                      window_provenance=emitted.window_provenance)
+    # A harness that synthesizes activity instead of reading it must say so in
+    # every output (CLAUDE.md: flag VECTORLESS clearly).
+    vectorless = emitted.vectorless_activity
+    _print_run_energy(
+        run_energy, chain, verbose=args.verbose,
+        extra_tag=(None if vectorless is None
+                   else f"VECTORLESS ({vectorless:.0%} of random)"),
+        window_provenance=emitted.window_provenance)
 
     run_root = Path(args.togsim_dir).resolve().parent if args.togsim_dir else None
-    inputs = [(f"togsim: {args.togsim_dir}", None),
-              (f"gem5: {args.gem5_dir}", None)]
-    if args.config_yml:
-        inputs.append((Path(args.config_yml).name, Path(args.config_yml)))
+    # Provenance: every named input the user actually passed, directories by
+    # label and files by path (the report embeds file inputs).
+    inputs = [(f"{name}: {value}", None)
+              for name, value in harness_inputs.items()
+              if value is not None and name not in ("config", "energy_table",
+                                                    "arch")]
+    for name in ("arch", "config", "energy_table"):
+        value = harness_inputs.get(name)
+        if value:
+            inputs.append((Path(value).name, Path(value)))
     _maybe_write_report(
         args, run=run_energy, description=emitted.description, tech=tech,
         chain=chain, rows=emitted.activity_rows, hierarchy=emitted.hierarchy,
         warnings=emitted.warnings, notes=emitted.notes,
-        design_name=(run_root.name if run_root is not None else args.harness),
-        activity_source=f"{args.harness} harness (simulator logs)",
-        inputs=inputs,
+        design_name=(run_root.name if run_root is not None
+                     else (Path(args.arch_yaml).stem if args.arch_yaml
+                           else args.harness)),
+        activity_source=(f"{args.harness} harness (simulator logs)"
+                         if vectorless is None else
+                         f"{args.harness} harness, vectorless default "
+                         f"({vectorless:.0%} of random)"),
+        vectorless=vectorless, inputs=inputs,
         window_provenance=emitted.window_provenance,
     )
     return 0
@@ -562,6 +625,28 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
         mark = ("cal" if prim in calibrated_prims
                 else "const" if prim in constant_prims else "stub")
         print(f"{name:<26}{mark:>7}{inst:>11}{dyn:>18.4g}{leak:>18.4g}{area:>16.4g}")
+
+    # DRAM device command breakdown (per-mode §6 split): the authors'
+    # verification vocabulary is activation vs transfer; refresh is
+    # NPUWattch's addition on top. Only printed when the run charged real
+    # DRAM command modes (a vectorless run prices hbm at `random` — skipped).
+    dram_names = [name for name, v in per_comp.items() if v[0] == "hbm"]
+    dram_modes: dict = {}
+    for w in run.windows:
+        for name in dram_names:
+            for mode, e in w.components[name].dyn_by_mode.items():
+                dram_modes[mode] = dram_modes.get(mode, 0.0) + e
+    act = dram_modes.get("activate", 0.0)
+    rd, wr = dram_modes.get("read", 0.0), dram_modes.get("write", 0.0)
+    ref = dram_modes.get("refresh", 0.0)
+    dram_tot = act + rd + wr + ref
+    if dram_tot > 0:
+        print("-" * 100)
+        print(f"[INFO] DRAM device energy ({', '.join(dram_names)}): "
+              f"activation {act:.4g} pJ ({100 * act / dram_tot:.1f}%) + "
+              f"transfer {rd + wr:.4g} pJ ({100 * (rd + wr) / dram_tot:.1f}%; "
+              f"read {rd:.4g} + write {wr:.4g}) + "
+              f"refresh {ref:.4g} pJ ({100 * ref / dram_tot:.1f}%)")
     print("-" * 100)
     print(f"total energy = {run.total_energy_pJ:.4g} pJ "
           f"(dyn {run.dyn_energy_pJ:.4g} + leak {run.leak_energy_pJ:.4g}); "

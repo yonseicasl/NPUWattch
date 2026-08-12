@@ -45,6 +45,11 @@ class ComponentEnergy:
     leak_power_mW: float
     leak_energy_pJ: float
     crit_path_ns: float
+    #: dynamic energy split by stim_mode (Σ over modes == dyn_energy_pJ) —
+    #: the finest grain the activity carries. This is what per-command
+    #: breakdowns (e.g. DRAM activate/read/write/refresh) read; rows without
+    #: a mode fall under "unspecified".
+    dyn_by_mode: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -75,8 +80,14 @@ class RunEnergy:
     calibrated: bool
 
 
-def _features(config: Any, tech: TechContext, stim_mode: Optional[str] = None) -> Dict[str, Any]:
+def _features(config: Any, tech: TechContext, stim_mode: Optional[str] = None,
+              clock_mhz: Optional[float] = None) -> Dict[str, Any]:
     feats: Dict[str, Any] = dict(tech.features())
+    # The window's resolved clock joins the features so frequency-dependent
+    # estimators (the logic MLPs take log10_clock_ns) price at the run's
+    # clock; an explicit TechContext/--clock-mhz clock still wins.
+    if clock_mhz and not feats.get("clock_mhz"):
+        feats["clock_mhz"] = float(clock_mhz)
     if isinstance(config, Mapping):
         feats.update(config)
     if stim_mode is not None:
@@ -125,16 +136,22 @@ def _aggregate_one_window(
     t_exec_s = exec_cycles * (1.0e-6 / clock_MHz)   # MHz -> period in seconds
 
     dyn: Dict[str, float] = {name: 0.0 for name in components}
+    dyn_modes: Dict[str, Dict[str, float]] = {}
     for name, primitive, config, mode, count in activity_items:
         if name not in components:
             continue                               # activity for an unlisted component
-        e_pc = provider.energy_per_cycle(primitive, _features(config, tech, mode))
-        dyn[name] += count * e_pc
+        e_pc = provider.energy_per_cycle(
+            primitive, _features(config, tech, mode, clock_mhz=clock_MHz))
+        e = count * e_pc
+        dyn[name] += e
+        per_mode = dyn_modes.setdefault(name, {})
+        mode_key = str(mode) if mode is not None else "unspecified"
+        per_mode[mode_key] = per_mode.get(mode_key, 0.0) + e
 
     comp_energy: Dict[str, ComponentEnergy] = {}
     crit_paths: List[float] = []
     for name, (primitive, config, instances) in components.items():
-        feats = _features(config, tech)
+        feats = _features(config, tech, clock_mhz=clock_MHz)
         area = instances * provider.area(primitive, feats)
         leak_mW = instances * provider.leak_power(primitive, feats)
         crit = provider.crit_path(primitive, feats)
@@ -149,6 +166,7 @@ def _aggregate_one_window(
             leak_power_mW=leak_mW,
             leak_energy_pJ=leak_energy_pJ,
             crit_path_ns=crit,
+            dyn_by_mode=dyn_modes.get(name, {}),
         )
 
     e_dyn = sum(c.dyn_energy_pJ for c in comp_energy.values())

@@ -74,8 +74,49 @@
         "energy_pct": {"type": "number"}, "leak_power_mW": {"type": "number"},
         "area_um2": {"type": "number"}, "crit_path_ns": {"type": "number"},
         "activity_events": {"type": "number"},
-        "vectorless": {"type": "boolean"}, "user_defined": {"type": "boolean"}
+        "vectorless": {"type": "boolean"}, "user_defined": {"type": "boolean"},
+        "dyn_by_mode": {"type": "object",
+                        "additionalProperties": {"type": "number"}}
       }}},
+    "efficiency": {"type": ["object", "null"],
+      "required": ["mac_ops", "pJ_per_flop", "tflops"],
+      "properties": {
+        "mac_ops": {"type": "number"}, "pJ_per_mac": {"type": "number"},
+        "pJ_per_flop": {"type": "number"}, "pJ_per_flop_str": {"type": "string"},
+        "tflops": {"type": "number"}, "tflops_str": {"type": "string"},
+        "dtype": {"type": ["string", "null"]},
+        "fp32_equivalent": {"type": ["object", "null"],
+          "required": ["pJ_per_flop", "factor"],
+          "properties": {
+            "pJ_per_flop": {"type": "number"},
+            "pJ_per_flop_str": {"type": "string"},
+            "factor": {"type": "number"}
+          }}
+      }},
+    "npu_dram_split": {"type": ["object", "null"],
+      "required": ["npu_pJ", "dram_pJ"],
+      "properties": {
+        "npu_pJ": {"type": "number"}, "npu_str": {"type": "string"},
+        "npu_pct": {"type": "number"},
+        "dram_pJ": {"type": "number"}, "dram_str": {"type": "string"},
+        "dram_pct": {"type": "number"}
+      }},
+    "dram_breakdown": {"type": ["object", "null"],
+      "required": ["components", "rows", "total_pJ"],
+      "properties": {
+        "components": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "array", "items": {
+          "type": "object",
+          "required": ["mode", "label", "energy_pJ", "pct"],
+          "properties": {
+            "mode": {"enum": ["activate", "read", "write", "refresh"]},
+            "label": {"type": "string"}, "energy_pJ": {"type": "number"},
+            "energy_str": {"type": "string"}, "pct": {"type": "number"}
+          }}},
+        "total_pJ": {"type": "number"}, "total_str": {"type": "string"},
+        "share_of_run_pct": {"type": "number"},
+        "constants": {"type": "object"}
+      }},
     "tree": {"type": ["object", "null"]},
     "provenance": {
       "type": "object",

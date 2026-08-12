@@ -83,7 +83,13 @@ def build_provider(
             notes.append(f"estimator {name!r}: unit_cost_provider unavailable ({error})")
             continue
         provider = built
-        calibrated.append(str(spec.get("primitive", name)))
+        # One module may serve several primitives (the logic estimator's MLP
+        # quartets) — a `primitives` list wins over the single `primitive`.
+        prims = spec.get("primitives")
+        if prims:
+            calibrated.extend(str(p) for p in prims)
+        else:
+            calibrated.append(str(spec.get("primitive", name)))
 
     return ProviderChain(
         provider=provider,

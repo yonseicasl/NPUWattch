@@ -80,6 +80,36 @@ def dyn_leak_bar(dyn_pJ: float, leak_pJ: float, *, width: int = 560) -> str:
     )
 
 
+def share_bar(a_label: str, a_val: float, b_label: str, b_val: float, *,
+              unit: str = "pJ", a_fill: str = "#3b6ea5",
+              b_fill: str = "#948C22", width: int = 560,
+              aria: str = "two-way share") -> str:
+    """Two-segment stacked bar of a vs b, values + shares under the ends.
+
+    Same shape as ``dyn_leak_bar`` but generic — the report's NPU-vs-DRAM
+    energy split uses it (2026-08-11: DRAM dominates full-run totals, so it
+    gets this dedicated bar and stays out of the per-component donut).
+    """
+    total = a_val + b_val
+    frac = (a_val / total) if total > 0 else 0.0
+    h, w_a = 20, frac * width
+    return (
+        f'<svg viewBox="0 0 {width} {h + 18}" role="img" aria-label="{aria}">'
+        f'<rect class="seg-a" x="0" y="0" width="{w_a:.1f}" height="{h}" '
+        f'fill="{a_fill}"><title>{a_label} {fmt_si(a_val, unit)} '
+        f'({100 * frac:.1f}%)</title></rect>'
+        f'<rect class="seg-b" x="{w_a:.1f}" y="0" '
+        f'width="{width - w_a:.1f}" height="{h}" fill="{b_fill}">'
+        f'<title>{b_label} {fmt_si(b_val, unit)} '
+        f'({100 * (1 - frac):.1f}%)</title></rect>'
+        f'<text x="0" y="{h + 13}" font-size="11" fill="{_MUTED}">'
+        f'{a_label} {fmt_si(a_val, unit)} · {100 * frac:.1f}%</text>'
+        f'<text x="{width}" y="{h + 13}" font-size="11" fill="{_MUTED}" '
+        f'text-anchor="end">{b_label} {fmt_si(b_val, unit)} · '
+        f'{100 * (1 - frac):.1f}%</text></svg>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # donut (per-component share)
 # ---------------------------------------------------------------------------

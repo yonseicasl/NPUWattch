@@ -60,6 +60,20 @@ CMD=(npuwattch --harness pytorchsim --togsim-dir "$TOGSIM" --gem5-dir "$GEM5")
 [[ -f "$ROOT/config.yml" ]] && CMD+=(--config-yml "$ROOT/config.yml")
 # BookSim configs (anynet NoCs need the .net network file from here).
 [[ -d "$ROOT/booksim2_config" ]] && CMD+=(--booksim-dir "$ROOT/booksim2_config")
+# DRAM energy table (the config's energy_cost_table_path; collect the run's
+# energy_tables/ dir into the root). Exactly one yml → auto-added; several →
+# ambiguous, pass --energy-table explicitly.
+if [[ -d "$ROOT/energy_tables" ]]; then
+    ETABLES=()
+    while IFS= read -r f; do ETABLES+=("$f"); done \
+        < <(compgen -G "$ROOT/energy_tables/*.yml" || true)
+    if [[ ${#ETABLES[@]} -eq 1 ]]; then
+        CMD+=(--energy-table "${ETABLES[0]}")
+    elif [[ ${#ETABLES[@]} -gt 1 ]]; then
+        echo "[run.sh] ${#ETABLES[@]} ymls in $ROOT/energy_tables/ — pass \
+--energy-table explicitly to pick one" >&2
+    fi
+fi
 CMD+=("$@")
 
 if [[ "$DRYRUN" == 1 ]]; then

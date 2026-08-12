@@ -24,7 +24,7 @@
   .sub{color:var(--muted);font-size:12px;margin-bottom:20px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
         padding:16px 18px;margin-bottom:16px}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);
          gap:12px;margin-bottom:16px}
   .cards .card{margin-bottom:0}
   .kpi .v{font-size:22px;font-weight:600} .kpi .l{color:var(--muted);font-size:12px}
@@ -47,9 +47,12 @@
   .chip.const{background:var(--const-bg);color:var(--const-ink)}
   .chip.stub{background:var(--warn-bg);color:var(--warn-ink)}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  @media(max-width:760px){.two{grid-template-columns:1fr}
+                          .cards{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.cards{grid-template-columns:1fr}}
   .chart svg{width:100%;height:auto;display:block}
   .chart.donut svg{max-width:220px;margin:0 auto 10px}
+  .chart-spacer{width:100%;aspect-ratio:560/38}  /* one share-bar of air */
   .tree{font:12.5px/1.6 ui-monospace,Consolas,monospace;overflow-x:auto}
   .tree details{padding-left:18px}
   .tree>details{padding-left:0}
@@ -81,14 +84,27 @@
 
   {% for b in banners %}<div class="banner {{ b.level }}">{{ b.text }}</div>{% endfor %}
 
-  <!-- 2. Summary cards -->
+  <!-- 2. Summary cards — row 0: efficiency · energy · power,
+       row 1: area · f_max · cycles (user layout, 2026-08-12) -->
   <div class="cards">
+    {% if efficiency %}
+    <div class="card kpi"><div class="v">{{ efficiency.pJ_per_flop_str }}</div>
+      <div class="l">Efficiency — {{ efficiency.tflops_str }} TFLOP/s over
+        this run · MAC = 2 FLOP · includes DRAM{% if efficiency.dtype %} ·
+        {{ efficiency.dtype }} datapath{% endif %}{% if
+        efficiency.fp32_equivalent and efficiency.fp32_equivalent.factor != 1.0
+        %} · fp32-equiv {{ efficiency.fp32_equivalent.pJ_per_flop_str }}
+        (×{{ "%.2f"|format(efficiency.fp32_equivalent.factor) }}, MAC
+        re-priced at e8m23){% endif %}</div></div>
+    {% endif %}
     <div class="card kpi"><div class="v">{{ totals.energy_str }}</div>
       <div class="l">Total energy — dyn {{ totals.dyn_str }} + leak {{ totals.leak_str }}</div></div>
     <div class="card kpi"><div class="v">{{ totals.avg_power_str }}</div>
-      <div class="l">Average power</div></div>
+      <div class="l">Average power{% if totals.power_density_str %} ·
+        {{ totals.power_density_str }} of modeled area{% endif %}</div></div>
     <div class="card kpi"><div class="v">{{ totals.area_mm2 }} mm²</div>
-      <div class="l">Total area</div></div>
+      <div class="l">Total area — modeled components only (no IO/PHY,
+        controllers, scalar core or whitespace)</div></div>
     <div class="card kpi"><div class="v">{{ timing.f_max_str }}</div>
       <div class="l">f_max — clock check:
         <span style="color:var(--{{ timing.check_color }})">{{ timing.check_text }}</span></div></div>
@@ -101,9 +117,16 @@
     <div class="card">
       <h2>Energy breakdown <span class="sub">dynamic {{ totals.dyn_pct }}% ·
         leakage {{ totals.leak_pct }}%</span></h2>
-      <div class="chart">{{ svg.split_bar }}</div>
       <div class="chart donut">{{ svg.energy_donut }}</div>
       <div class="chart">{{ svg.energy_bars }}</div>
+      <div class="chart-spacer"></div>
+      {% if npu_dram_split %}
+      <div class="chart">{{ svg.npu_dram_bar }}</div>
+      <div class="sub">DRAM device energy sits on its own bar (details in the
+        DRAM section below); the donut and list cover the on-chip (NPU)
+        components only.</div>
+      {% endif %}
+      <div class="chart">{{ svg.split_bar }}</div>
     </div>
     <div class="card">
       <h2>Area breakdown</h2>
@@ -111,6 +134,31 @@
       <div class="chart">{{ svg.area_bars }}</div>
     </div>
   </div>
+
+  {% if dram_breakdown %}
+  <!-- 4b. DRAM device energy (per-command split of the hbm components) -->
+  <div class="card">
+    <h2>DRAM device energy <span class="sub">{{ dram_breakdown.components | join(", ") }}
+      · {{ dram_breakdown.total_str }} ({{ dram_breakdown.share_of_run_pct }}% of run total)</span></h2>
+    <div class="tblwrap"><table>
+      <thead><tr><th>Command</th><th>Energy</th><th>Share</th></tr></thead>
+      <tbody>
+        {% for r in dram_breakdown.rows %}
+        <tr><td>{{ r.label }}</td><td>{{ r.energy_str }}</td><td>{{ r.pct }}%</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><td>Total</td><td>{{ dram_breakdown.total_str }}</td><td>100%</td></tr></tfoot>
+    </table></div>
+    <div class="sub">Charged per-command constants:
+      activation {{ dram_breakdown.constants.act_pJ }} pJ,
+      access {{ dram_breakdown.constants.access_pJ_per_bit }} pJ/bit
+      × {{ dram_breakdown.constants.data_width_bits }} bits/request{%
+      if dram_breakdown.constants.ref_pJ %},
+      refresh {{ dram_breakdown.constants.ref_pJ }} pJ/REFab{% endif %}.
+      Counts are Ramulator2 controller measurements (row misses + conflicts =
+      activations); background/standby power is out of scope.</div>
+  </div>
+  {% endif %}
 
   <!-- 5. Cycle-level energy -->
   <div class="card">
@@ -193,7 +241,7 @@
     <div class="tblwrap"><table>
       <thead><tr>
         <th>Component</th><th>Class</th><th>Model</th><th>Count</th>
-        <th>E/op or E/rd·wr [pJ]</th><th>P_leak/inst [mW]</th>
+        <th>E/op [pJ]</th><th>P_leak/inst [mW]</th>
         <th>Area/inst [µm²]</th>
         <th>t_crit [ns]</th><th>Activity [events]</th>
         <th>E_dyn</th><th>E_leak</th><th>E_total</th><th>Share</th>
@@ -218,7 +266,10 @@
     </table></div>
     <div class="sub" style="margin:8px 0 0">Unit-cost columns are per single
       instance and time-independent (<code>P_leak</code> is a static power
-      rating in mW); the energy columns integrate over this run —
+      rating in mW). <code>E/op</code> is priced at the stim modes this run
+      actually charged the component with (up to two, alphabetical — memories
+      show read&nbsp;/&nbsp;write; an unexercised component falls back to
+      <code>random</code>); the energy columns integrate over this run —
       <code>E_leak = count × P_leak × exec&nbsp;time</code>, which is exactly
       the leakage series in the Cycle-level section above.</div>
   </div>

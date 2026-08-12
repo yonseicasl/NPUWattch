@@ -52,14 +52,18 @@ class NPUWattchArgs:
 
     verbose: int
 
-    # Harness mode (--harness NAME --togsim-dir D --gem5-dir D); tech/PVT
+    # Harness mode (--harness NAME + that harness's named inputs); tech/PVT
     # defaults = nominal. PyTorchSim writes its two result sets to separate
     # locations, so each is its own explicit flag — there is no umbrella "-i".
+    # Which flags a given harness requires is declared in its HARNESS_SPEC and
+    # checked against the registry, not hardcoded here.
     harness: Optional[str] = None
     togsim_dir: Optional[Path] = None
     gem5_dir: Optional[Path] = None
     config_yml: Optional[Path] = None
     booksim_dir: Optional[Path] = None
+    energy_table: Optional[Path] = None
+    arch_yaml: Optional[Path] = None
     out_dir: Optional[Path] = None
     # Estimator mode, -d without -l: fraction of random switching for the
     # VECTORLESS estimate (None → energy.DEFAULT_VECTORLESS_ACTIVITY = 0.25).
@@ -199,6 +203,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "directory. Needed only for anynet NoC topologies (their .net "
              "network file); fly NoCs are self-contained in the log.",
     )
+    harness_group.add_argument(
+        "--energy-table",
+        dest="energy_table",
+        help="PyTorchSim harness (optional): the run's DRAM energy-cost table "
+             "yml (the config's energy_cost_table_path, e.g. hbm2.yml). Its "
+             "constants replace the dram compound's built-in ones; without it "
+             "the built-in cited HBM2 constants are charged.",
+    )
+    harness_group.add_argument(
+        "--arch-yaml",
+        dest="arch_yaml",
+        help="Timeloop harness: the Accelergy/Timeloop architecture YAML "
+             "(v0.4, 'architecture:' root). Required with --harness timeloop; "
+             "passing such a file to -d selects this harness automatically.",
+    )
 
     # Technology / PVT for harness mode. Defaults are nominal — only an explicitly
     # passed flag overrides them (hp / TT / nominal Vdd / 25C).
@@ -300,6 +319,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _check_harness_inputs(parser, ns) -> None:
+    """Fail early when the selected harness's required inputs are missing.
+
+    The requirement lives in the harness's ``HARNESS_SPEC``, so a new harness
+    (``timeloop`` needs ``--arch-yaml``, not ``--togsim-dir``) is validated
+    correctly without touching this parser. If the registry cannot be imported
+    the check is skipped — ``run_harness`` validates authoritatively anyway, and
+    a broken plugin must not make the CLI unusable.
+    """
+    try:
+        from npuwattch.harness import available_harnesses
+        info = available_harnesses().get(ns.harness)
+    except Exception:
+        return
+    if info is None:
+        return                            # unknown name → run_harness lists them
+    missing = []
+    for decl in info.inputs.values():
+        flag = decl.get("flag")
+        if not decl.get("required", True) or not flag:
+            continue
+        if not getattr(ns, flag.lstrip("-").replace("-", "_"), None):
+            missing.append(f"{flag} ({decl.get('hint', '')})".strip())
+    if missing:
+        parser.error(
+            f"Harness mode (--harness {ns.harness}) requires "
+            + "; ".join(missing))
+
+
 def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     """Parse command-line arguments and return validated NPUWattchArgs."""
     parser = build_arg_parser()
@@ -316,14 +364,17 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     gem5_dir: Optional[Path] = None
     config_yml: Optional[Path] = None
     booksim_dir: Optional[Path] = None
+    energy_table: Optional[Path] = None
+    arch_yaml: Optional[Path] = None
     out_dir: Optional[Path] = None
 
     if ns.harness and ns.description_files:
         parser.error("--harness and -d/--description are mutually exclusive")
     if not ns.harness and (ns.togsim_dir or ns.gem5_dir or ns.config_yml
-                           or ns.booksim_dir):
+                           or ns.booksim_dir or ns.energy_table or ns.arch_yaml):
         parser.error(
-            "--togsim-dir/--gem5-dir/--config-yml/--booksim-dir require --harness")
+            "--togsim-dir/--gem5-dir/--config-yml/--booksim-dir/--energy-table"
+            "/--arch-yaml require --harness")
     if ns.vectorless_activity is not None:
         if ns.harness or ns.flatten or ns.train or ns.activity_logs:
             parser.error(
@@ -355,14 +406,13 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
                 "and --gem5-dir <outputs/ | gem5_outputs/> (or use run.sh to "
                 "auto-locate both under one root)"
             )
-        if not ns.togsim_dir or not ns.gem5_dir:
-            parser.error(
-                "Harness mode (--harness) requires BOTH --togsim-dir and --gem5-dir"
-            )
-        togsim_dir = Path(ns.togsim_dir)
-        gem5_dir = Path(ns.gem5_dir)
+        _check_harness_inputs(parser, ns)
+        togsim_dir = Path(ns.togsim_dir) if ns.togsim_dir else None
+        gem5_dir = Path(ns.gem5_dir) if ns.gem5_dir else None
         config_yml = Path(ns.config_yml) if ns.config_yml else None
         booksim_dir = Path(ns.booksim_dir) if ns.booksim_dir else None
+        energy_table = Path(ns.energy_table) if ns.energy_table else None
+        arch_yaml = Path(ns.arch_yaml) if ns.arch_yaml else None
         out_dir = Path(ns.output_path) if ns.output_path else None
 
     elif ns.train:
@@ -406,6 +456,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         gem5_dir=gem5_dir,
         config_yml=config_yml,
         booksim_dir=booksim_dir,
+        energy_table=energy_table,
+        arch_yaml=arch_yaml,
         out_dir=out_dir,
         vectorless_activity=ns.vectorless_activity,
         tree=bool(ns.tree),

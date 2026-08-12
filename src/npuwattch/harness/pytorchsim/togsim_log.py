@@ -3,11 +3,16 @@
 The TOGSim log is the primary activity input: its header echoes the full hardware
 config, and its body reports **on-chip** per-core activity (systolic / vector
 active cycles, COMP GEMM op counts, DMA engine active/idle cycles + response
-counts). Two off-chip echoes are read too: the final
-DRAM request totals (VMEM + NoC traffic derive from them) and the BookSim
+counts). Off-chip echoes are read too: the final
+DRAM request totals (VMEM + NoC traffic derive from them), the BookSim
 ``[config]`` block the simulator prints at init (the NoC topology — for ``fly``
 networks it makes the log fully self-contained; ``anynet`` additionally needs the
-``.net`` file, whose *path* is all the log carries).
+``.net`` file, whose *path* is all the log carries), the one-line
+``[Config/DRAM] … N channels, M bytes per request`` init echo (fills
+``dram_req_size_byte``/``dram_channels`` when the config block lacks them —
+removes the 32 B request-size assumption), and the ``[Config/Energy]`` energy
+cost table echo (2026-08-05 author build — the declared DRAM energy table's
+name/path, checked against the dram compound's built-in HBM2 constants).
 
 Log format (the 2026-07-20 author build; the earlier ``TOGSim Config: {JSON}``
 header format is **retired** — logs from older builds are not accepted):
@@ -29,7 +34,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 __all__ = ["TogsimActivity", "TogsimLogError", "parse_config",
            "parse_dram_ctrl_stats", "parse_icnt_config", "parse_togsim_log"]
@@ -99,6 +104,19 @@ _PKT_LEN = re.compile(r"^Injected packet length average\s*=\s*([\d.eE+-]+)\s*$",
 # [DRAM] channels 0..15 combined | ... | 772 reads, 256 writes
 _DRAM_CH = re.compile(r"\[DRAM\] channel (\d+) \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
 _DRAM_ALL = re.compile(r"\[DRAM\] channels [\d.]+ combined \|.*\|\s*(\d+) reads?,\s*(\d+) writes?")
+
+# The DRAM front-end's one-line init echo — the request size the run ACTUALLY
+# used (no author build puts a dram_req_size_byte key in the config header):
+#   [Config/DRAM] Total bandwidth 481.28 GB/s, 940 MHz, 16 channels, 32 bytes per request
+_DRAM_CFG_ECHO = re.compile(
+    r"\[Config/DRAM\][^\n]*?\b(\d+)\s+channels,\s*(\d+)\s+bytes per request")
+
+# The declared DRAM energy table (2026-08-05 author build, config key
+# `energy_cost_table_path`); the wording varies between "energy table" and
+# "energy cost table" within that same build:
+#   [Config/Energy] Loaded energy cost table "HBM2" from /path/hbm2.yml
+_ENERGY_TABLE_ECHO = re.compile(
+    r'\[Config/Energy\] Loaded energy (?:cost )?table "([^"]+)" from (\S+)')
 
 # Ramulator2's end-of-run controller statistics: a "=== DRAM statistics ==="
 # marker, then one "--- channel N ---" YAML-ish block per channel. The
@@ -286,6 +304,15 @@ class TogsimActivity:
     #: row_hits/misses/conflicts, + 'channels'). None for logs without the
     #: block — the analytic DRAM model then degrades (no ACT/refresh split).
     dram_ctrl: Optional[Dict[str, int]] = None
+    #: The run's declared DRAM energy table ([Config/Energy] echo) — the name
+    #: is the table's own `name:` key. The dram compound's built-in constants
+    #: are the HBM2 table; read_run warns when a run declares a different one.
+    #: None for logs without the echo (pre-2026-08 builds).
+    energy_table_name: Optional[str] = None
+    energy_table_path: Optional[str] = None
+    #: Parse-level consistency notes (config key vs [Config/DRAM] echo
+    #: disagreements) — read_run copies them into the window warnings.
+    warnings: List[str] = field(default_factory=list)
     per_core: Dict[int, Dict[str, object]] = field(default_factory=dict)
 
 
@@ -304,6 +331,27 @@ def parse_togsim_log(text: str,
         raise TogsimLogError("config has no integer 'vpu_num_lanes'")
     num_cores = _as_int(config, "num_cores") or 1
     kernel_hash = parse_kernel_hash(text)
+
+    # [Config/DRAM] init echo: fills dram_channels / dram_req_size_byte when
+    # the config (header + config.yml) lacks them — the echo states what the
+    # simulator actually used. An explicit config key still wins on overlap
+    # (same precedence as header-over-yml); a disagreement is warned.
+    log_warnings: List[str] = []
+    m = _DRAM_CFG_ECHO.search(text)
+    if m:
+        for key, echoed in (("dram_channels", int(m.group(1))),
+                            ("dram_req_size_byte", int(m.group(2)))):
+            cur = config.get(key)
+            if not isinstance(cur, int):
+                config[key] = echoed
+            elif cur != echoed:
+                log_warnings.append(
+                    f"config {key}={cur} disagrees with the [Config/DRAM] "
+                    f"echo ({echoed}); keeping the config value"
+                )
+    m = _ENERGY_TABLE_ECHO.search(text)
+    energy_table_name = m.group(1) if m else None
+    energy_table_path = m.group(2) if m else None
 
     # last value per (core, array) / per core = cumulative total.
     sys_last: Dict[tuple, int] = {}
@@ -397,5 +445,8 @@ def parse_togsim_log(text: str,
         numa_remote=(sum(r for _, r in numa_last.values()) if numa_last else None),
         booksim_avg_packet_length=avg_pkt_len,
         dram_ctrl=parse_dram_ctrl_stats(text),
+        energy_table_name=energy_table_name,
+        energy_table_path=energy_table_path,
+        warnings=log_warnings,
         per_core=per_core,
     )

@@ -75,6 +75,12 @@ _SFU_INSTS = (
 # absent or integer (the SFU is a floating-point unit).
 _SFU_FALLBACK_EXP_MANT = (8, 23)
 
+# The dram compound's built-in per-command constants ARE the HBM2 table
+# (O'Connor & Chatterjee et al., MICRO 2017 — see compounds/dram.yaml). A run
+# whose [Config/Energy] echo declares a DIFFERENT table is still charged at
+# the built-in constants, so that gets a warning naming the override path.
+_BUILTIN_DRAM_TABLE = "HBM2"
+
 
 @dataclass(frozen=True)
 class KernelWindow:
@@ -131,7 +137,8 @@ def _num(x: float) -> float:
 def read_run(togsim_dir: Path, gem5_dir: Path, *,
              base_config: Optional[Dict[str, object]] = None,
              pipeline_stages: int = 2,
-             booksim_dir: Optional[Path] = None) -> List[KernelWindow]:
+             booksim_dir: Optional[Path] = None,
+             expected_dram_table: Optional[str] = None) -> List[KernelWindow]:
     """Read a PyTorchSim run (two explicit directories) into per-kernel windows.
 
     ``togsim_dir`` holds the final TOGSim logs (the raw tree's root
@@ -145,6 +152,11 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
     ``booksim_dir`` (optional, the run's ``booksim2_config/``) supplies the
     ``.net`` network file that ``anynet`` NoC topologies need; ``fly`` topologies
     are self-contained in the log's embedded BookSim config echo (booksim.py).
+
+    ``expected_dram_table`` (optional): the name of the energy table whose
+    constants WILL be charged — the ``--energy-table`` file's ``name`` when one
+    is supplied; ``None`` means the built-in HBM2 constants. A log whose
+    ``[Config/Energy]`` echo declares a different table is warned.
     """
     log_dir = Path(togsim_dir)
     out_dir = Path(gem5_dir)
@@ -173,6 +185,7 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             skipped.append(f"{log_path.name}: {e}")
             continue
         khash = act.kernel_hash
+        warnings.extend(f"{khash}: {w}" for w in act.warnings)
         kernel_dir = out_dir / khash
 
         # architecture: MacConfig from the codegen artifacts. MLIR is the
@@ -287,6 +300,31 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
                 f"read/write energy is charged from the [DRAM] request totals, "
                 f"but row-activation and refresh energy are NOT charged"
             )
+
+        # The run's declared energy table ([Config/Energy] echo) vs what the
+        # dram compound will actually charge — the supplied --energy-table
+        # when given, else the built-in HBM2 constants. A mismatch means the
+        # numbers would be silently attributed to the wrong memory technology.
+        charged = expected_dram_table or _BUILTIN_DRAM_TABLE
+        if (act.energy_table_name is not None
+                and act.energy_table_name != charged):
+            if expected_dram_table is not None:
+                warnings.append(
+                    f"{khash}: run declares DRAM energy table "
+                    f"{act.energy_table_name!r} ({act.energy_table_path}), but "
+                    f"--energy-table supplied {charged!r} — its constants are "
+                    f"charged; pass the run's own table file instead"
+                )
+            else:
+                warnings.append(
+                    f"{khash}: run declares DRAM energy table "
+                    f"{act.energy_table_name!r} ({act.energy_table_path}), but "
+                    f"the dram compound charges the built-in "
+                    f"{_BUILTIN_DRAM_TABLE} constants — pass the run's table "
+                    f"via --energy-table (or override mem_act_energy_pJ / "
+                    f"mem_access_energy_per_bit_pJ / mem_ref_energy_pJ in a "
+                    f"bundle copy of compounds/dram.yaml)"
+                )
 
         # NoC (BookSim2): topology symbols (icnt_ports/routers/channels + the raw
         # booksim_* config ints) join the run-config expression symbols, and flit

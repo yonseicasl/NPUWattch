@@ -135,6 +135,11 @@ class EmittedArch:
     #: "vector_active_cycles", "sfu_ops", "dram_requests", "exec_cycles"}.
     #: Console prints these at -v>=2; report.json carries them always.
     window_provenance: List[Dict[str, Any]] = field(default_factory=list)
+    #: Set when the harness could not derive real activity and synthesized it
+    #: instead — the fraction of random switching assumed (the Timeloop harness
+    #: has no stats reader yet). The CLI/report label such a run VECTORLESS;
+    #: ``None`` means the activity came from the simulator's own counters.
+    vectorless_activity: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +716,44 @@ def write_arch(
 # pytorchsim one-call entry (mirrors energy.aggregate.analyze_run)
 # ---------------------------------------------------------------------------
 
+def _apply_energy_table(description: Mapping[str, Any], table: Any,
+                        notes: List[str], warnings: List[str]) -> None:
+    """Override the emitted ``hbm`` components' constants with the run's own
+    energy table (``--energy-table``, author handoff 2026-08-10).
+
+    The attributes are the canonical per-command constants the
+    ``HBMCostProvider`` prices from, so the override flows unchanged through
+    ``write_arch`` → the ``-d``/``-l`` replay. The author table format has no
+    refresh term — the built-in derived REFab constant then stays, noted (the
+    ``refresh_pj_per_refab`` key is our proposed extension).
+    """
+    hbm_comps = [c for c in description.get("npuwattch", {}).get("components", [])
+                 if c.get("class") == "hbm"]
+    if not hbm_comps:
+        warnings.append(
+            f"--energy-table {table.path.name} supplied but the run emitted no "
+            f"DRAM component (no dram_channels / DRAM stats in the log) — the "
+            f"table is unused"
+        )
+        return
+    for c in hbm_comps:
+        attrs = c.setdefault("attributes", {})
+        attrs["mem_act_energy_pJ"] = table.act_pj
+        attrs["mem_access_energy_per_bit_pJ"] = table.transfer_pj_per_bit
+        if table.ref_pj is not None:
+            attrs["mem_ref_energy_pJ"] = table.ref_pj
+    ref_note = (f"refresh {table.ref_pj:g} pJ/REFab from the table"
+                if table.ref_pj is not None else
+                "refresh keeps the built-in derived constant (the table has "
+                "no refresh term)")
+    notes.append(
+        f"DRAM constants from the run's energy table {table.name!r} "
+        f"({table.path.name}): activation {table.act_pj:g} pJ, transfer "
+        f"{table.transfer_pj_per_bit:g} pJ/bit "
+        f"({table.transfer_split_str()}); {ref_note}"
+    )
+
+
 def synthesize_run(
     togsim_dir: Path,
     gem5_dir: Path,
@@ -724,6 +767,7 @@ def synthesize_run(
     prefix: str = "systolic",
     base_config: Optional[Mapping[str, Any]] = None,
     booksim_dir: Optional[Path] = None,
+    energy_table: Any = None,
 ) -> EmittedArch:
     """Read a PyTorchSim run (TOGSim logs + gem5/codegen outputs, two separate
     directories) and emit its NPUWattch description + activity.
@@ -735,6 +779,11 @@ def synthesize_run(
     ``booksim_dir`` is the run's ``booksim2_config/`` (optional): ``anynet`` NoC
     topologies need their ``.net`` file from it; ``fly`` NoCs are self-contained
     in the log. Without it an anynet run's NoC degrades to a warning.
+
+    ``energy_table`` (optional, a ``harness.pytorchsim.EnergyTable``): the
+    run's declared DRAM energy-cost table — its constants replace the dram
+    compound's built-in ones on the emitted ``hbm`` components (INFO note);
+    logs declaring a *different* table than the one charged are warned.
 
     The physical architecture is single (a reconfigurable systolic array); all
     kernels must agree on ``lanes`` and the element set. If a later kernel's config
@@ -768,7 +817,9 @@ def synthesize_run(
     pm = bundle.primitive_modes
 
     all_windows = read_run(togsim_dir, gem5_dir, base_config=base_config,
-                           booksim_dir=booksim_dir)
+                           booksim_dir=booksim_dir,
+                           expected_dram_table=(energy_table.name
+                                                if energy_table else None))
     # Non-MAC kernel windows (softmax/layernorm/elementwise — no linalg.matmul)
     # are KEPT since 2026-07-30: they bind the non-systolic compounds
     # (vpu/fpsfu/spads/dma/dram/noc). The templated vfu/spads elements still
@@ -926,6 +977,12 @@ def synthesize_run(
         word_bits_by_element.update(wb)
         ports_by_element.update(pb)
         per_by_element.update(aper)
+
+    # The run's own DRAM energy table replaces the built-in constants on the
+    # emitted hbm components (the provider reads them as canonical attrs, so
+    # write_arch → -d/-l replay carries the override unchanged).
+    if energy_table is not None:
+        _apply_energy_table(description, energy_table, notes, warnings)
 
     # Non-MAC windows bind with the representative MacConfig (the systolic
     # actions still bind only where their stats carry activity); the effective

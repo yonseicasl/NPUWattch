@@ -24,13 +24,13 @@ from .svg import (
     dyn_leak_bar,
     fmt_si,
     hbar_list,
+    share_bar,
     windows_chart,
 )
 
 __all__ = ["build_context", "render_html", "write_report"]
 
 _TOP_N = 8                     # donut / bar-list grouping (skill guidance)
-_MEM_PRIMS = ("sram", "regfile", "fifo")
 
 
 # ---------------------------------------------------------------------------
@@ -76,27 +76,101 @@ def _model_tag(models: Iterable[str]) -> str:
     return "PARTIAL calibration"
 
 
-def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any]) -> str:
-    """E/op for logic and links, E/rd·wr for memories — per single instance."""
+def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any],
+                     charged_modes: Iterable[str] = ()) -> str:
+    """Per-instance E/cycle, priced at the stim modes this run actually
+    charged the component with — mode-agnostic by design (a FIFO streams, a
+    memory reads/writes, an hbm activates; no fixed mode list). ``idle``/
+    ``none`` carry no unit information and are skipped; a component with no
+    priceable charged mode falls back to ``random``. At most two values are
+    shown, alphabetically (memories keep the familiar read / write pair)."""
     def one(mode: str) -> Optional[float]:
         try:
             return provider.energy_per_cycle(primitive, {**feats, "stim_mode": mode})
         except Exception:
             return None
-    if primitive in _MEM_PRIMS:
-        rd, wr = one("read"), one("write")
-        if rd is None and wr is None:
-            return "n/a"
-        return (f"{rd:.3g} / {wr:.3g}"
-                if rd is not None and wr is not None
-                else f"{(rd if rd is not None else wr):.3g}")
-    op = one("random")
-    return f"{op:.3g}" if op is not None else "n/a"
+    modes = sorted(m for m in set(charged_modes) if m not in ("idle", "none"))
+    priced = [(m, v) for m in modes if (v := one(m)) is not None]
+    if not priced:
+        op = one("random")
+        return f"{op:.3g}" if op is not None else "n/a"
+    return " / ".join(f"{v:.3g}" for _, v in priced[:2])
 
 
 # ---------------------------------------------------------------------------
 # context
 # ---------------------------------------------------------------------------
+
+def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
+    """Human dtype of a MAC-family component (fp32/bf16/fp16/int8/mx…)."""
+    if cls == "fpmac":
+        e, m = attrs.get("exponent_bits"), attrs.get("mantissa_bits")
+        if (e, m) == (8, 23):
+            return "fp32"
+        if (e, m) == (8, 7):
+            return "bf16"
+        if (e, m) == (5, 10):
+            return "fp16"
+        return f"fp e{e}m{m}" if e and m else None
+    if cls == "intmac":
+        w = attrs.get("data_width_a") or attrs.get("data_width")
+        return f"int{w}" if w else "int"
+    if cls == "mxfpmac":
+        return str(attrs.get("mx_input_format") or "mx")
+    return None
+
+
+def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
+                     total_pJ, flops):
+    """(dtype, fp32_equivalent) for the efficiency KPI.
+
+    Convention (2026-08-11): re-price the fp MAC datapath at fp32 (e8m23)
+    with identical structure (node/clock/pipeline), per charged stim_mode,
+    using the same provider — everything non-MAC (SRAM/NoC/DRAM) stays
+    unchanged, so runs of different fp precisions compare against fp32
+    references apples-to-apples. int/mx datapaths are different primitives,
+    not a precision rescale → dtype is labeled but no equivalent is claimed.
+    Any failure (no provider, unknown mode) skips the annotation — a report
+    view must never fail the run.
+    """
+    macs = [c for c in components if c["cls"] in ("fpmac", "intmac", "mxfpmac")
+            and c["dyn_energy_pJ"] > 0]
+    if not macs or flops <= 0:
+        return None, None
+    top = max(macs, key=lambda c: c["dyn_energy_pJ"])
+    dtype = _dtype_label(top["cls"], attrs_by_name.get(top["name"], {}))
+    if any(c["cls"] != "fpmac" for c in macs):
+        return dtype, None                      # int/mx: no fp32 rescale
+    if provider is None:
+        return dtype, None
+    try:
+        delta = 0.0
+        for c in macs:
+            attrs = attrs_by_name.get(c["name"], {})
+            if (attrs.get("exponent_bits"), attrs.get("mantissa_bits")) == (8, 23):
+                continue                        # already fp32
+            base = {**tech.features(), "clock_mhz": clock, **attrs}
+            fp32 = {**base, "exponent_bits": 8, "mantissa_bits": 23,
+                    "data_width": 32}
+            for mode, e in c["dyn_by_mode"].items():
+                try:
+                    e_native = provider.energy_per_cycle(
+                        "fpmac", {**base, "stim_mode": mode})
+                    e_fp32 = provider.energy_per_cycle(
+                        "fpmac", {**fp32, "stim_mode": mode})
+                except Exception:
+                    continue                    # uncharacterized mode: r = 1
+                if e_native > 0:
+                    delta += e * (e_fp32 / e_native - 1.0)
+        pj_per_flop = (total_pJ + delta) / flops
+        return dtype, {
+            "pJ_per_flop": pj_per_flop,
+            "pJ_per_flop_str": f"{pj_per_flop:.3g} pJ/FLOP",
+            "factor": pj_per_flop / (total_pJ / flops),
+        }
+    except Exception:
+        return dtype, None
+
 
 def build_context(
     run: Any,                                   # energy.RunEnergy
@@ -139,11 +213,24 @@ def build_context(
     for name, c0 in comp0.items():
         dyn = sum(w.components[name].dyn_energy_pJ for w in run.windows)
         leak = sum(w.components[name].leak_energy_pJ for w in run.windows)
+        by_mode: Dict[str, float] = {}
+        for w in run.windows:
+            for m, e in getattr(w.components[name], "dyn_by_mode", {}).items():
+                by_mode[m] = by_mode.get(m, 0.0) + e
         feats: Dict[str, Any] = dict(tech.features())
         feats.update(attrs_by_name.get(name, {}))
+        if clock and not feats.get("clock_mhz"):
+            # price unit costs at the run clock, exactly as §6 charged them
+            # (an explicit TechContext clock still wins, mirroring aggregate;
+            # tech.features() emits clock_mhz: None when unset — overwrite it)
+            feats["clock_mhz"] = clock
         components.append({
             "name": name,
             "cls": c0.primitive,
+            # dynamic energy per stim_mode (run total; Σ == dyn_energy_pJ) —
+            # the finest split the activity carries, §3.6 only (not rendered
+            # per component in the HTML).
+            "dyn_by_mode": by_mode,
             "model": _model_of(c0.primitive, chain),
             "count": c0.instances,
             "dyn_energy_pJ": dyn,
@@ -153,7 +240,8 @@ def build_context(
             "energy_pJ": dyn + leak,
             "energy_str": fmt_si(dyn + leak, "pJ"),
             "energy_pct": round(100.0 * (dyn + leak) / total_pJ, 1),
-            "unit_energy_str": (_unit_energy_str(provider, c0.primitive, feats)
+            "unit_energy_str": (_unit_energy_str(provider, c0.primitive, feats,
+                                                 by_mode)
                                 if provider is not None else "n/a"),
             # unit costs are per single instance (§8.6); the *_mW/_um2 raw
             # fields keep the whole-component totals (× count) for §3.6.
@@ -198,6 +286,46 @@ def build_context(
             "non_gemm_windows": sum(1 for k in kinds.values() if k == "non_mac"),
         }
 
+    # -- DRAM device command breakdown (§8; author handoff 2026-08-10) -------
+    # The per-mode split of the hbm components: the authors' verification
+    # vocabulary (activation vs transfer) + NPUWattch's refresh term. A
+    # vectorless run prices hbm at `random` → no command modes → omitted.
+    dram_comps = [c for c in components if c["cls"] == "hbm"]
+    dram_breakdown = None
+    if dram_comps:
+        modes: Dict[str, float] = {}
+        for c in dram_comps:
+            for m, e in c["dyn_by_mode"].items():
+                modes[m] = modes.get(m, 0.0) + e
+        labels = [("activate", "Row activation (ACT+PRE)"),
+                  ("read", "Transfer — read"),
+                  ("write", "Transfer — write"),
+                  ("refresh", "Refresh")]
+        dram_total = sum(modes.get(k, 0.0) for k, _ in labels)
+        if dram_total > 0:
+            attrs0 = attrs_by_name.get(dram_comps[0]["name"], {})
+            dram_breakdown = {
+                "components": [c["name"] for c in dram_comps],
+                "rows": [{
+                    "mode": k, "label": lbl,
+                    "energy_pJ": modes.get(k, 0.0),
+                    "energy_str": fmt_si(modes.get(k, 0.0), "pJ"),
+                    "pct": round(100.0 * modes.get(k, 0.0) / dram_total, 1),
+                } for k, lbl in labels],
+                "total_pJ": dram_total,
+                "total_str": fmt_si(dram_total, "pJ"),
+                "share_of_run_pct": round(100.0 * dram_total / total_pJ, 1),
+                # the charged per-command constants (built-in or the run's
+                # --energy-table override — the description attrs are the
+                # single source either way)
+                "constants": {
+                    "act_pJ": attrs0.get("mem_act_energy_pJ"),
+                    "access_pJ_per_bit": attrs0.get("mem_access_energy_per_bit_pJ"),
+                    "ref_pJ": attrs0.get("mem_ref_energy_pJ"),
+                    "data_width_bits": attrs0.get("data_width"),
+                },
+            }
+
     active = [c["name"] for c in components
               if any(w.components[c["name"]].dyn_energy_pJ for w in run.windows)]
     matrix = {"rows": [{
@@ -210,6 +338,43 @@ def build_context(
     # -- totals / timing / banners ------------------------------------------
     total_cycles = sum(w.exec_cycles for w in run.windows)
     area_um2 = sum(c["area_um2"] for c in components)
+
+    # Compute-efficiency KPI (user request 2026-08-11): run energy per FLOP,
+    # with MAC = 2 FLOP. Op count = the charged events of the MAC-family
+    # datapath components (systolic PEs dominate; the vector datapath's
+    # fpmac-class ops ride along), idle events excluded. Deliberately
+    # includes DRAM/NoC/SRAM energy in the numerator — it is a CHIP-LEVEL
+    # figure, comparable to per-chip TFLOPS/TDP quotes, not a bare-MAC one.
+    _MAC_PRIMS = ("fpmac", "intmac", "mxfpmac")
+    mac_ops = 0.0
+    for r in activity_rows:
+        name = str(r.get("component", ""))
+        if name == "__meta__" or name not in comp0:
+            continue
+        if (comp0[name].primitive in _MAC_PRIMS
+                and str(r.get("mode")) != "idle"):
+            mac_ops += float(r.get("count", 0))
+    efficiency = None
+    if mac_ops > 0 and run.exec_time_s > 0:
+        flops = 2.0 * mac_ops
+        dtype, fp32_eq = _fp32_equivalent(
+            components, attrs_by_name, provider, tech, clock,
+            run.total_energy_pJ, flops)
+        efficiency = {
+            "mac_ops": mac_ops,
+            "pJ_per_mac": run.total_energy_pJ / mac_ops,
+            "pJ_per_flop": run.total_energy_pJ / flops,
+            "pJ_per_flop_str":
+                f"{run.total_energy_pJ / flops:.3g} pJ/FLOP",
+            "tflops": flops / run.exec_time_s / 1e12,
+            "tflops_str": f"{flops / run.exec_time_s / 1e12:.3g}",
+            # datapath precision + the fp32-normalized figure (None for
+            # int/mx datapaths or when the provider cannot re-price)
+            "dtype": dtype,
+            "fp32_equivalent": fp32_eq,
+        }
+    power_density = ((run.avg_power_mW * 1e-3) / (area_um2 / 1e6)
+                     if area_um2 > 0 else None)
     f_max = run.f_max_MHz
     if not f_max:
         check_text, check_color, banner = "no timing model", "muted", None
@@ -245,10 +410,28 @@ def build_context(
                                   "the trained models land."})
 
     # -- charts --------------------------------------------------------------
-    energy_items = _top_n([(c["name"], c["energy_pJ"]) for c in components])
+    # NPU vs DRAM top-level split (user request 2026-08-11): the DRAM device
+    # dominates full-run totals and drowned the per-component donut, so hbm
+    # components get a dedicated two-way bar and are EXCLUDED from the
+    # energy donut/bar list, which then covers the on-chip (NPU) side only.
+    dram_pJ = sum(c["energy_pJ"] for c in components if c["cls"] == "hbm")
+    npu_pJ = run.total_energy_pJ - dram_pJ
+    npu_dram_split = None
+    if dram_pJ > 0:
+        npu_dram_split = {
+            "npu_pJ": npu_pJ, "npu_str": fmt_si(npu_pJ, "pJ"),
+            "npu_pct": round(100.0 * npu_pJ / total_pJ, 1),
+            "dram_pJ": dram_pJ, "dram_str": fmt_si(dram_pJ, "pJ"),
+            "dram_pct": round(100.0 * dram_pJ / total_pJ, 1),
+        }
+    energy_items = _top_n([(c["name"], c["energy_pJ"]) for c in components
+                           if c["cls"] != "hbm"])
     area_items = _top_n([(c["name"], c["area_um2"]) for c in components])
     svg = {
         "split_bar": dyn_leak_bar(run.dyn_energy_pJ, run.leak_energy_pJ),
+        "npu_dram_bar": (share_bar("NPU (on-chip)", npu_pJ, "DRAM", dram_pJ,
+                                   aria="NPU vs DRAM energy share")
+                         if npu_dram_split else ""),
         "energy_donut": donut(energy_items, unit="pJ"),
         "energy_bars": hbar_list(energy_items, unit="pJ"),
         "area_donut": donut(area_items, unit="µm²"),
@@ -285,6 +468,12 @@ def build_context(
             "leak_pct": round(100.0 * run.leak_energy_pJ / total_pJ, 1),
             "avg_power_mW": run.avg_power_mW,
             "avg_power_str": fmt_si(run.avg_power_mW, "mW"),
+            # power over the MODELED area only — no IO/PHY/controllers/
+            # scalar core/whitespace in the denominator (they are out of
+            # scope), so this reads high vs whole-die TDP densities.
+            "power_density_W_per_mm2": power_density,
+            "power_density_str": (f"{power_density:.3g} W/mm²"
+                                  if power_density else None),
             "area_um2": area_um2, "area_mm2": round(area_um2 / 1e6, 3),
             "cycles": total_cycles,
             "exec_time_s": run.exec_time_s,
@@ -299,6 +488,9 @@ def build_context(
         },
         "windows": windows,
         "kernel_split": kernel_split,
+        "dram_breakdown": dram_breakdown,
+        "npu_dram_split": npu_dram_split,
+        "efficiency": efficiency,
         # window/kernel terminology (user decision 2026-07-31): "window" is
         # the core's harness-neutral time-interval term; PyTorchSim-harness
         # runs (window_provenance present) address end users as "kernel"
@@ -310,11 +502,14 @@ def build_context(
         "svg": svg,
         "provenance": {
             "models": [],
-            "model_note": ("Calibrated-model manifest not yet wired: the sram "
-                           "cluster runs trained MLPs (module-local "
-                           "checkpoints), d2dlink is an analytic constant, and "
-                           "the remaining clusters are placeholders until "
-                           "workstream D lands."),
+            "model_note": ("Calibrated-model manifest (checkpoint hashes) not "
+                           "yet wired. Calibrated clusters: sram + the logic "
+                           "v2 MLP quartets (fpadd/fpmul/fpmac/intadd/intmul/"
+                           "intmac/fpsfu/mxfpmac/fifo/regfile/simplemux, "
+                           "wired 2026-08-11); d2dlink and hbm are cited "
+                           "analytic constants; crossbar/fattree/foldedclos "
+                           "stay placeholders until the expanded NoC sweep "
+                           "retrains them."),
             "inputs": input_entries,
             "warnings": list(warnings),
             "notes": list(notes),
