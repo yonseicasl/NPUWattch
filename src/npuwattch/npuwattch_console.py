@@ -95,10 +95,7 @@ def _run_training(args, host: EstimatorHost) -> int:
     print("[INFO] Training completed successfully!")
     return 0
 
-def _run_native_estimator(args, description, *, hierarchy=None,
-                          tree_source: str = "flat native description; "
-                                             "dot-grouped",
-                          announce: bool = True) -> int:
+def _run_native_estimator(args, description) -> int:
     """Direct native path: `-d description.yaml (npuwattch:) [-l activity.csv]` → §6.
 
     The native description is self-contained — technology/PVT and clock come from its
@@ -107,10 +104,6 @@ def _run_native_estimator(args, description, *, hierarchy=None,
     ``aggregate_native`` core the harness path uses. Without ``-l`` the run is a
     **VECTORLESS** estimate: synthetic activity at 25 % of random switching
     (``--vectorless-activity`` overrides; manual §6).
-
-    ``hierarchy`` lets a caller supply an already-built tree — the Accelergy route
-    hands over the hierarchy *declared* in its YAML rather than the one
-    reconstructed from dotted component names.
     """
     from npuwattch.energy import (
         DEFAULT_VECTORLESS_ACTIVITY,
@@ -121,16 +114,15 @@ def _run_native_estimator(args, description, *, hierarchy=None,
         vectorless_activity_rows,
     )
 
-    if announce:
-        print("[INFO] Native NPUWattch description detected (§3.1)")
+    print("[INFO] Native NPUWattch description detected (§3.1)")
 
     if args.tree:
         # The tree is a VIEW: it must never block the run (per-component energy
         # accounting below is what actually matters). Failure → warn, continue.
         try:
             from npuwattch.report import tree_from_native
-            _print_tree(hierarchy if hierarchy is not None
-                        else tree_from_native(description), tree_source)
+            _print_tree(tree_from_native(description),
+                        "flat native description; dot-grouped")
         except Exception as e:
             print(f"[WARNING] --tree: hierarchy view unavailable: {e}")
 
@@ -200,12 +192,12 @@ def _run_native_estimator(args, description, *, hierarchy=None,
                       verbose=args.verbose)
 
     desc_path = Path(args.description_files[0])
-    if hierarchy is None:
-        try:
-            from npuwattch.report import tree_from_native
-            hierarchy = tree_from_native(description)
-        except Exception as e:                   # view only — never fatal
-            naming_warnings.append(f"hierarchy view unavailable: {e}")
+    try:
+        from npuwattch.report import tree_from_native
+        hierarchy = tree_from_native(description)
+    except Exception as e:                       # view only — never fatal
+        hierarchy = None
+        naming_warnings.append(f"hierarchy view unavailable: {e}")
     vectorless = None
     if not args.activity_logs:
         vectorless = (args.vectorless_activity
@@ -226,71 +218,14 @@ def _run_native_estimator(args, description, *, hierarchy=None,
     return 0
 
 
-def _run_accelergy_estimator(args, arch_path: Path) -> int:
-    """`-d architecture.yaml` (Accelergy `architecture:` root) → §6.
-
-    The Timeloop harness converts the description to native §3.1 (its ingest is
-    the only Accelergy-aware step), and the run continues down the same path a
-    native description takes — same provider chain, same window accounting, same
-    ``--report``. This replaced the old flatten+per-component-plugin path on
-    2026-08-12; see ``harness/timeloop/ingest.py`` for what changed and why.
-
-    Technology/PVT come from the CLI flags here, because an Accelergy
-    description has no NPUWattch ``technology:`` block (its per-component
-    ``technology:`` attribute is reported as a disagreement, not obeyed).
-    """
-    from npuwattch.energy import TechContext
-    from npuwattch.harness import HarnessError
-    from npuwattch.harness.timeloop import description_from_accelergy
-
-    print("[INFO] Accelergy/Timeloop description detected — ingesting through "
-          "the 'timeloop' harness, then the native §6 path")
-    tech = TechContext(
-        node=args.node,
-        transistor=args.transistor,
-        corner=args.corner,
-        voltage_offset_V=args.voltage_offset_V,
-        temperature_C=args.temperature_C,
-        clock_mhz=args.clock_mhz,
-    )
-    try:
-        description, warnings, notes = description_from_accelergy(
-            arch_path, tech, default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
-            verbose=args.verbose)
-    except (HarnessError, ValueError) as e:
-        print(f"[ERROR] timeloop harness: {e}")
-        return 1
-    except Exception as e:
-        print(f"[ERROR] timeloop harness: ingest failed: {e}")
-        if args.verbose >= 2:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-    for w in warnings:
-        print(f"[WARNING] {w}")
-    for n in notes:
-        print(f"[INFO] {n}")
-
-    hierarchy = None
-    try:
-        from npuwattch.harness.timeloop.tree import tree_from_accelergy
-        hierarchy = tree_from_accelergy(arch_path)
-    except Exception as e:                       # view only — never fatal
-        print(f"[WARNING] hierarchy view unavailable: {e}")
-
-    return _run_native_estimator(
-        args, description, hierarchy=hierarchy, announce=False,
-        tree_source="declared in the Accelergy description")
-
-
 def _run_estimator(args) -> int:
-    """Run estimator (normal) mode.
+    """Run estimator (normal) mode — the native path only.
 
-    Two description flavors, one core: a native NPUWattch description
-    (``npuwattch:`` root) goes straight to §6; an Accelergy/Timeloop one
-    (``architecture:`` root) is converted to native by the timeloop harness
-    first and then follows the identical path.
+    ``-d`` takes a native NPUWattch description (``npuwattch:`` root, §3.1).
+    An Accelergy/Timeloop description (``architecture:`` root) is a *harness
+    input*: it must go through ``--harness timeloop --arch-yaml`` explicitly
+    (user decision 2026-08-12; the ``-d`` auto-routing shorthand is retired —
+    one spelling per input kind, like every other harness).
     """
     print("[INFO] Starting estimator mode")
     print("=" * 100)
@@ -306,18 +241,23 @@ def _run_estimator(args) -> int:
     if not desc_path.is_file():
         print(f"[ERROR] Description not found: {desc_path}")
         return 1
-    # Flavor detection, not validation. A native description is plain YAML, so
-    # a plain load settles it; an Accelergy one carries `!Container`/`!Component`
-    # tags that only the flattener's loader knows, so a load failure here is a
-    # vote for the Accelergy route rather than an error — that parser is the
-    # authority on its own format and reports its own problems.
+    # A native description is plain YAML with an `npuwattch:` root. Anything
+    # else — an `architecture:` root, or a file that only the Accelergy
+    # flattener's tagged loader (`!Container`/`!Component`) can even parse —
+    # is a timeloop-harness input and is redirected, not routed.
     try:
         content = (load_description_files([desc_path]) or [{}])[0]
     except Exception:
         content = None
     if isinstance(content, dict) and "npuwattch" in content:
         return _run_native_estimator(args, content)
-    return _run_accelergy_estimator(args, desc_path)
+    print(f"[ERROR] Not a native NPUWattch description (no 'npuwattch:' "
+          f"root): {desc_path}")
+    print(f"[ERROR] Accelergy/Timeloop architecture YAMLs go through the "
+          f"timeloop harness explicitly:")
+    print(f"[ERROR]     npuwattch --harness timeloop --arch-yaml {desc_path} "
+          f"[--node ... --clock-mhz ...]")
+    return 1
 
 
 def _run_harness(args) -> int:
@@ -351,13 +291,20 @@ def _run_harness(args) -> int:
                       "config": args.config_yml, "booksim": args.booksim_dir,
                       "energy_table": args.energy_table,
                       "arch": args.arch_yaml}
+    # Options every ingest accepts via **opts. --vectorless-activity is only
+    # forwarded when set — the parser has already rejected it for harnesses
+    # that read real activity (HARNESS_SPEC `synthesizes_activity`).
+    opts = {"default_clock_mhz": DEFAULT_HARNESS_CLOCK_MHZ,
+            "verbose": args.verbose}
+    if args.vectorless_activity is not None:
+        opts["vectorless_activity"] = args.vectorless_activity
     try:
         # Clock precedence: --clock-mhz (in tech) > harness log > 200 MHz fallback.
         emitted = run_harness(
             args.harness,
             {k: v for k, v in harness_inputs.items() if v is not None},
             tech,
-            default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
+            **opts,
         )
     except HarnessError as e:
         print(f"[ERROR] {e}")
@@ -371,7 +318,8 @@ def _run_harness(args) -> int:
 
     if args.tree:
         if emitted.hierarchy is not None:
-            _print_tree(emitted.hierarchy, "reconstructed from the run's model")
+            _print_tree(emitted.hierarchy,
+                        emitted.tree_source or "reconstructed from the run's model")
         else:
             print("[WARNING] --tree: no hierarchy view for this run "
                   "(the emitter's warnings below say why); energy accounting "

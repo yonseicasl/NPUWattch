@@ -1,57 +1,57 @@
 {
- "component": "simplemux",
- "model": "energy",
- "version": "v2",
- "arch": [
-  128,
-  128,
-  128
- ],
- "n_in": 11,
- "features": [
-  "log10_node_nm",
-  "log10_clock_ns",
-  "log2_data_width",
-  "log2_num_inputs",
-  "node_is_5nm",
-  "node_is_7nm",
-  "node_is_10nm",
-  "node_is_16nm",
-  "node_is_20nm",
-  "mode_random",
-  "mode_valid25"
- ],
- "stim_modes": [
-  "random",
-  "valid25"
- ],
- "target": "log10_pJ",
- "target_column": "dyn_energy_pJ",
- "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
- "seed": 42,
- "split": {
-  "train": 304,
-  "val": 38,
-  "test": 38
- },
- "epochs_run": 462,
- "val_mape": 0.06814292818307877,
- "test_mape": 0.06570617599220561,
- "test_spearman": 0.997373892110734,
- "per_mode_test_mape": {
-  "random": 0.07620804683586345,
-  "valid25": 0.055204305148547704
- },
- "per_node_test_mape": {
-  "10nm": 0.09135352804492698,
-  "16nm": 0.05883182768565456,
-  "20nm": 0.05749858657632857,
-  "5nm": 0.07631276547326059,
-  "7nm": 0.05855048571467997
- },
- "excluded_nodes": [],
- "pvt": "TT/25C/nominal only (no PVT axes in v1)",
- "loss_max_min_ratio": 1.0,
- "date": "2026-08-09T21:43:51",
- "torch": "2.13.0+cpu"
+  "component": "simplemux",
+  "model": "energy",
+  "version": "v2",
+  "arch": [
+    128,
+    128,
+    128
+  ],
+  "n_in": 11,
+  "features": [
+    "log10_node_nm",
+    "log10_clock_ns",
+    "log2_data_width",
+    "log2_num_inputs",
+    "node_is_5nm",
+    "node_is_7nm",
+    "node_is_10nm",
+    "node_is_16nm",
+    "node_is_20nm",
+    "mode_random",
+    "mode_valid25"
+  ],
+  "stim_modes": [
+    "random",
+    "valid25"
+  ],
+  "target": "log10_pJ",
+  "target_column": "dyn_energy_pJ",
+  "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+  "seed": 42,
+  "split": {
+    "train": 304,
+    "val": 38,
+    "test": 38
+  },
+  "epochs_run": 462,
+  "val_mape": 0.06814292818307877,
+  "test_mape": 0.06570617599220561,
+  "test_spearman": 0.997373892110734,
+  "per_mode_test_mape": {
+    "random": 0.07620804683586345,
+    "valid25": 0.055204305148547704
+  },
+  "per_node_test_mape": {
+    "10nm": 0.09135352804492698,
+    "16nm": 0.05883182768565456,
+    "20nm": 0.05749858657632857,
+    "5nm": 0.07631276547326059,
+    "7nm": 0.05855048571467997
+  },
+  "excluded_nodes": [],
+  "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
+  "loss_max_min_ratio": 1.0,
+  "date": "2026-08-09T21:43:51",
+  "torch": "2.13.0+cpu"
 }

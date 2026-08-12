@@ -27,6 +27,9 @@ under one root.
             },
         },
         "ingest": callable,              # ({name: Path}, tech, **opts) -> EmittedArch
+        "synthesizes_activity": True,    # optional: no activity reader yet —
+                                         # the run is VECTORLESS and the CLI's
+                                         # --vectorless-activity override applies
     }
 """
 
@@ -57,6 +60,9 @@ class HarnessInfo:
     description: str
     inputs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     ingest: Optional[Callable[..., Any]] = None
+    #: True when the harness has no activity reader and synthesizes vectorless
+    #: activity instead — gates the CLI's --vectorless-activity override.
+    synthesizes_activity: bool = False
 
 
 def _to_info(spec: Dict[str, Any]) -> HarnessInfo:
@@ -74,6 +80,7 @@ def _to_info(spec: Dict[str, Any]) -> HarnessInfo:
         description=spec.get("description", ""),
         inputs={k: dict(v) for k, v in inputs.items()},
         ingest=ingest,
+        synthesizes_activity=bool(spec.get("synthesizes_activity", False)),
     )
 
 

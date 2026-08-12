@@ -74,6 +74,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
         warnings=warnings,
         notes=notes,
         hierarchy=hierarchy,
+        tree_source="declared in the Accelergy description",
         window_labels=["vectorless"],
         vectorless_activity=activity,
     )

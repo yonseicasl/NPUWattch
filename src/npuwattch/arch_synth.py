@@ -22,7 +22,7 @@ The emitter emits the two files the mainline core already reads:
   * a **native architecture description** (manual §3.1, ``npuwattch:`` root) —
     ``build_description`` / ``to_flattened`` (the latter lowers it to the flattened
     ``architecture: {local: [...]}`` form that ``npuwattch_db.build_database``
-    consumes, matching the manual's "auto-detected, converted internally" note);
+    consumes, matching the manual's "converted internally" note);
   * a **windowed activity table** (manual §3.3) — one row per
     (kernel-window × element × stim_mode). The base ``component,event,count``
     columns are exactly §3.3; we add one **optional ``mode`` column** carrying the
@@ -126,6 +126,10 @@ class EmittedArch:
     #: description collapses into counts. Presentation only (CLI --tree, R1
     #: report); the §3.1 description stays flat.
     hierarchy: Optional[Any] = None
+    #: Where ``hierarchy`` came from, for the --tree caption (e.g. "declared in
+    #: the Accelergy description"). ``None`` → the console's generic
+    #: "reconstructed from the run's model".
+    tree_source: Optional[str] = None
     #: Kernel hash per activity window, in window order — provenance for the
     #: per-window energy display (the §3.3 CSV itself carries only indices).
     window_labels: List[str] = field(default_factory=list)

@@ -52,9 +52,12 @@ HARNESS_SPEC = {
             "required": True,
             "kind": "file",
             "hint": "the Accelergy/Timeloop architecture YAML (v0.4, "
-                    "'architecture:' root). `-d <that file>` selects this "
-                    "harness automatically.",
+                    "'architecture:' root) — the only route for such files; "
+                    "-d takes native descriptions only.",
         },
     },
+    # No stats reader yet (workstream A) — activity is synthesized, so the
+    # CLI's --vectorless-activity override applies to this harness.
+    "synthesizes_activity": True,
     "ingest": ingest,
 }

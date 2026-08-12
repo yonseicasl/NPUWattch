@@ -81,9 +81,17 @@ class NPUWattchArgs:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    from npuwattch._version import __version__
+
     parser = NPUWattchArgumentParser(
         prog="npuwattch",
         description="NPUWattch - Neural Processing Unit Power/Area/Timing Estimator",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"npuwattch {__version__}",
     )
 
     # =========================================================================
@@ -130,7 +138,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     estimator_group.add_argument(
         "-d", "--description",
         dest="description_files",
-        help="YAML description file (e.g., architecture_description.yaml).",
+        help="Native NPUWattch description YAML ('npuwattch:' root, §3.1). "
+             "Accelergy/Timeloop architecture YAMLs are a harness input: "
+             "--harness timeloop --arch-yaml <file>.",
     )
 
     estimator_group.add_argument(
@@ -143,9 +153,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--vectorless-activity",
         dest="vectorless_activity",
         type=float,
-        help="-d without -l only: fraction of random switching assumed for the "
-             "VECTORLESS estimate, in (0, 1] (default 0.25; crossbar-family "
-             "primitives use their measured valid25 mode instead).",
+        help="Vectorless runs only (-d without -l, or a harness with no "
+             "activity reader, e.g. --harness timeloop): fraction of random "
+             "switching assumed for the VECTORLESS estimate, in (0, 1] "
+             "(default 0.25; crossbar-family primitives use their measured "
+             "valid25 mode instead).",
     )
     parser.add_argument(
         "--tree",
@@ -215,8 +227,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--arch-yaml",
         dest="arch_yaml",
         help="Timeloop harness: the Accelergy/Timeloop architecture YAML "
-             "(v0.4, 'architecture:' root). Required with --harness timeloop; "
-             "passing such a file to -d selects this harness automatically.",
+             "(v0.4, 'architecture:' root). Required with --harness timeloop — "
+             "the only route for such files; -d takes native descriptions only.",
     )
 
     # Technology / PVT for harness mode. Defaults are nominal — only an explicitly
@@ -319,6 +331,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _harness_synthesizes_activity(name: str) -> bool:
+    """Whether harness ``name`` declares ``synthesizes_activity`` (no activity
+    reader — runs are VECTORLESS, so ``--vectorless-activity`` applies).
+
+    Same fallback contract as ``_check_harness_inputs``: registry import
+    failure or an unknown name → permissive here, ``run_harness`` is the
+    authority downstream.
+    """
+    try:
+        from npuwattch.harness import available_harnesses
+        info = available_harnesses().get(name)
+    except Exception:
+        return True
+    return True if info is None else info.synthesizes_activity
+
+
 def _check_harness_inputs(parser, ns) -> None:
     """Fail early when the selected harness's required inputs are missing.
 
@@ -376,10 +404,16 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
             "--togsim-dir/--gem5-dir/--config-yml/--booksim-dir/--energy-table"
             "/--arch-yaml require --harness")
     if ns.vectorless_activity is not None:
-        if ns.harness or ns.flatten or ns.train or ns.activity_logs:
+        if ns.flatten or ns.train or ns.activity_logs:
             parser.error(
-                "--vectorless-activity applies only to estimator mode with -d "
-                "and WITHOUT -l (it replaces the missing activity log)")
+                "--vectorless-activity applies only to vectorless runs: -d "
+                "WITHOUT -l, or a harness with no activity reader "
+                "(it replaces the missing activity log)")
+        if ns.harness and not _harness_synthesizes_activity(ns.harness):
+            parser.error(
+                f"--vectorless-activity: the {ns.harness!r} harness reads real "
+                f"activity from its logs; the flag applies only to vectorless "
+                f"runs (-d without -l, or --harness timeloop)")
         if not (0.0 < ns.vectorless_activity <= 1.0):
             parser.error(
                 f"--vectorless-activity must be in (0, 1], got {ns.vectorless_activity}")

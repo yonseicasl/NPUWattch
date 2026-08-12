@@ -52,6 +52,9 @@ def _ingest(inputs, tech, **opts):
     from .energy_table import load_energy_table
     from .run_config import load_config_yml
 
+    # Console-level opts other ingests consume; synthesize_run has no use for
+    # them (its output is warnings/notes on EmittedArch, not prints).
+    opts.pop("verbose", None)
     config_path = inputs.get("config")
     base_config = load_config_yml(config_path) if config_path else None
     booksim = inputs.get("booksim")

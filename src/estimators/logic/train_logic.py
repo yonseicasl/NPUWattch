@@ -20,8 +20,13 @@ checkpoints.  Differences:
   each design once).
 
 Outputs (to --out-dir, default = this directory):
-  <component>_<metric>__v1.{pt,scalers.json,loss.json,meta.json}
+  <component>_<metric>__<VERSION>.{pt,scalers.json,loss.json,meta.json}
   eval_report.json
+
+``VERSION`` is ``logic_mlp.VERSION`` (currently ``v2``) — the same constant the
+inference side loads by, so a bump swaps the whole served set at once. Bump it
+whenever the *characterized object* changes (a library fix, re-pipelined RTL, a
+new feature axis), not for a routine retrain on the same data.
 
 Usage:
   python train_logic.py [--components fpmac,intmac,...] [--metrics energy,...]
@@ -594,7 +599,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "per_node_test_mape": ev["per_node"],
                 "excluded_nodes": (sorted(leak_excl)
                                    if metric == "leakage" and leak_excl else []),
-                "pvt": "TT/25C/nominal only (no PVT axes in v1)",
+                "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
                 "loss_max_min_ratio": res.loss_spec["max_min_ratio"],
                 "date": datetime.now().isoformat(timespec="seconds"),
                 "torch": torch.__version__,
