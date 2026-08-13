@@ -12,6 +12,16 @@ are trained on measurements collected through our holistic modeling approach.
 pip install -e .
 ```
 
+## Tutorial
+[`tutorial/`](tutorial/) holds two ready-to-run examples with real simulator data —
+AlexNet on an Eyeriss-like array (Timeloop input) and a 1024³ matmul on a TPUv3-like
+NPU (PyTorchSim input). Each is one command:
+
+```bash
+cd tutorial/timeloop   && ./run
+cd tutorial/pytorchsim && ./run
+```
+
 ## Run
 There are three ways to run NPUWattch, depending on what you have.
 
@@ -28,12 +38,19 @@ npuwattch --harness pytorchsim \
 
 When both folders live under one run root, `./run.sh <run_root> [flags...]` locates them for you.
 
-**2. From an Accelergy/Timeloop architecture YAML.** No activity data is involved yet, so the
-result is an activity-free estimate and is labeled VECTORLESS:
+**2. From an Accelergy/Timeloop architecture YAML.** Add the mapping's stats file
+(or a directory of per-layer stats files) to charge the real access counts Timeloop
+reports; without `--stats` the result is an activity-free estimate labeled VECTORLESS:
 
 ```bash
-npuwattch --harness timeloop --arch-yaml architecture.yaml --node 7nm
+npuwattch --harness timeloop --arch-yaml architecture.yaml \
+          --stats timeloop-model.stats.txt --node 7nm
 ```
+
+Stats level names bind to the description's components by (leaf) name; the optional
+`--stats-map map.yaml` (`levels:` renames, `ignore:` deliberate drops) covers the
+rest. A directory of per-layer stats becomes one report window per layer
+(`--stats-mode aggregate` sums them instead).
 
 **3. From NPUWattch's own files.** A native description, plus an optional activity CSV:
 
@@ -45,6 +62,10 @@ Useful flags:
 - `--report DIR` writes `report.html` + `report.json`; `--tree` shows how the run was interpreted.
 - Technology and operating point (harness modes only — a native description carries its own):
   `--node`, `--transistor`, `--corner`, `--voltage-offset`, `--temperature`, `--clock-mhz`.
+- The node axis is continuous: characterized nodes (5/7/10/16/20nm) answer directly,
+  anything between is log-interpolated, up to ±50% beyond the range (2.5–30nm) is
+  extrapolated with a WARNING, and anything outside that envelope is clamped to it with a
+  WARNING on the CLI and in the report.
 - PyTorchSim extras: `--config-yml`, `--booksim-dir` (anynet NoC runs), `--energy-table`
   (DRAM cost table, e.g. `hbm2.yml`).
 - Any run without activity data falls back to a vectorless estimate (25% of random switching,

@@ -60,6 +60,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 ESTIMATOR_SPEC = {
     "primitive": "sram",
+    # Characterized nodes (must mirror the sram_array/sram_decoder datasets) —
+    # the anchor set energy.node_scaling interpolates the CLI node axis over.
+    "nodes": ["5nm", "7nm", "10nm", "16nm", "20nm"],
     "version": "1.0",
     "description": (
         "Calibrated SRAM macro estimator: tiled single-array banks with "

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import npuwattch.npuwattch_messages as msg
+import npuwattch.npuwattch_tables as tbl
 from npuwattch.npuwattch_parser import (
     parse_args,
     load_description_files,
@@ -42,9 +43,9 @@ def _print_tree(root, source: str) -> None:
     from npuwattch.report import render_text
 
     print(f"[INFO] Instance hierarchy ({source}):")
-    print("-" * 100)
+    print(tbl.rule("-"))
     print(render_text(root))
-    print("-" * 100)
+    print(tbl.rule("-"))
 
 
 #: Where each estimator's real trainer lives. The plugin `train_*` entrypoints
@@ -94,6 +95,27 @@ def _run_training(args, host: EstimatorHost) -> int:
 
     print("[INFO] Training completed successfully!")
     return 0
+
+def _resolve_tech_node(chain, tech):
+    """Continuous-node resolution (manual §6.2): wrap the provider chain so any
+    parseable node is served over the characterized anchors.
+
+    Interpolation inside the characterized range is an INFO note (printed
+    here); extrapolation and envelope clamping are WARNINGs — printed here AND
+    handed to the report by the caller (``NodeResolution.warnings``), per the
+    2026-08-13 decision. Raises ``ValueError`` for an unparseable node — the
+    callers turn that into a clean CLI error.
+    """
+    from npuwattch.energy import apply_node_scaling
+
+    chain, resolution = apply_node_scaling(chain, tech)
+    if resolution is not None:
+        for note in resolution.notes:
+            print(f"[INFO] {note}")
+        for warning in resolution.warnings:
+            print(f"[WARNING] {warning}")
+    return chain, resolution
+
 
 def _run_native_estimator(args, description) -> int:
     """Direct native path: `-d description.yaml (npuwattch:) [-l activity.csv]` → §6.
@@ -168,11 +190,15 @@ def _run_native_estimator(args, description) -> int:
     naming_warnings: List[str] = []
     try:
         chain = build_provider(verbose=args.verbose)
+        chain, node_res = _resolve_tech_node(chain, tech)
         run_energy = aggregate_native(
             description, rows, chain.provider, tech,
             default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
             warnings=naming_warnings,
         )
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return 1
     except Exception as e:
         print(f"[ERROR] Energy aggregation failed: {e}")
         if args.verbose >= 2:
@@ -209,11 +235,13 @@ def _run_native_estimator(args, description) -> int:
         inputs.append((act_path.name, act_path))
     _maybe_write_report(
         args, run=run_energy, description=description, tech=tech, chain=chain,
-        rows=rows, hierarchy=hierarchy, warnings=naming_warnings,
+        rows=rows, hierarchy=hierarchy,
+        warnings=[*naming_warnings,
+                  *(node_res.warnings if node_res is not None else ())],
         design_name=desc_path.stem,
         activity_source=(str(args.activity_logs[0]) if args.activity_logs
                          else f"vectorless default ({vectorless:.0%} of random)"),
-        vectorless=vectorless, inputs=inputs,
+        vectorless=vectorless, inputs=inputs, node_resolution=node_res,
     )
     return 0
 
@@ -228,7 +256,7 @@ def _run_estimator(args) -> int:
     one spelling per input kind, like every other harness).
     """
     print("[INFO] Starting estimator mode")
-    print("=" * 100)
+    print(tbl.rule("="))
 
     if not args.description_files:
         print("[ERROR] Estimator mode requires -d/--description")
@@ -272,7 +300,7 @@ def _run_harness(args) -> int:
     from npuwattch.harness import HarnessError, run_harness
 
     print(f"[INFO] Harness mode: {args.harness}")
-    print("=" * 100)
+    print(tbl.rule("="))
 
     tech = TechContext(
         node=args.node,
@@ -290,14 +318,20 @@ def _run_harness(args) -> int:
     harness_inputs = {"togsim": args.togsim_dir, "gem5": args.gem5_dir,
                       "config": args.config_yml, "booksim": args.booksim_dir,
                       "energy_table": args.energy_table,
-                      "arch": args.arch_yaml}
+                      "arch": args.arch_yaml,
+                      "stats": args.timeloop_stats,
+                      "stats_map": args.stats_map}
     # Options every ingest accepts via **opts. --vectorless-activity is only
     # forwarded when set — the parser has already rejected it for harnesses
-    # that read real activity (HARNESS_SPEC `synthesizes_activity`).
+    # that read real activity (HARNESS_SPEC `synthesizes_activity`) and for
+    # --stats runs. --stats-mode only reaches the timeloop harness: the parser
+    # ties it to --stats, and the registry rejects `stats` for anyone else.
     opts = {"default_clock_mhz": DEFAULT_HARNESS_CLOCK_MHZ,
             "verbose": args.verbose}
     if args.vectorless_activity is not None:
         opts["vectorless_activity"] = args.vectorless_activity
+    if args.stats_mode is not None:
+        opts["stats_mode"] = args.stats_mode
     try:
         # Clock precedence: --clock-mhz (in tech) > harness log > 200 MHz fallback.
         emitted = run_harness(
@@ -355,6 +389,11 @@ def _run_harness(args) -> int:
     # §6: aggregate the native activity into energy through the core path, using
     # whatever calibrated estimators exist over a placeholder base (today: sram).
     chain = build_provider(verbose=args.verbose)
+    try:
+        chain, node_res = _resolve_tech_node(chain, tech)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return 1
     run_energy = aggregate_native(
         emitted.description, emitted.activity_rows, chain.provider, tech,
         default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
@@ -371,19 +410,26 @@ def _run_harness(args) -> int:
 
     run_root = Path(args.togsim_dir).resolve().parent if args.togsim_dir else None
     # Provenance: every named input the user actually passed, directories by
-    # label and files by path (the report embeds file inputs).
+    # label and files by path (the report embeds file inputs; --stats may name
+    # a directory of per-layer stats, which stays a label).
+    _file_inputs = ("arch", "config", "energy_table", "stats", "stats_map")
     inputs = [(f"{name}: {value}", None)
               for name, value in harness_inputs.items()
-              if value is not None and name not in ("config", "energy_table",
-                                                    "arch")]
-    for name in ("arch", "config", "energy_table"):
+              if value is not None and name not in _file_inputs]
+    for name in _file_inputs:
         value = harness_inputs.get(name)
         if value:
-            inputs.append((Path(value).name, Path(value)))
+            path = Path(value)
+            if path.is_file():
+                inputs.append((path.name, path))
+            else:
+                inputs.append((f"{name}: {value}", None))
     _maybe_write_report(
         args, run=run_energy, description=emitted.description, tech=tech,
         chain=chain, rows=emitted.activity_rows, hierarchy=emitted.hierarchy,
-        warnings=emitted.warnings, notes=emitted.notes,
+        warnings=[*emitted.warnings,
+                  *(node_res.warnings if node_res is not None else ())],
+        notes=emitted.notes, node_resolution=node_res,
         design_name=(run_root.name if run_root is not None
                      else (Path(args.arch_yaml).stem if args.arch_yaml
                            else args.harness)),
@@ -400,7 +446,7 @@ def _run_harness(args) -> int:
 def _maybe_write_report(args, *, run, description, tech, chain, rows,
                         hierarchy, warnings, design_name, activity_source,
                         vectorless=None, inputs=(), notes=(),
-                        window_provenance=()) -> None:
+                        window_provenance=(), node_resolution=None) -> None:
     """Write report.html + report.json when ``--report DIR`` was given.
 
     Report generation is presentation: a failure here warns and leaves the
@@ -416,6 +462,7 @@ def _maybe_write_report(args, *, run, description, tech, chain, rows,
             activity_source=activity_source, chain=chain, hierarchy=hierarchy,
             warnings=warnings, notes=notes, activity_rows=rows, inputs=inputs,
             vectorless=vectorless, window_provenance=window_provenance,
+            node_resolution=node_resolution,
         )
         html_path, json_path = write_report(ctx, args.report_dir)
         print(f"[INFO] Wrote report:      {html_path}")
@@ -453,18 +500,26 @@ def _print_window_energy(run, verbose: int = 0,
     if window_provenance:
         kinds = {p["window"]: p["kind"] for p in window_provenance}
     term = "kernel" if window_provenance else "window"
-    kcol = 9 if kinds else 0
-    print("\n" + "=" * 100)
+    print("\n" + tbl.rule("="))
     print(f"[INFO] Per-{term} energy ({n} {term}{'s' if n != 1 else ''})")
-    print("-" * 100)
-    khdr = f"{'kind':<{kcol}}" if kinds else ""
-    print(f"{'#':<8}{'kernel':<15}{khdr}{'cycles':>10}{'dyn (pJ)':>16}"
-          f"{'leak (pJ)':>16}{'total (pJ)':>16}{'avg power (mW)':>17}")
+
+    table = tbl.make_table()
+    cols = [("#", "right"), (term, "left")]
+    if kinds:
+        cols.append(("kind", "left"))
+    cols += [("cycles", "right"), ("dyn (pJ)", "right"), ("leak (pJ)", "right"),
+             ("total (pJ)", "right"), ("avg power (mW)", "right")]
+    tbl.add_columns(table, cols)
     for i, w in enumerate(run.windows):
-        kcell = f"{kinds.get(i, '?'):<{kcol}}" if kinds else ""
-        print(f"{i:<8}{w.kernel_hash:<15}{kcell}{w.exec_cycles:>10}"
-              f"{w.dyn_energy_pJ:>16.4g}{w.leak_energy_pJ:>16.4g}"
-              f"{w.total_energy_pJ:>16.4g}{w.avg_power_mW:>17.4g}")
+        row = [str(i), w.kernel_hash]
+        if kinds:
+            row.append(kinds.get(i, "?"))
+        row += [f"{w.exec_cycles}", f"{w.dyn_energy_pJ:.4g}",
+                f"{w.leak_energy_pJ:.4g}", f"{w.total_energy_pJ:.4g}",
+                f"{w.avg_power_mW:.4g}"]
+        table.add_row(*row)
+    tbl.print_table(table)
+
     if kinds and any(k == "non_mac" for k in kinds.values()):
         mac_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
                       if kinds.get(i) != "non_mac")
@@ -473,11 +528,9 @@ def _print_window_energy(run, verbose: int = 0,
         total = mac_tot + non_tot
         pct = (100.0 * non_tot / total) if total else 0.0
         n_non = sum(1 for k in kinds.values() if k == "non_mac")
-        print("-" * 100)
         print(f"[INFO] GEMM kernels (mac/fused): {mac_tot:.4g} pJ "
               f"({n - n_non} window(s)); non-GEMM kernels: {non_tot:.4g} pJ "
               f"({n_non} window(s), {pct:.1f}% of total)")
-    print("-" * 100)
     _print_window_component_matrix(run, term=term)
 
 
@@ -494,27 +547,36 @@ def _print_window_component_matrix(run, term: str = "window") -> None:
               if any(w.components[name].dyn_energy_pJ for w in run.windows)]
     if not active:
         return
-    name_w, col_w = 28, 12
-    per_chunk = max(1, (100 - name_w) // col_w)
     print(f"[INFO] Per-{term} component energy (dynamic, pJ)")
-    print("-" * 100)
+
+    short, prefix = tbl.strip_common_prefix(active)
+    cells = {
+        name: [f"{w.components[name].dyn_energy_pJ:.4g}"
+               if w.components[name].dyn_energy_pJ else "-"
+               for w in run.windows]
+        for name in active
+    }
+    # Chunk the window columns so each group fits the console; widths come from
+    # the data, so a long name widens its column instead of shifting the row.
+    name_w = max([len("component")] + [len(s) for s in short])
+    col_w = max([len(w.kernel_hash) for w in run.windows]
+                + [len(c) for row in cells.values() for c in row])
+    per_chunk = tbl.column_capacity(name_w, col_w)
+
+    if prefix:
+        print(tbl.note(f"component names relative to '{prefix}'"))
     for start in range(0, len(run.windows), per_chunk):
-        chunk = run.windows[start:start + per_chunk]
-        header = "".join(f"{w.kernel_hash[:11]:>{col_w}}" for w in chunk)
-        print(f"{'component':<{name_w}}{header}")
-        for name in active:
-            cells = "".join(
-                f"{w.components[name].dyn_energy_pJ:>{col_w}.4g}"
-                if w.components[name].dyn_energy_pJ else f"{'-':>{col_w}}"
-                for w in chunk)
-            print(f"{name:<{name_w}}{cells}")
-        if start + per_chunk < len(run.windows):
-            print()
+        chunk = list(enumerate(run.windows))[start:start + per_chunk]
+        table = tbl.make_table()
+        tbl.add_columns(table, [("component", "left")]
+                        + [(w.kernel_hash, "right") for _, w in chunk])
+        for name, label in zip(active, short):
+            table.add_row(label, *[cells[name][i] for i, _ in chunk])
+        tbl.print_table(table)
     idle = len(all_names) - len(active)
     if idle:
         print(f"({idle} component(s) with no dynamic activity omitted — "
               f"leakage in the summary below)")
-    print("-" * 100)
 
 
 def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
@@ -562,17 +624,24 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
     else:
         tag = "FIRST-ORDER (uncalibrated placeholder)"
 
-    print("\n" + "=" * 100)
+    print("\n" + tbl.rule("="))
     if extra_tag:
         tag = f"{extra_tag} — {tag}"
     print(f"[INFO] Energy summary — {tag}")
-    print("-" * 100)
-    print(f"{'component':<26}{'model':>7}{'instances':>11}"
-          f"{'dyn (pJ)':>18}{'leak (pJ)':>18}{'area (um2)':>16}")
-    for name, (prim, inst, dyn, leak, area) in per_comp.items():
+
+    short, prefix = tbl.strip_common_prefix(list(per_comp))
+    if prefix:
+        print(tbl.note(f"component names relative to '{prefix}'"))
+    table = tbl.make_table()
+    tbl.add_columns(table, [("component", "left"), ("model", "right"),
+                            ("instances", "right"), ("dyn (pJ)", "right"),
+                            ("leak (pJ)", "right"), ("area (um2)", "right")])
+    for label, (prim, inst, dyn, leak, area) in zip(short, per_comp.values()):
         mark = ("cal" if prim in calibrated_prims
                 else "const" if prim in constant_prims else "stub")
-        print(f"{name:<26}{mark:>7}{inst:>11}{dyn:>18.4g}{leak:>18.4g}{area:>16.4g}")
+        table.add_row(label, mark, f"{inst}", f"{dyn:.4g}", f"{leak:.4g}",
+                      f"{area:.4g}")
+    tbl.print_table(table)
 
     # DRAM device command breakdown (per-mode §6 split): the authors'
     # verification vocabulary is activation vs transfer; refresh is
@@ -589,13 +658,13 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
     ref = dram_modes.get("refresh", 0.0)
     dram_tot = act + rd + wr + ref
     if dram_tot > 0:
-        print("-" * 100)
+        print(tbl.rule("-"))
         print(f"[INFO] DRAM device energy ({', '.join(dram_names)}): "
               f"activation {act:.4g} pJ ({100 * act / dram_tot:.1f}%) + "
               f"transfer {rd + wr:.4g} pJ ({100 * (rd + wr) / dram_tot:.1f}%; "
               f"read {rd:.4g} + write {wr:.4g}) + "
               f"refresh {ref:.4g} pJ ({100 * ref / dram_tot:.1f}%)")
-    print("-" * 100)
+    print(tbl.rule("-"))
     print(f"total energy = {run.total_energy_pJ:.4g} pJ "
           f"(dyn {run.dyn_energy_pJ:.4g} + leak {run.leak_energy_pJ:.4g}); "
           f"avg power = {run.avg_power_mW:.4g} mW; exec = {run.exec_time_s:.4g} s")
@@ -603,7 +672,7 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
         print(f"calibrated primitives available: {', '.join(calibrated_prims)}")
     for note in getattr(chain, "notes", ()) or ():
         print(f"[WARNING] {note}")
-    print("=" * 100)
+    print(tbl.rule("="))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

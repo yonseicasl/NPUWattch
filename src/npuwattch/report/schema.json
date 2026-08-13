@@ -19,7 +19,10 @@
         "transistor": {"type": "string"},
         "corner": {"type": "string"},
         "voltage_offset_V": {"type": "number"},
-        "temperature_C": {"type": "number"}
+        "temperature_C": {"type": "number"},
+        "node_scaling": {"enum": ["interpolated", "extrapolated", "clamped"]},
+        "node_evaluated_nm": {"type": "number"},
+        "node_anchors": {"type": "array", "items": {"type": "string"}}
       }
     },
     "clock": {

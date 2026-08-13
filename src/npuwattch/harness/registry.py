@@ -22,7 +22,8 @@ under one root.
             "<name>": {
                 "flag": "--togsim-dir",  # the CLI spelling (documentation)
                 "required": True,
-                "kind": "dir",           # "dir" (default) | "file"
+                "kind": "dir",           # "dir" (default) | "file" | "path"
+                                         # ("path" = file OR directory)
                 "hint": "...",           # shown in --help / error messages
             },
         },
@@ -137,11 +138,16 @@ def _validate_inputs(
             continue
         path = Path(value)
         kind = decl.get("kind", "dir")
-        ok = path.is_file() if kind == "file" else path.is_dir()
+        if kind == "file":
+            ok, expected = path.is_file(), "file"
+        elif kind == "path":
+            ok, expected = path.exists(), "file or directory"
+        else:
+            ok, expected = path.is_dir(), "directory"
         if not ok:
             raise HarnessError(
                 f"harness {info.name!r}: input {iname!r} is not a "
-                f"{'file' if kind == 'file' else 'directory'}: {path}"
+                f"{expected}: {path}"
             )
         resolved[iname] = path
     return resolved

@@ -42,6 +42,10 @@ Model inputs the description does not carry:
   VERSION and re-adds the axes).
 - ``node`` must be one of the characterized nodes (5/7/10/16/20 nm) — anything
   else raises rather than extrapolating a one-hot the models cannot express.
+  The continuous node axis lives ABOVE this estimator:
+  ``npuwattch.energy.node_scaling`` queries the bracketing characterized nodes
+  and log-log combines the predictions (manual §6.2), so this layer only ever
+  sees anchor nodes.
 
 This module is loaded by ``EstimatorHost`` via runpy, so it imports its
 sibling ``logic_mlp.py`` (and torch, transitively) lazily by file path —
@@ -72,6 +76,9 @@ ESTIMATOR_SPEC = {
     "primitives": ["fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac",
                    "fpsfu", "mxfpmac", "fifo", "regfile", "simplemux",
                    "crossbar", "fattree", "foldedclos"],
+    # Characterized nodes (must mirror logic_mlp.NODE_LIST) — the anchor set
+    # energy.node_scaling interpolates the continuous CLI node axis over.
+    "nodes": ["5nm", "7nm", "10nm", "16nm", "20nm"],
     "version": "2.2",
     "description": (
         "Calibrated logic-primitive estimator: post-layout-trained v2 MLP "

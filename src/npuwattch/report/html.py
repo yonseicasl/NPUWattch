@@ -187,6 +187,7 @@ def build_context(
     inputs: Sequence[Tuple[str, Optional[Path]]] = (),
     vectorless: Optional[float] = None,         # activity fraction when defaulted
     window_provenance: Sequence[Mapping[str, Any]] = (),  # harness per-kernel records
+    node_resolution: Any = None,                # energy.NodeResolution (or None)
 ) -> Dict[str, Any]:
     """One plain-data dict driving both ``report.html`` and ``report.json``."""
     from .tree import to_dict as tree_to_dict
@@ -455,6 +456,14 @@ def build_context(
             "corner": tech.corner,
             "voltage_offset_V": tech.voltage_offset_V,
             "temperature_C": tech.temperature_C,
+            # Continuous-node resolution (§6.2): how the requested node was
+            # served over the characterized anchors. "exact" runs omit the
+            # evaluated field — the node was a characterized one.
+            **({} if node_resolution is None or node_resolution.kind == "exact"
+               else {"node_scaling": node_resolution.kind,
+                     "node_evaluated_nm": node_resolution.eval_nm,
+                     "node_anchors": [node_resolution.lo,
+                                      node_resolution.hi]}),
         },
         "clock": {"frequency_MHz": clock},
         "activity_source": activity_source,

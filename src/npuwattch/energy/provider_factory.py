@@ -36,6 +36,11 @@ class ProviderChain:
     #: calibrated nor placeholder; labeled distinctly so reports stay honest.
     constant_primitives: Tuple[str, ...] = ()
     notes: Tuple[str, ...] = ()
+    #: Characterized technology nodes every calibrated estimator in the chain
+    #: serves (intersection of the ESTIMATOR_SPEC ``nodes`` declarations) —
+    #: the anchor set ``node_scaling`` interpolates the continuous node axis
+    #: over. Empty when no calibrated estimator declares its nodes.
+    characterized_nodes: Tuple[str, ...] = ()
 
     def is_calibrated(self, primitive: str) -> bool:
         return primitive in self.calibrated_primitives
@@ -67,6 +72,7 @@ def build_provider(
     provider = HBMCostProvider(fallback=provider)
     calibrated: List[str] = []
     notes: List[str] = []
+    node_sets: List[Tuple[str, ...]] = []
 
     for name in sorted(host.list_modules()):
         spec = host.get_spec(name) or {}
@@ -90,10 +96,22 @@ def build_provider(
             calibrated.extend(str(p) for p in prims)
         else:
             calibrated.append(str(spec.get("primitive", name)))
+        if spec.get("nodes"):
+            node_sets.append(tuple(str(n) for n in spec["nodes"]))
+
+    # The continuous node axis (node_scaling) can only anchor on nodes EVERY
+    # calibrated estimator serves — intersect the declarations.
+    characterized: Tuple[str, ...] = ()
+    if node_sets:
+        common = set(node_sets[0]).intersection(*node_sets[1:])
+        from .node_scaling import parse_node_nm
+
+        characterized = tuple(sorted(common, key=parse_node_nm))
 
     return ProviderChain(
         provider=provider,
         calibrated_primitives=tuple(calibrated),
         constant_primitives=("d2dlink", "hbm"),
         notes=tuple(notes),
+        characterized_nodes=characterized,
     )

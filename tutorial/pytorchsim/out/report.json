@@ -1,0 +1,781 @@
+{
+ "schema": "npuwattch-report/1",
+ "design_name": "pytorchsim",
+ "timestamp": "2026-08-13 19:59:08",
+ "version": "0.9",
+ "git_commit": "n/a",
+ "tech": {
+  "node": "7nm",
+  "transistor": "hp",
+  "corner": "TT",
+  "voltage_offset_V": 0.0,
+  "temperature_C": 25.0
+ },
+ "clock": {
+  "frequency_MHz": 940.0
+ },
+ "activity_source": "pytorchsim harness (simulator logs)",
+ "model_tag": "PARTIAL calibration",
+ "banners": [
+  {
+   "level": "warn",
+   "text": "Configured clock (940 MHz) is within 20% of the estimated f_max (992 MHz)."
+  }
+ ],
+ "totals": {
+  "energy_pJ": 6130993233.07683,
+  "energy_str": "6.13e+03 \u00b5J",
+  "dyn_pJ": 6116317530.000763,
+  "dyn_str": "6.12e+03 \u00b5J",
+  "leak_pJ": 14675703.076066498,
+  "leak_str": "14.7 \u00b5J",
+  "dyn_pct": 99.8,
+  "leak_pct": 0.2,
+  "avg_power_mW": 110782.62348799009,
+  "avg_power_str": "111 W",
+  "power_density_W_per_mm2": 1.2482840633053847,
+  "power_density_str": "1.25 W/mm\u00b2",
+  "area_um2": 88747927.45061894,
+  "area_mm2": 88.748,
+  "cycles": 52022,
+  "exec_time_s": 5.534255319148936e-05,
+  "exec_time_str": "55.3 \u00b5s"
+ },
+ "timing": {
+  "f_max_MHz": 991.998833188251,
+  "f_max_str": "992 MHz",
+  "check_text": "tight \u2014 95% of f_max",
+  "check_color": "warn-ink"
+ },
+ "windows": [
+  {
+   "index": 0,
+   "label": "fqywo6ndalo",
+   "kind": "fused",
+   "cycles": 52022,
+   "dyn_pJ": 6116317530.000763,
+   "dyn_str": "6.12e+03 \u00b5J",
+   "leak_pJ": 14675703.076066498,
+   "leak_str": "14.7 \u00b5J",
+   "total_pJ": 6130993233.07683,
+   "total_str": "6.13e+03 \u00b5J",
+   "avg_power_mW": 110782.62348799009,
+   "power_str": "111 W"
+  }
+ ],
+ "kernel_split": null,
+ "dram_breakdown": {
+  "components": [
+   "dram_chan"
+  ],
+  "rows": [
+   {
+    "mode": "activate",
+    "label": "Row activation (ACT+PRE)",
+    "energy_pJ": 108133731.0,
+    "energy_str": "108 \u00b5J",
+    "pct": 22.3
+   },
+   {
+    "mode": "read",
+    "label": "Transfer \u2014 read",
+    "energy_pJ": 233538846.72,
+    "energy_str": "234 \u00b5J",
+    "pct": 48.2
+   },
+   {
+    "mode": "write",
+    "label": "Transfer \u2014 write",
+    "energy_pJ": 116769423.36,
+    "energy_str": "117 \u00b5J",
+    "pct": 24.1
+   },
+   {
+    "mode": "refresh",
+    "label": "Refresh",
+    "energy_pJ": 26062848.0,
+    "energy_str": "26.1 \u00b5J",
+    "pct": 5.4
+   }
+  ],
+  "total_pJ": 484504849.08000004,
+  "total_str": "485 \u00b5J",
+  "share_of_run_pct": 7.9,
+  "constants": {
+   "act_pJ": 909,
+   "access_pJ_per_bit": 3.48,
+   "ref_pJ": 58176,
+   "data_width_bits": 256
+  }
+ },
+ "npu_dram_split": {
+  "npu_pJ": 5646488383.99683,
+  "npu_str": "5.65e+03 \u00b5J",
+  "npu_pct": 92.1,
+  "dram_pJ": 484504849.08000004,
+  "dram_str": "485 \u00b5J",
+  "dram_pct": 7.9
+ },
+ "efficiency": {
+  "mac_ops": 1073881472.0,
+  "pJ_per_mac": 5.709189880758861,
+  "pJ_per_flop": 2.8545949403794304,
+  "pJ_per_flop_str": "2.85 pJ/FLOP",
+  "tflops": 38.808526534158624,
+  "tflops_str": "38.8",
+  "dtype": "fp32",
+  "fp32_equivalent": {
+   "pJ_per_flop": 2.8545949403794304,
+   "pJ_per_flop_str": "2.85 pJ/FLOP",
+   "factor": 1.0
+  }
+ },
+ "window_term": "kernel",
+ "matrix": {
+  "rows": [
+   {
+    "name": "core0.array0.pe",
+    "cells": [
+     "2.71e+03 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.array0.w_reg",
+    "cells": [
+     "76.7 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.array1.pe",
+    "cells": [
+     "2.71e+03 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.array1.w_reg",
+    "cells": [
+     "76.7 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.vmem",
+    "cells": [
+     "11.1 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.vpu_spad",
+    "cells": [
+     "15.1 nJ"
+    ]
+   },
+   {
+    "name": "core0.vrf",
+    "cells": [
+     "13.2 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.vfu",
+    "cells": [
+     "872 nJ"
+    ]
+   },
+   {
+    "name": "core0.dma_q",
+    "cells": [
+     "8.34 \u00b5J"
+    ]
+   },
+   {
+    "name": "core0.dma_addr",
+    "cells": [
+     "503 nJ"
+    ]
+   },
+   {
+    "name": "icnt_xbar",
+    "cells": [
+     "1.35 \u00b5J"
+    ]
+   },
+   {
+    "name": "icnt_buf",
+    "cells": [
+     "17.3 \u00b5J"
+    ]
+   },
+   {
+    "name": "dram_chan",
+    "cells": [
+     "485 \u00b5J"
+    ]
+   }
+  ]
+ },
+ "components": [
+  {
+   "name": "core0.array0.pe",
+   "cls": "fpmac",
+   "dyn_by_mode": {
+    "hold_b": 2712900852.722433,
+    "idle": 1304.1012181929011
+   },
+   "model": "cal",
+   "count": 16384,
+   "dyn_energy_pJ": 2712902156.8236513,
+   "dyn_str": "2.71e+03 \u00b5J",
+   "leak_energy_pJ": 2152783.2885383354,
+   "leak_str": "2.15 \u00b5J",
+   "energy_pJ": 2715054940.11219,
+   "energy_str": "2.72e+03 \u00b5J",
+   "energy_pct": 44.3,
+   "unit_energy_str": "5.05",
+   "leak_power_mW": 38.89924053719648,
+   "unit_leak_power_mW": 0.002374221224194121,
+   "leak_power_str": "0.00237",
+   "area_um2": 7919659.935305986,
+   "unit_area_um2": 483.3776815982657,
+   "area_str": "483",
+   "crit_path_ns": 0.37589093960664266,
+   "crit_path_str": "0.376",
+   "activity_events": 536871936.0,
+   "activity_str": "5.37e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.array0.w_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "idle": 76698732.55166408,
+    "write": 207.47520942576122
+   },
+   "model": "cal",
+   "count": 16384,
+   "dyn_energy_pJ": 76698940.02687351,
+   "dyn_str": "76.7 \u00b5J",
+   "leak_energy_pJ": 119994.22464164118,
+   "leak_str": "120 nJ",
+   "energy_pJ": 76818934.25151515,
+   "energy_str": "76.8 \u00b5J",
+   "energy_pct": 1.3,
+   "unit_energy_str": "0.203",
+   "leak_power_mW": 2.168209049308806,
+   "unit_leak_power_mW": 0.00013233697810722693,
+   "leak_power_str": "0.000132",
+   "area_um2": 252767.4487027886,
+   "unit_area_um2": 15.427700726488562,
+   "area_str": "15.4",
+   "crit_path_ns": 0.5018715503252688,
+   "crit_path_str": "0.502",
+   "activity_events": 536871936.0,
+   "activity_str": "5.37e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.array1.pe",
+   "cls": "fpmac",
+   "dyn_by_mode": {
+    "hold_b": 2712900852.722433,
+    "idle": 1304.1012181929011
+   },
+   "model": "cal",
+   "count": 16384,
+   "dyn_energy_pJ": 2712902156.8236513,
+   "dyn_str": "2.71e+03 \u00b5J",
+   "leak_energy_pJ": 2152783.2885383354,
+   "leak_str": "2.15 \u00b5J",
+   "energy_pJ": 2715054940.11219,
+   "energy_str": "2.72e+03 \u00b5J",
+   "energy_pct": 44.3,
+   "unit_energy_str": "5.05",
+   "leak_power_mW": 38.89924053719648,
+   "unit_leak_power_mW": 0.002374221224194121,
+   "leak_power_str": "0.00237",
+   "area_um2": 7919659.935305986,
+   "unit_area_um2": 483.3776815982657,
+   "area_str": "483",
+   "crit_path_ns": 0.37589093960664266,
+   "crit_path_str": "0.376",
+   "activity_events": 536871936.0,
+   "activity_str": "5.37e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.array1.w_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "idle": 76698732.55166408,
+    "write": 207.47520942576122
+   },
+   "model": "cal",
+   "count": 16384,
+   "dyn_energy_pJ": 76698940.02687351,
+   "dyn_str": "76.7 \u00b5J",
+   "leak_energy_pJ": 119994.22464164118,
+   "leak_str": "120 nJ",
+   "energy_pJ": 76818934.25151515,
+   "energy_str": "76.8 \u00b5J",
+   "energy_pct": 1.3,
+   "unit_energy_str": "0.203",
+   "leak_power_mW": 2.168209049308806,
+   "unit_leak_power_mW": 0.00013233697810722693,
+   "leak_power_str": "0.000132",
+   "area_um2": 252767.4487027886,
+   "unit_area_um2": 15.427700726488562,
+   "area_str": "15.4",
+   "crit_path_ns": 0.5018715503252688,
+   "crit_path_str": "0.502",
+   "activity_events": 536871936.0,
+   "activity_str": "5.37e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.vmem",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "write": 7532753.286302269,
+    "read": 3535652.7017165446
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 11068405.988018814,
+   "dyn_str": "11.1 \u00b5J",
+   "leak_energy_pJ": 4887297.890541488,
+   "leak_str": "4.89 \u00b5J",
+   "energy_pJ": 15955703.878560303,
+   "energy_str": "16 \u00b5J",
+   "energy_pct": 0.3,
+   "unit_energy_str": "13.5 / 14.4",
+   "leak_power_mW": 88.30994612104493,
+   "unit_leak_power_mW": 88.30994612104493,
+   "leak_power_str": "88.3",
+   "area_um2": 35553578.55216344,
+   "unit_area_um2": 35553578.55216344,
+   "area_str": "3.56e+07",
+   "crit_path_ns": 0.36769766474747073,
+   "crit_path_str": "0.368",
+   "activity_events": 786432.0,
+   "activity_str": "7.86e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.vpu_spad",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "read": 7121.375204621238,
+    "write": 8022.640600850105
+   },
+   "model": "cal",
+   "count": 128,
+   "dyn_energy_pJ": 15144.015805471343,
+   "dyn_str": "15.1 nJ",
+   "leak_energy_pJ": 4887297.890541488,
+   "leak_str": "4.89 \u00b5J",
+   "energy_pJ": 4902441.90634696,
+   "energy_str": "4.9 \u00b5J",
+   "energy_pct": 0.1,
+   "unit_energy_str": "6.95 / 7.83",
+   "leak_power_mW": 88.30994612104493,
+   "unit_leak_power_mW": 0.6899214540706635,
+   "leak_power_str": "0.69",
+   "area_um2": 35553578.55216344,
+   "unit_area_um2": 277762.33243877685,
+   "area_str": "2.78e+05",
+   "crit_path_ns": 0.36769766474747073,
+   "crit_path_str": "0.368",
+   "activity_events": 2048.0,
+   "activity_str": "2.05e+03",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.vrf",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 8677762.983321639,
+    "write": 4515191.02857038
+   },
+   "model": "cal",
+   "count": 128,
+   "dyn_energy_pJ": 13192954.011892019,
+   "dyn_str": "13.2 \u00b5J",
+   "leak_energy_pJ": 228923.38116126176,
+   "leak_str": "229 nJ",
+   "energy_pJ": 13421877.39305328,
+   "energy_str": "13.4 \u00b5J",
+   "energy_pct": 0.2,
+   "unit_energy_str": "31.1 / 32.3",
+   "leak_power_mW": 4.136480302402561,
+   "unit_leak_power_mW": 0.03231625236252001,
+   "leak_power_str": "0.0323",
+   "area_um2": 532261.4964801137,
+   "unit_area_um2": 4158.292941250888,
+   "area_str": "4.16e+03",
+   "crit_path_ns": 0.7974677570932084,
+   "crit_path_str": "0.797",
+   "activity_events": 418944.0,
+   "activity_str": "4.19e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.vfu",
+   "cls": "fpmac",
+   "dyn_by_mode": {
+    "random": 872151.8371659013
+   },
+   "model": "cal",
+   "count": 128,
+   "dyn_energy_pJ": 872151.8371659013,
+   "dyn_str": "872 nJ",
+   "leak_energy_pJ": 16818.619441705745,
+   "leak_str": "16.8 nJ",
+   "energy_pJ": 888970.4566076071,
+   "energy_str": "889 nJ",
+   "energy_pct": 0.0,
+   "unit_energy_str": "6.25",
+   "leak_power_mW": 0.3039003166968475,
+   "unit_leak_power_mW": 0.002374221224194121,
+   "leak_power_str": "0.00237",
+   "area_um2": 61872.34324457801,
+   "unit_area_um2": 483.3776815982657,
+   "area_str": "483",
+   "crit_path_ns": 0.37589093960664266,
+   "crit_path_str": "0.376",
+   "activity_events": 139648.0,
+   "activity_str": "1.4e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.dma_q",
+   "cls": "fifo",
+   "dyn_by_mode": {
+    "stream": 8342720.018785678
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 8342720.018785678,
+   "dyn_str": "8.34 \u00b5J",
+   "leak_energy_pJ": 918.9215694324785,
+   "leak_str": "919 pJ",
+   "energy_pJ": 8343638.94035511,
+   "energy_str": "8.34 \u00b5J",
+   "energy_pct": 0.1,
+   "unit_energy_str": "21.2",
+   "leak_power_mW": 0.01660424964950463,
+   "unit_leak_power_mW": 0.01660424964950463,
+   "leak_power_str": "0.0166",
+   "area_um2": 2380.6883519721064,
+   "unit_area_um2": 2380.6883519721064,
+   "area_str": "2.38e+03",
+   "crit_path_ns": 0.8264916568815158,
+   "crit_path_str": "0.826",
+   "activity_events": 393216.0,
+   "activity_str": "3.93e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.dma_addr",
+   "cls": "intadd",
+   "dyn_by_mode": {
+    "random": 503206.2395937293
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 503206.2395937293,
+   "dyn_str": "503 nJ",
+   "leak_energy_pJ": 38.39509578148589,
+   "leak_str": "38.4 pJ",
+   "energy_pJ": 503244.6346895108,
+   "energy_str": "503 nJ",
+   "energy_pct": 0.0,
+   "unit_energy_str": "1.28",
+   "leak_power_mW": 0.0006937716741877809,
+   "unit_leak_power_mW": 0.0006937716741877809,
+   "leak_power_str": "0.000694",
+   "area_um2": 98.33426326139949,
+   "unit_area_um2": 98.33426326139949,
+   "area_str": "98.3",
+   "crit_path_ns": 0.33937796146072746,
+   "crit_path_str": "0.339",
+   "activity_events": 393216.0,
+   "activity_str": "3.93e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "core0.sfu_pipe",
+   "cls": "fpsfu",
+   "dyn_by_mode": {},
+   "model": "cal",
+   "count": 128,
+   "dyn_energy_pJ": 0.0,
+   "dyn_str": "\u2014",
+   "leak_energy_pJ": 29263.037522182327,
+   "leak_str": "29.3 nJ",
+   "energy_pJ": 29263.037522182327,
+   "energy_str": "29.3 nJ",
+   "energy_pct": 0.0,
+   "unit_energy_str": "8.06",
+   "leak_power_mW": 0.5287619712977468,
+   "unit_leak_power_mW": 0.004130952900763647,
+   "leak_power_str": "0.00413",
+   "area_um2": 127669.03849678213,
+   "unit_area_um2": 997.4143632561104,
+   "area_str": "997",
+   "crit_path_ns": 0.36255789965383883,
+   "crit_path_str": "0.363",
+   "activity_events": 0.0,
+   "activity_str": "n/a",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "icnt_xbar",
+   "cls": "crossbar",
+   "dyn_by_mode": {
+    "valid25": 1348729.1039150143
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 1348729.1039150143,
+   "dyn_str": "1.35 \u00b5J",
+   "leak_energy_pJ": 3225.8842934940053,
+   "leak_str": "3.23 nJ",
+   "energy_pJ": 1351954.9882085084,
+   "energy_str": "1.35 \u00b5J",
+   "energy_pct": 0.0,
+   "unit_energy_str": "13.7",
+   "leak_power_mW": 0.058289401327983645,
+   "unit_leak_power_mW": 0.058289401327983645,
+   "leak_power_str": "0.0583",
+   "area_um2": 16109.01256026613,
+   "unit_area_um2": 16109.01256026613,
+   "area_str": "1.61e+04",
+   "crit_path_ns": 1.0080657018376056,
+   "crit_path_str": "1.01",
+   "activity_events": 98304.0,
+   "activity_str": "9.83e+04",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "icnt_buf",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "write": 9325759.82657212,
+    "read": 7941416.17796458
+   },
+   "model": "cal",
+   "count": 32,
+   "dyn_energy_pJ": 17267176.0045367,
+   "dyn_str": "17.3 \u00b5J",
+   "leak_energy_pJ": 76364.02953971075,
+   "leak_str": "76.4 nJ",
+   "energy_pJ": 17343540.03407641,
+   "energy_str": "17.3 \u00b5J",
+   "energy_pct": 0.3,
+   "unit_energy_str": "2.52 / 2.96",
+   "leak_power_mW": 1.379842908141327,
+   "unit_leak_power_mW": 0.04312009087941647,
+   "leak_power_str": "0.0431",
+   "area_um2": 555524.6648775537,
+   "unit_area_um2": 17360.145777423553,
+   "area_str": "1.74e+04",
+   "crit_path_ns": 0.36769766474747073,
+   "crit_path_str": "0.368",
+   "activity_events": 6291456.0,
+   "activity_str": "6.29e+06",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "dram_chan",
+   "cls": "hbm",
+   "dyn_by_mode": {
+    "activate": 108133731.0,
+    "read": 233538846.72,
+    "write": 116769423.36,
+    "refresh": 26062848.0
+   },
+   "model": "const",
+   "count": 16,
+   "dyn_energy_pJ": 484504849.08000004,
+   "dyn_str": "485 \u00b5J",
+   "leak_energy_pJ": 0.0,
+   "leak_str": "0 pJ",
+   "energy_pJ": 484504849.08000004,
+   "energy_str": "485 \u00b5J",
+   "energy_pct": 7.9,
+   "unit_energy_str": "909 / 891",
+   "leak_power_mW": 0.0,
+   "unit_leak_power_mW": 0.0,
+   "leak_power_str": "n/a",
+   "area_um2": 0.0,
+   "unit_area_um2": 0.0,
+   "area_str": "n/a",
+   "crit_path_ns": 0.0,
+   "crit_path_str": "n/a",
+   "activity_events": 512623.0,
+   "activity_str": "5.13e+05",
+   "vectorless": false,
+   "user_defined": false
+  }
+ ],
+ "tree": {
+  "name": "chip",
+  "children": [
+   {
+    "name": "core0",
+    "children": [
+     {
+      "name": "array0",
+      "children": [
+       {
+        "name": "pe",
+        "count": 16384,
+        "label": "class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4"
+       },
+       {
+        "name": "w_reg",
+        "count": 16384,
+        "label": "class: register_file, data_width=32, mem_depth_per_bank=1"
+       }
+      ]
+     },
+     {
+      "name": "array1",
+      "children": [
+       {
+        "name": "pe",
+        "count": 16384,
+        "label": "class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4"
+       },
+       {
+        "name": "w_reg",
+        "count": 16384,
+        "label": "class: register_file, data_width=32, mem_depth_per_bank=1"
+       }
+      ]
+     },
+     {
+      "name": "vmem",
+      "label": "class: sram, mem_template=sram_256k, mem_banks=32, mem_depth_per_bank=32768, data_width=128"
+     },
+     {
+      "name": "vpu_spad",
+      "count": 128,
+      "label": "class: sram, mem_template=sram_256k, mem_banks=1, mem_depth_per_bank=8192, data_width=128"
+     },
+     {
+      "name": "vrf",
+      "count": 128,
+      "label": "class: register_file, data_width=256, mem_depth_per_bank=32"
+     },
+     {
+      "name": "vfu",
+      "count": 128,
+      "label": "class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4"
+     },
+     {
+      "name": "dma_q",
+      "label": "class: fifo"
+     },
+     {
+      "name": "dma_addr",
+      "label": "class: intadd"
+     },
+     {
+      "name": "sfu_pipe",
+      "count": 128,
+      "label": "class: fpsfu"
+     }
+    ]
+   },
+   {
+    "name": "noc",
+    "children": [
+     {
+      "name": "icnt_xbar",
+      "label": "class: crossbar, net_inputs=32, net_outputs=32, data_width=256"
+     },
+     {
+      "name": "icnt_buf",
+      "count": 32,
+      "label": "class: sram, mem_template=sram_64k, mem_banks=1, mem_depth_per_bank=1024, data_width=64"
+     }
+    ]
+   },
+   {
+    "name": "dram",
+    "children": [
+     {
+      "name": "dram_chan",
+      "count": 16,
+      "label": "class: hbm"
+     }
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "models": [],
+  "model_note": "Calibrated-model manifest (checkpoint hashes) not yet wired. Calibrated clusters: sram + the logic v2 MLP quartets (fpadd/fpmul/fpmac/intadd/intmul/intmac/fpsfu/mxfpmac/fifo/regfile/simplemux, wired 2026-08-11); d2dlink and hbm are cited analytic constants; crossbar/fattree/foldedclos stay placeholders until the expanded NoC sweep retrains them.",
+  "inputs": [
+   {
+    "name": "togsim: togsim_results",
+    "sha": null
+   },
+   {
+    "name": "gem5: outputs",
+    "sha": null
+   },
+   {
+    "name": "booksim: booksim2_config",
+    "sha": null
+   },
+   {
+    "name": "config.yml",
+    "sha": "06fb4965833a27ece901d08af0e71471bb0f5e643ea2b1cad9d7a75799d6d209"
+   }
+  ],
+  "warnings": [
+   "vmem: capacity-only SRAM spec (134217728 bits): auto-applied macro template(s) 512x sram_256k grouped into banks of <= 16 subarrays; utilization 100.0%",
+   "vpu_spad: capacity-only SRAM spec (1048576 bits): auto-applied macro template(s) 4x sram_256k grouped into banks of <= 16 subarrays; utilization 100.0%",
+   "icnt_buf: capacity-only SRAM spec (65536 bits): auto-applied macro template(s) 1x sram_64k grouped into banks of <= 16 subarrays; utilization 100.0%",
+   "CustomMatMulwVpush: kernel-total events attributed per array in proportion to each array's active cycles"
+  ],
+  "notes": [
+   "scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is excluded from the energy model per PyTorchSim author guidance (2026-07-25, negligible area/power vs the systolic/vector datapath); gem5 stats are read only for numCycles and the instruction counts matching CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)",
+   "CustomVlaneIdx instruction counts are deliberately not collected: it is lane-index generation, not an SFU op, and its energy is negligible",
+   "BAR / MEMORY_BAR (barrier) instruction counters are not collected: synchronization is control-side work (scalar-core scope) and the stall time it causes is already inside total_exec_cycles, so it is charged as leakage over the window",
+   "VCIX serializer/deserializer (the vector <-> systolic-array interface) is not modeled as a separate component: its push/pop events are already charged at both endpoints (w_reg writes, vpu_spad reads/writes), and PyTorchSim exposes no serdes size parameters \u2014 the remaining mux/wire datapath is second-order",
+   "DRAM background/standby power and the NPU-side memory controller / HBM PHY are not charged: vendor IDD/standby currents for HBM are not public (no open HBM power tool exists), so the dram compound charges command energies only (activate / read / write / refresh, constants cited from O'Connor & Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic (VMEM fills/drains, DMA engine, NoC flits) are charged by their own compounds",
+   "activity stat 'CustomMatMul' (total 2 across 1 window(s)) is not charged \u2014 waived in projection 'pytorchsim': compute is charged per systolic active cycle (Option A: systolic_active_cycles x lanes^2 = MACs); this instruction count is a redundant counter of the same work",
+   "activity stat 'comp_gemm_ops' (total 576 across 1 window(s)) is not charged \u2014 waived in projection 'pytorchsim': COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count",
+   "activity stat 'comp_vector_ops' (total 1 across 1 window(s)) is not charged \u2014 waived in projection 'pytorchsim': COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count"
+  ],
+  "windows": [
+   {
+    "window": 0,
+    "kernel": "fqywo6ndalo",
+    "kind": "fused",
+    "dtype": "f32",
+    "dtype_source": "own",
+    "systolic_active_cycles": 65536,
+    "vector_active_cycles": 1091,
+    "sfu_ops": 0,
+    "dram_requests": 393216,
+    "exec_cycles": 52022
+   }
+  ]
+ }
+}

@@ -75,7 +75,7 @@
   <h1>NPUWattch PPA Report — {{ design_name }}</h1>
   <div class="sub">
     Generated {{ timestamp }} · NPUWattch {{ version }} ({{ git_commit }}) ·
-    node {{ tech.node }} / {{ tech.transistor }} / {{ tech.corner }} /
+    node {{ tech.node }}{% if tech.node_scaling %} ({{ tech.node_scaling }}{% if tech.node_scaling == 'clamped' %}, evaluated at {{ tech.node_evaluated_nm }} nm{% endif %}; anchors {{ tech.node_anchors|join('/') }}){% endif %} / {{ tech.transistor }} / {{ tech.corner }} /
     Vdd{{ "%+.2f"|format(tech.voltage_offset_V) }} V / {{ tech.temperature_C }} °C ·
     clock {{ clock.frequency_MHz }} MHz ·
     activity source: <strong>{{ activity_source }}</strong> ·

@@ -9,6 +9,10 @@ its vocabulary into ours.
   the SRAM estimator, window accounting, ``--report``) instead of the old
   per-component plugin calls, which is why ``src/estimators/`` no longer carries
   the prototype-era ``adder``/``crossbar``/``regfile``/``custom`` directories.
+* :mod:`.stats` — the activity half (**workstream A, built 2026-08-13**):
+  ``timeloop-{model,mapper}.stats.txt`` (one file, or a directory of per-layer
+  files) → native §3.3 rows. ``--stats`` makes the run vectored; without it
+  the harness still synthesizes the labeled VECTORLESS default.
 * :mod:`.vocabulary` — Accelergy ``class``/``attributes`` → NPUWattch primitives
   and canonical attribute names.
 * :mod:`.tree` — the declared-hierarchy view for ``--tree`` (builders are
@@ -17,11 +21,13 @@ its vocabulary into ours.
   onto the same ``hold_b`` compute state PyTorchSim uses (the stim_mode is a
   hardware property, and that shared axis is the Timeloop↔PyTorchSim join).
 
-**Still ahead (workstream A): mapping-driven activity.** The projection above is
-parked, not wired — no Timeloop stats reader exists yet, so a run ingested here
-is a VECTORLESS estimate (25 % of random switching, labeled as such). Wiring the
-stats file in changes only :mod:`.ingest`'s activity half; the description half
-and everything downstream stay as they are.
+**Workstream A landed 2026-08-13**: the stats reader above wires
+mapping-driven activity. The projection file stays as the *declaration* of the
+mode mapping (Computes → ``hold_b``); the flat-description route charges it via
+:func:`.stats.activity_from_stats` directly rather than through the compound
+interpreter — the Accelergy description declares plain components, not a
+compound bundle. A run without ``--stats`` remains the labeled VECTORLESS
+estimate.
 
 **Design commitment (user decision 2026-07-21): the declared hierarchy is the
 energy-accounting skeleton, not just a view.** Every component the description
@@ -45,7 +51,8 @@ DEFINITIONS_DIR = Path(__file__).resolve().parent / "definitions"
 
 HARNESS_SPEC = {
     "name": "timeloop",
-    "description": "Timeloop/Accelergy v0.4 architecture description.",
+    "description": "Timeloop/Accelergy v0.4 architecture description "
+                   "(+ optional timeloop-model/mapper stats).",
     "inputs": {
         "arch": {
             "flag": "--arch-yaml",
@@ -55,9 +62,26 @@ HARNESS_SPEC = {
                     "'architecture:' root) — the only route for such files; "
                     "-d takes native descriptions only.",
         },
+        "stats": {
+            "flag": "--stats",
+            "required": False,
+            "kind": "path",
+            "hint": "a timeloop-model/mapper .stats.txt file, or a directory "
+                    "of per-layer stats files (sorted by name = layer order). "
+                    "Without it the run is the labeled VECTORLESS estimate.",
+        },
+        "stats_map": {
+            "flag": "--stats-map",
+            "required": False,
+            "kind": "file",
+            "hint": "optional YAML mapping stats level names to description "
+                    "components ('levels:') and dropping levels deliberately "
+                    "('ignore:'); exact/leaf-name matches need no entry.",
+        },
     },
-    # No stats reader yet (workstream A) — activity is synthesized, so the
-    # CLI's --vectorless-activity override applies to this harness.
+    # --stats wires real activity; without it the harness synthesizes the
+    # VECTORLESS default, so the CLI's --vectorless-activity override applies
+    # (the parser rejects combining it with --stats).
     "synthesizes_activity": True,
     "ingest": ingest,
 }

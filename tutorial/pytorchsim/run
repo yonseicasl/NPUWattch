@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Tutorial example 2 — PyTorchSim input.
+#
+# Feeds NPUWattch one complete PyTorchSim run (a 1024x1024x1024 float32
+# torch.matmul on a TPUv3-like core) and writes an HTML report to out/.
+#
+# The repository's ../../run.sh does the same thing with one argument; this
+# script spells the command out so you can see every flag.
+#
+# Usage: ./run [extra npuwattch flags...]
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if ! command -v npuwattch > /dev/null; then
+    echo "npuwattch not found on PATH — install it first:" >&2
+    echo "    cd ../.. && pip install -e ." >&2
+    exit 1
+fi
+
+npuwattch --harness pytorchsim \
+          --togsim-dir  togsim_results/ \
+          --gem5-dir    outputs/ \
+          --config-yml  config.yml \
+          --booksim-dir booksim2_config/ \
+          --node 7nm \
+          --tree \
+          --report out/ \
+          "$@"
+
+echo
+echo "Open the report:  $(pwd)/out/report.html"

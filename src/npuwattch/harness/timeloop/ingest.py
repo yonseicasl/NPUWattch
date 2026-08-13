@@ -14,11 +14,13 @@ Accelergy-specific knowledge that remains is exactly what a harness owns: readin
 that toolchain's file format (:mod:`npuwattch.yaml_flattener_accelergy_v4`) and
 translating its vocabulary into ours (:mod:`.vocabulary`).
 
-**Activity.** Timeloop's per-mapping stats file is not read yet (workstream A), so
-a run ingested here is a **VECTORLESS** estimate: every component charged at 25 %
-of random switching, exactly as ``-d native.yaml`` without ``-l`` is. That is
-strictly more than the retired path produced, and it is labeled as such in every
-output.
+**Activity.** With ``--stats`` (a ``timeloop-{model,mapper}.stats.txt`` file or
+a directory of per-layer stats files), the run is **vectored**: :mod:`.stats`
+turns Timeloop's per-level access counts into native §3.3 rows (reads → read,
+fills+updates → write, Computes → op in the ``hold_b`` mode the projection
+declares). Without it, the run is the labeled **VECTORLESS** estimate: every
+component charged at 25 % of random switching, exactly as ``-d native.yaml``
+without ``-l`` is.
 """
 
 from __future__ import annotations
@@ -43,22 +45,42 @@ _CLOCK_SECONDS_KEYS = ("global_cycle_seconds", "cycle_seconds")
 
 
 def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
-    """Harness entrypoint: ``{"arch": <architecture.yaml>}`` → ``EmittedArch``."""
-    from ...energy.vectorless import (
-        DEFAULT_VECTORLESS_ACTIVITY,
-        vectorless_activity_rows,
-    )
-
+    """Harness entrypoint: ``{"arch": <architecture.yaml>, "stats"?: <path>,
+    "stats_map"?: <yaml>}`` → ``EmittedArch``."""
     arch_path = Path(inputs["arch"])
-    activity = float(opts.get("vectorless_activity")
-                     or DEFAULT_VECTORLESS_ACTIVITY)
     description, warnings, notes = description_from_accelergy(
         arch_path, tech, default_clock_mhz=opts.get("default_clock_mhz"),
         verbose=int(opts.get("verbose", 0)))
 
-    rows, vectorless_notes = vectorless_activity_rows(
-        description, activity=activity)
-    notes.extend(vectorless_notes)
+    stats_path = inputs.get("stats")
+    if stats_path is not None:
+        from .stats import activity_from_stats
+
+        if opts.get("vectorless_activity") is not None:
+            warnings.append(
+                "--vectorless-activity ignored: the Timeloop stats provide "
+                "real activity")
+        rows, total_cycles, window_labels, s_warnings, s_notes = (
+            activity_from_stats(
+                Path(stats_path), description,
+                mode=str(opts.get("stats_mode") or "windows"),
+                map_path=inputs.get("stats_map")))
+        warnings.extend(s_warnings)
+        notes.extend(s_notes)
+        vectorless: Optional[float] = None
+    else:
+        from ...energy.vectorless import (
+            DEFAULT_VECTORLESS_ACTIVITY,
+            vectorless_activity_rows,
+        )
+
+        vectorless = float(opts.get("vectorless_activity")
+                           or DEFAULT_VECTORLESS_ACTIVITY)
+        rows, vectorless_notes = vectorless_activity_rows(
+            description, activity=vectorless)
+        notes.extend(vectorless_notes)
+        total_cycles = 1
+        window_labels = ["vectorless"]
 
     hierarchy = None
     try:
@@ -70,13 +92,13 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     return EmittedArch(
         description=description,
         activity_rows=rows,
-        total_cycles=1,
+        total_cycles=total_cycles,
         warnings=warnings,
         notes=notes,
         hierarchy=hierarchy,
         tree_source="declared in the Accelergy description",
-        window_labels=["vectorless"],
-        vectorless_activity=activity,
+        window_labels=window_labels,
+        vectorless_activity=vectorless,
     )
 
 

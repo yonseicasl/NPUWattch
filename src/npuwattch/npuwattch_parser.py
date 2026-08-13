@@ -64,6 +64,12 @@ class NPUWattchArgs:
     booksim_dir: Optional[Path] = None
     energy_table: Optional[Path] = None
     arch_yaml: Optional[Path] = None
+    # Timeloop harness activity: a timeloop-model/mapper .stats.txt (or a
+    # directory of per-layer stats files), the optional level→component map,
+    # and the multi-layer handling (None → the harness default, "windows").
+    timeloop_stats: Optional[Path] = None
+    stats_map: Optional[Path] = None
+    stats_mode: Optional[str] = None
     out_dir: Optional[Path] = None
     # Estimator mode, -d without -l: fraction of random switching for the
     # VECTORLESS estimate (None → energy.DEFAULT_VECTORLESS_ACTIVITY = 0.25).
@@ -153,11 +159,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--vectorless-activity",
         dest="vectorless_activity",
         type=float,
-        help="Vectorless runs only (-d without -l, or a harness with no "
-             "activity reader, e.g. --harness timeloop): fraction of random "
-             "switching assumed for the VECTORLESS estimate, in (0, 1] "
-             "(default 0.25; crossbar-family primitives use their measured "
-             "valid25 mode instead).",
+        help="Vectorless runs only (-d without -l, or --harness timeloop "
+             "WITHOUT --stats): fraction of random switching assumed for the "
+             "VECTORLESS estimate, in (0, 1] (default 0.25; crossbar-family "
+             "primitives use their measured valid25 mode instead).",
     )
     parser.add_argument(
         "--tree",
@@ -230,6 +235,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "(v0.4, 'architecture:' root). Required with --harness timeloop — "
              "the only route for such files; -d takes native descriptions only.",
     )
+    harness_group.add_argument(
+        "--stats",
+        dest="timeloop_stats",
+        help="Timeloop harness (optional): a timeloop-model/mapper .stats.txt "
+             "file, or a directory of per-layer stats files (sorted by name = "
+             "layer order). Provides real activity (reads/fills+updates/"
+             "Computes); without it the run is the labeled VECTORLESS "
+             "estimate.",
+    )
+    harness_group.add_argument(
+        "--stats-map",
+        dest="stats_map",
+        help="Timeloop harness (with --stats): YAML mapping stats level names "
+             "to description components ('levels: {LevelName: component}') "
+             "and dropping levels deliberately ('ignore: [DRAM]'). Levels "
+             "matching a component name (or its dotted leaf) need no entry.",
+    )
+    harness_group.add_argument(
+        "--stats-mode",
+        dest="stats_mode",
+        choices=["windows", "aggregate"],
+        help="Timeloop harness (with --stats): how a DIRECTORY of per-layer "
+             "stats files is combined — 'windows' (default) keeps one window "
+             "per layer (per-layer energy over time in the report), "
+             "'aggregate' sums counts into a single window.",
+    )
 
     # Technology / PVT for harness mode. Defaults are nominal — only an explicitly
     # passed flag overrides them (hp / TT / nominal Vdd / 25C).
@@ -238,7 +269,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     tech_group.add_argument(
         "--node", dest="node", default="7nm",
-        help="Technology node string, e.g. 7nm (default: 7nm).",
+        help="Technology node, continuous, e.g. 7nm or 12.5nm (default: 7nm). "
+             "Characterized nodes are 5/7/10/16/20nm; anything between is "
+             "log-interpolated, anything up to ±50%% beyond the range "
+             "(2.5-30nm) is extrapolated with a WARNING, and anything outside "
+             "that envelope is clamped to it with a WARNING (CLI + report).",
     )
     tech_group.add_argument(
         "--transistor", dest="transistor", default="hp", choices=["hp", "lp"],
@@ -394,26 +429,39 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     booksim_dir: Optional[Path] = None
     energy_table: Optional[Path] = None
     arch_yaml: Optional[Path] = None
+    timeloop_stats: Optional[Path] = None
+    stats_map: Optional[Path] = None
     out_dir: Optional[Path] = None
 
     if ns.harness and ns.description_files:
         parser.error("--harness and -d/--description are mutually exclusive")
     if not ns.harness and (ns.togsim_dir or ns.gem5_dir or ns.config_yml
-                           or ns.booksim_dir or ns.energy_table or ns.arch_yaml):
+                           or ns.booksim_dir or ns.energy_table or ns.arch_yaml
+                           or ns.timeloop_stats or ns.stats_map
+                           or ns.stats_mode):
         parser.error(
             "--togsim-dir/--gem5-dir/--config-yml/--booksim-dir/--energy-table"
-            "/--arch-yaml require --harness")
+            "/--arch-yaml/--stats/--stats-map/--stats-mode require --harness")
+    if (ns.stats_map or ns.stats_mode) and not ns.timeloop_stats:
+        parser.error(
+            "--stats-map/--stats-mode shape how the Timeloop stats are read; "
+            "they require --stats")
     if ns.vectorless_activity is not None:
         if ns.flatten or ns.train or ns.activity_logs:
             parser.error(
                 "--vectorless-activity applies only to vectorless runs: -d "
                 "WITHOUT -l, or a harness with no activity reader "
                 "(it replaces the missing activity log)")
+        if ns.timeloop_stats:
+            parser.error(
+                "--vectorless-activity: --stats provides real Timeloop "
+                "activity; the flag applies only to vectorless runs "
+                "(-d without -l, or --harness timeloop WITHOUT --stats)")
         if ns.harness and not _harness_synthesizes_activity(ns.harness):
             parser.error(
                 f"--vectorless-activity: the {ns.harness!r} harness reads real "
                 f"activity from its logs; the flag applies only to vectorless "
-                f"runs (-d without -l, or --harness timeloop)")
+                f"runs (-d without -l, or --harness timeloop without --stats)")
         if not (0.0 < ns.vectorless_activity <= 1.0):
             parser.error(
                 f"--vectorless-activity must be in (0, 1], got {ns.vectorless_activity}")
@@ -447,6 +495,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         booksim_dir = Path(ns.booksim_dir) if ns.booksim_dir else None
         energy_table = Path(ns.energy_table) if ns.energy_table else None
         arch_yaml = Path(ns.arch_yaml) if ns.arch_yaml else None
+        timeloop_stats = Path(ns.timeloop_stats) if ns.timeloop_stats else None
+        stats_map = Path(ns.stats_map) if ns.stats_map else None
         out_dir = Path(ns.output_path) if ns.output_path else None
 
     elif ns.train:
@@ -492,6 +542,9 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         booksim_dir=booksim_dir,
         energy_table=energy_table,
         arch_yaml=arch_yaml,
+        timeloop_stats=timeloop_stats,
+        stats_map=stats_map,
+        stats_mode=ns.stats_mode,
         out_dir=out_dir,
         vectorless_activity=ns.vectorless_activity,
         tree=bool(ns.tree),

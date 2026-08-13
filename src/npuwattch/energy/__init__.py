@@ -19,6 +19,13 @@ from .aggregate import (
     aggregate_window,
     analyze_run,
 )
+from .node_scaling import (
+    NodeResolution,
+    NodeScalingProvider,
+    apply_node_scaling,
+    parse_node_nm,
+    resolve_node,
+)
 from .provider_factory import ProviderChain, build_provider
 from .unit_cost import (
     D2D_ENERGY_PER_BIT_PJ,
@@ -34,6 +41,11 @@ __all__ = [
     "D2DLinkCostProvider",
     "DEFAULT_VECTORLESS_ACTIVITY",
     "vectorless_activity_rows",
+    "NodeResolution",
+    "NodeScalingProvider",
+    "apply_node_scaling",
+    "parse_node_nm",
+    "resolve_node",
     "ProviderChain",
     "build_provider",
     "ComponentEnergy",
