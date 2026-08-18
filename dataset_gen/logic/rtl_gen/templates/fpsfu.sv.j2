@@ -1,0 +1,830 @@
+// fpsfu — piecewise-linear special function unit (transcendentals).
+//
+// Numeric contract (bit-exact mirror of rtl_gen/sfu_model.py — the single
+// source of tables and expected values; see docs/DESIGN_SFU_DMA.md §2):
+//   * decode: fp(E,M) -> sign + unsigned magnitude X in Q({{ xi }}.{{ xf }}),
+//     TRUNCATED; subnormals flush to zero; NaN/Inf saturate to max magnitude
+//     (total function — no NaN propagation, by design);
+//   * one shared premultiply t = (X*K_op) >> {{ xf }} maps the argument onto
+//     the op's table domain u in [0,1); y = A[seg] + (B[seg]*d >> {{ df }})
+//     interpolates S={{ segments }} monotone table nodes (B >= 0: the whole
+//     interpolation datapath is unsigned); all shifts truncate;
+//   * outputs pack with TRUNCATED mantissas (no RNE — PWL error dominates);
+//     exponent overflow saturates to max finite (o_sat), underflow flushes
+//     to zero.
+//
+// Op groups (elaboration-time; disabled op codes return 0):
+//   exp {exp, exp2}    2^u table, result = 2^n * y
+//   trig {sin, cos}    quarter-wave sin table, quadrant fold, cos = +1 quadrant
+//   hyp {tanh, sigmoid} sigma(16u-8) table; tanh(x) = 2*sigma(2x)-1
+//   erf {erf}          erf(4u) table
+//   relu {relu}        sign mux only
+//
+// Pipeline: REAL stage distribution (no output delay banks). The datapath is
+// nine combinational segments; each PIPELINE_STAGES step enables one more
+// register cut between them (banks = input capture + cuts + output = ps,
+// latency = ps exactly). Both multipliers are decomposed into hi/lo partial
+// products (arithmetic identity — bit-exact) so they can be cut internally:
+//   SEG1 decode | SEG2 premult partial products | SEG3 premult combine +
+//   u/quadrant derivation | SEG4 table read | SEG5 interp partial products |
+//   SEG6 interp combine + per-op transform | SEG7 LZC priority encode |
+//   SEG8 normalize shift | SEG9 pack + output mux
+// Cut ladder (most critical first): ps>=3 after SEG3, ps>=4 after SEG6,
+// ps>=5 after SEG1, ps>=6 after SEG4, ps>=7 after SEG7, ps>=8 after SEG2,
+// ps>=9 after SEG5, ps>=10 after SEG8. Generation allows ps in [4, 10].
+module {{ module_name }} #(
+    parameter int EXPONENT_BITS = {{ exp_bits }},
+    parameter int MANTISSA_BITS = {{ mantissa_bits }},
+    parameter int PIPELINE_STAGES = {{ pipeline_stages }},
+    parameter int SFU_SEGMENTS = {{ segments }}
+) (
+    input  logic [{{ fp_width - 1 }}:0] i_x,
+    input  logic [2:0]                  i_op,
+    input  logic                        i_clk,
+    input  logic                        i_rst_n,
+    output logic [{{ fp_width - 1 }}:0] o_y,
+    output logic                        o_sat
+);
+
+    // Op codes (format-independent; mirrors sfu_model.OPS).
+    localparam logic [2:0] OP_EXP     = 3'd0;
+    localparam logic [2:0] OP_EXP2    = 3'd1;
+    localparam logic [2:0] OP_SIN     = 3'd2;
+    localparam logic [2:0] OP_COS     = 3'd3;
+    localparam logic [2:0] OP_TANH    = 3'd4;
+    localparam logic [2:0] OP_SIGMOID = 3'd5;
+    localparam logic [2:0] OP_ERF     = 3'd6;
+    localparam logic [2:0] OP_RELU    = 3'd7;
+
+    localparam int W        = {{ fp_width }};
+    localparam int EBITS    = {{ exp_bits }};
+    localparam int MBITS    = {{ mantissa_bits }};
+    localparam int BIAS     = {{ bias }};
+    localparam int EXP_MAX  = {{ exp_max }};
+    localparam int GUARD    = {{ guard }};
+    localparam int XI       = {{ xi }};      // integer bits of X
+    localparam int XF       = {{ xf }};      // fraction bits of X / u domain
+    localparam int XW       = {{ xw }};      // X width (= XI + XF)
+    localparam int TW       = {{ tw }};      // t width (integer part <= 6 bits)
+    localparam int KW       = {{ kw }};      // premultiply constant width
+    localparam int AW       = {{ aw }};      // table node width, Q2.(M+GUARD)
+    localparam int SEG_BITS = {{ seg_bits }};
+    localparam int DF       = {{ df }};      // interpolation fraction bits
+    localparam int EESW     = {{ eesw }};    // exp exponent adder width (signed)
+    localparam int NEW      = TW - XF + 1;   // exp n width (signed)
+    localparam int KH       = {{ k_half }};  // premult constant lo-half width
+    localparam int DH       = {{ d_half }};  // interp fraction lo-half width
+
+    localparam logic [XW-1:0] XMAX  = '1;
+    localparam logic [XF:0]   ONE_U = {1'b1, {XF{1'b0}}};   // 1.0 in u domain
+    localparam logic [AW-1:0] ONE_Q = AW'(1) << (MBITS + GUARD);
+    localparam logic [XF-1:0] HALF_U = {1'b1, {(XF-1){1'b0}}};
+
+    // Pipeline cuts, in order of criticality (banks = 2 + active cuts = ps).
+    localparam bit CUT_PREMUL = (PIPELINE_STAGES >= 3);   // after SEG3
+    localparam bit CUT_INTERP = (PIPELINE_STAGES >= 4);   // after SEG6
+    localparam bit CUT_DECODE = (PIPELINE_STAGES >= 5);   // after SEG1
+    localparam bit CUT_TABLE  = (PIPELINE_STAGES >= 6);   // after SEG4
+    localparam bit CUT_LZC    = (PIPELINE_STAGES >= 7);   // after SEG7
+    localparam bit CUT_PREPP  = (PIPELINE_STAGES >= 8);   // after SEG2
+    localparam bit CUT_INTPP  = (PIPELINE_STAGES >= 9);   // after SEG5
+    localparam bit CUT_SHIFT  = (PIPELINE_STAGES >= 10);  // after SEG8
+
+{% if op_exp %}
+    localparam logic [KW-1:0] K_EXP  = {{ k_exp_lit }};   // log2(e), Q2.XF
+    localparam logic [KW-1:0] K_EXP2 = {{ k_exp2_lit }};  // 1.0
+{% endif %}
+{% if op_trig %}
+    localparam logic [KW-1:0] K_TRIG = {{ k_trig_lit }};  // 2/pi
+{% endif %}
+{% if op_hyp %}
+    localparam logic [KW-1:0] K_HYP  = {{ k_hyp_lit }};   // 1/16 (window +-8)
+{% endif %}
+{% if op_erf %}
+    localparam logic [KW-1:0] K_ERF  = {{ k_erf_lit }};   // 1/4 (window +-4)
+{% endif %}
+
+    // PWL coefficient tables (A = node, B = node diff >= 0), generated by
+    // sfu_model.tables(); synthesized as gates — at these sizes (~S*AW bits
+    // per table) a ROM macro's periphery overhead loses to logic.
+{% if op_exp %}
+    localparam logic [AW-1:0] EXP_A [0:SFU_SEGMENTS-1] = '{ {{ exp_a | join(', ') }} };
+    localparam logic [AW-1:0] EXP_B [0:SFU_SEGMENTS-1] = '{ {{ exp_b | join(', ') }} };
+{% endif %}
+{% if op_trig %}
+    localparam logic [AW-1:0] TRIG_A [0:SFU_SEGMENTS-1] = '{ {{ trig_a | join(', ') }} };
+    localparam logic [AW-1:0] TRIG_B [0:SFU_SEGMENTS-1] = '{ {{ trig_b | join(', ') }} };
+    localparam logic [AW-1:0] TRIG_END = {{ trig_end }};
+{% endif %}
+{% if op_hyp %}
+    localparam logic [AW-1:0] HYP_A [0:SFU_SEGMENTS-1] = '{ {{ hyp_a | join(', ') }} };
+    localparam logic [AW-1:0] HYP_B [0:SFU_SEGMENTS-1] = '{ {{ hyp_b | join(', ') }} };
+{% endif %}
+{% if op_erf %}
+    localparam logic [AW-1:0] ERF_A [0:SFU_SEGMENTS-1] = '{ {{ erf_a | join(', ') }} };
+    localparam logic [AW-1:0] ERF_B [0:SFU_SEGMENTS-1] = '{ {{ erf_b | join(', ') }} };
+{% endif %}
+
+    // ---- input capture (stage boundary 0) ---------------------------------
+    logic [W-1:0] s1_x;
+    logic [2:0]   s1_op;
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            s1_x  <= '0;
+            s1_op <= '0;
+        end else begin
+            s1_x  <= i_x;
+            s1_op <= i_op;
+        end
+    end
+
+    /* verilator lint_off WIDTHEXPAND */
+    /* verilator lint_off WIDTHTRUNC */
+
+    // ======================= SEG1: decode ==================================
+    wire d1_sign = s1_x[W-1];
+    wire [EBITS-1:0] d1_e = s1_x[W-2:MBITS];
+    wire [MBITS-1:0] d1_frac = s1_x[MBITS-1:0];
+    wire d1_e_all1 = &d1_e;
+    wire d1_e_zero = ~|d1_e;
+    wire [MBITS:0] d1_sig = {1'b1, d1_frac};
+
+    logic [XW-1:0] d1_x_mag;
+    logic d1_dec_sat;
+    always_comb begin
+        automatic int shift_amt;
+        d1_x_mag = '0;
+        d1_dec_sat = 1'b0;
+        if (d1_e_all1) begin                    // NaN/Inf: saturate magnitude
+            d1_x_mag = XMAX;
+            d1_dec_sat = 1'b1;
+        end else if (d1_e_zero) begin           // zero/subnormal: FTZ
+            d1_x_mag = '0;
+        end else if (int'(d1_e) >= BIAS + XI) begin  // |x| >= 2^XI
+            d1_x_mag = XMAX;
+            d1_dec_sat = 1'b1;
+        end else begin
+            shift_amt = int'(d1_e) - BIAS + GUARD;
+            if (shift_amt >= 0) begin
+                d1_x_mag = XW'(d1_sig) << shift_amt;
+            end else if (-shift_amt < XW) begin
+                d1_x_mag = XW'(d1_sig >> (-shift_amt));
+            end
+        end
+    end
+
+    // ---- cut: SEG1 -> SEG2 (ps >= 5) ---------------------------------------
+    logic [XW-1:0] s2_x_mag;
+    logic s2_sign, s2_dec_sat;
+    logic [2:0] s2_op;
+    logic [W-1:0] s2_x_raw;
+
+    generate if (CUT_DECODE) begin : g_cut_decode
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+                s2_x_mag <= '0; s2_sign <= 1'b0; s2_dec_sat <= 1'b0;
+                s2_op <= '0; s2_x_raw <= '0;
+            end else begin
+                s2_x_mag <= d1_x_mag; s2_sign <= d1_sign;
+                s2_dec_sat <= d1_dec_sat; s2_op <= s1_op; s2_x_raw <= s1_x;
+            end
+        end
+    end else begin : g_cut_decode_comb
+        assign s2_x_mag = d1_x_mag;
+        assign s2_sign = d1_sign;
+        assign s2_dec_sat = d1_dec_sat;
+        assign s2_op = s1_op;
+        assign s2_x_raw = s1_x;
+    end endgenerate
+
+    // ============== SEG2: premultiply partial products ======================
+    // X*K = X*K[KH-1:0] + (X*K[KW-1:KH] << KH) — exact hi/lo decomposition so
+    // the constant multiplier can be cut internally at high ps.
+    logic [KW-1:0] d2_k;
+    logic [XW-1:0] d2_x_mult;
+{% if op_hyp %}
+    wire [XW:0] d2_x_dbl = {s2_x_mag, 1'b0};    // tanh: 2x, saturating
+    wire [XW-1:0] d2_x_dbl_sat = d2_x_dbl[XW] ? XMAX : d2_x_dbl[XW-1:0];
+{% endif %}
+
+    always_comb begin
+        d2_k = '0;
+        d2_x_mult = s2_x_mag;
+        case (s2_op)
+{% if op_exp %}
+            OP_EXP:     d2_k = K_EXP;
+            OP_EXP2:    d2_k = K_EXP2;
+{% endif %}
+{% if op_trig %}
+            OP_SIN:     d2_k = K_TRIG;
+            OP_COS:     d2_k = K_TRIG;
+{% endif %}
+{% if op_hyp %}
+            OP_TANH:    begin d2_k = K_HYP; d2_x_mult = d2_x_dbl_sat; end
+            OP_SIGMOID: d2_k = K_HYP;
+{% endif %}
+{% if op_erf %}
+            OP_ERF:     d2_k = K_ERF;
+{% endif %}
+            default:    d2_k = '0;
+        endcase
+    end
+
+    wire [XW+KH-1:0] d2_pp_lo = d2_x_mult * d2_k[KH-1:0];
+    wire [XW+KW-KH-1:0] d2_pp_hi = d2_x_mult * d2_k[KW-1:KH];
+
+    // ---- cut: SEG2 -> SEG3 (ps >= 8) ---------------------------------------
+    logic [XW+KH-1:0] s3_pp_lo;
+    logic [XW+KW-KH-1:0] s3_pp_hi;
+    logic s3_sign, s3_dec_sat;
+    logic [2:0] s3_op;
+    logic [W-1:0] s3_x_raw;
+
+    generate if (CUT_PREPP) begin : g_cut_prepp
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+                s3_pp_lo <= '0; s3_pp_hi <= '0;
+                s3_sign <= 1'b0; s3_dec_sat <= 1'b0;
+                s3_op <= '0; s3_x_raw <= '0;
+            end else begin
+                s3_pp_lo <= d2_pp_lo; s3_pp_hi <= d2_pp_hi;
+                s3_sign <= s2_sign; s3_dec_sat <= s2_dec_sat;
+                s3_op <= s2_op; s3_x_raw <= s2_x_raw;
+            end
+        end
+    end else begin : g_cut_prepp_comb
+        assign s3_pp_lo = d2_pp_lo;
+        assign s3_pp_hi = d2_pp_hi;
+        assign s3_sign = s2_sign;
+        assign s3_dec_sat = s2_dec_sat;
+        assign s3_op = s2_op;
+        assign s3_x_raw = s2_x_raw;
+    end endgenerate
+
+    // ========= SEG3: premultiply combine + u / quadrant derivation =========
+    wire [XW+KW-1:0] d3_premult = {{ '{' }}{(KW-KH){1'b0}}, s3_pp_lo}
+                                  + ({{ '{' }}{KH{1'b0}}, s3_pp_hi} << KH);
+    wire [TW-1:0] d3_t = TW'(d3_premult >> XF);
+
+{% if op_exp %}
+    // exp/exp2: n = floor(+-t), u = frac(+-t)
+    wire signed [TW:0] d3_t_signed = s3_sign ? -$signed({1'b0, d3_t})
+                                             : $signed({1'b0, d3_t});
+    wire signed [NEW-1:0] d3_n_exp = NEW'(d3_t_signed >>> XF);  // floor
+    wire [XF-1:0] d3_u_exp = d3_t_signed[XF-1:0];               // mod 2^XF
+{% endif %}
+{% if op_trig %}
+    // sin/cos: quadrant fold on |x|
+    wire d3_is_cos = (s3_op == OP_COS);
+    wire [1:0] d3_q = d3_t[XF +: 2] + {1'b0, d3_is_cos};
+    wire d3_flip = d3_q[0];
+    wire d3_trig_neg = d3_q[1];
+    wire [XF:0] d3_v_trig = d3_flip ? (ONE_U - {1'b0, d3_t[XF-1:0]})
+                                    : {1'b0, d3_t[XF-1:0]};
+{% endif %}
+{% if op_hyp %}
+    // tanh/sigmoid: u = clamp(0.5 + t), magnitude domain
+    wire [TW-1:0] d3_t_hyp = d3_t + TW'(HALF_U);
+    wire [XF-1:0] d3_u_hyp = (d3_t_hyp > TW'(ONE_U) - 1) ? '1
+                                                         : d3_t_hyp[XF-1:0];
+{% endif %}
+{% if op_erf %}
+    // erf: u = clamp(t), magnitude domain
+    wire [XF-1:0] d3_u_erf = (d3_t > TW'(ONE_U) - 1) ? '1 : d3_t[XF-1:0];
+{% endif %}
+
+    logic [XF:0] d3_u_sel;                  // may equal ONE (trig flip only)
+    always_comb begin
+        d3_u_sel = '0;
+        case (s3_op)
+{% if op_exp %}
+            OP_EXP, OP_EXP2:     d3_u_sel = {1'b0, d3_u_exp};
+{% endif %}
+{% if op_trig %}
+            OP_SIN, OP_COS:      d3_u_sel = d3_v_trig;
+{% endif %}
+{% if op_hyp %}
+            OP_TANH, OP_SIGMOID: d3_u_sel = {1'b0, d3_u_hyp};
+{% endif %}
+{% if op_erf %}
+            OP_ERF:              d3_u_sel = {1'b0, d3_u_erf};
+{% endif %}
+            default:             d3_u_sel = '0;
+        endcase
+    end
+
+    // ---- cut: SEG3 -> SEG4 (ps >= 3) ---------------------------------------
+    logic [XF:0] s4_u_sel;
+{% if op_exp %}
+    logic signed [NEW-1:0] s4_n_exp;
+{% endif %}
+{% if op_trig %}
+    logic s4_trig_neg;
+{% endif %}
+    logic s4_sign, s4_dec_sat;
+    logic [2:0] s4_op;
+    logic [W-1:0] s4_x_raw;
+
+    generate if (CUT_PREMUL) begin : g_cut_premul
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+                s4_u_sel <= '0;
+{% if op_exp %}
+                s4_n_exp <= '0;
+{% endif %}
+{% if op_trig %}
+                s4_trig_neg <= 1'b0;
+{% endif %}
+                s4_sign <= 1'b0; s4_dec_sat <= 1'b0;
+                s4_op <= '0; s4_x_raw <= '0;
+            end else begin
+                s4_u_sel <= d3_u_sel;
+{% if op_exp %}
+                s4_n_exp <= d3_n_exp;
+{% endif %}
+{% if op_trig %}
+                s4_trig_neg <= d3_trig_neg;
+{% endif %}
+                s4_sign <= s3_sign; s4_dec_sat <= s3_dec_sat;
+                s4_op <= s3_op; s4_x_raw <= s3_x_raw;
+            end
+        end
+    end else begin : g_cut_premul_comb
+        assign s4_u_sel = d3_u_sel;
+{% if op_exp %}
+        assign s4_n_exp = d3_n_exp;
+{% endif %}
+{% if op_trig %}
+        assign s4_trig_neg = d3_trig_neg;
+{% endif %}
+        assign s4_sign = s3_sign;
+        assign s4_dec_sat = s3_dec_sat;
+        assign s4_op = s3_op;
+        assign s4_x_raw = s3_x_raw;
+    end endgenerate
+
+    // ======================= SEG4: table read ==============================
+    wire d4_at_end = s4_u_sel[XF];
+    wire [SEG_BITS-1:0] d4_seg = s4_u_sel[XF-1:DF];
+    wire [DF-1:0] d4_d = s4_u_sel[DF-1:0];
+
+    logic [AW-1:0] d4_tab_a;
+    logic [AW-1:0] d4_tab_b;
+    logic [AW-1:0] d4_tab_end;
+    always_comb begin
+        d4_tab_a = '0;
+        d4_tab_b = '0;
+        d4_tab_end = '0;
+        case (s4_op)
+{% if op_exp %}
+            OP_EXP, OP_EXP2:     begin d4_tab_a = EXP_A[d4_seg];  d4_tab_b = EXP_B[d4_seg];  end
+{% endif %}
+{% if op_trig %}
+            OP_SIN, OP_COS:      begin d4_tab_a = TRIG_A[d4_seg]; d4_tab_b = TRIG_B[d4_seg]; d4_tab_end = TRIG_END; end
+{% endif %}
+{% if op_hyp %}
+            OP_TANH, OP_SIGMOID: begin d4_tab_a = HYP_A[d4_seg];  d4_tab_b = HYP_B[d4_seg];  end
+{% endif %}
+{% if op_erf %}
+            OP_ERF:              begin d4_tab_a = ERF_A[d4_seg];  d4_tab_b = ERF_B[d4_seg];  end
+{% endif %}
+            default: ;
+        endcase
+    end
+
+    // ---- cut: SEG4 -> SEG5 (ps >= 6) ---------------------------------------
+    logic [AW-1:0] s5_tab_a, s5_tab_b, s5_tab_end;
+    logic [DF-1:0] s5_d;
+    logic s5_at_end;
+{% if op_exp %}
+    logic signed [NEW-1:0] s5_n_exp;
+{% endif %}
+{% if op_trig %}
+    logic s5_trig_neg;
+{% endif %}
+    logic s5_sign, s5_dec_sat;
+    logic [2:0] s5_op;
+    logic [W-1:0] s5_x_raw;
+
+    generate if (CUT_TABLE) begin : g_cut_table
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+                s5_tab_a <= '0; s5_tab_b <= '0; s5_tab_end <= '0;
+                s5_d <= '0; s5_at_end <= 1'b0;
+{% if op_exp %}
+                s5_n_exp <= '0;
+{% endif %}
+{% if op_trig %}
+                s5_trig_neg <= 1'b0;
+{% endif %}
+                s5_sign <= 1'b0; s5_dec_sat <= 1'b0;
+                s5_op <= '0; s5_x_raw <= '0;
+            end else begin
+                s5_tab_a <= d4_tab_a; s5_tab_b <= d4_tab_b;
+                s5_tab_end <= d4_tab_end;
+                s5_d <= d4_d; s5_at_end <= d4_at_end;
+{% if op_exp %}
+                s5_n_exp <= s4_n_exp;
+{% endif %}
+{% if op_trig %}
+                s5_trig_neg <= s4_trig_neg;
+{% endif %}
+                s5_sign <= s4_sign; s5_dec_sat <= s4_dec_sat;
+                s5_op <= s4_op; s5_x_raw <= s4_x_raw;
+            end
+        end
+    end else begin : g_cut_table_comb
+        assign s5_tab_a = d4_tab_a;
+        assign s5_tab_b = d4_tab_b;
+        assign s5_tab_end = d4_tab_end;
+        assign s5_d = d4_d;
+        assign s5_at_end = d4_at_end;
+{% if op_exp %}
+        assign s5_n_exp = s4_n_exp;
+{% endif %}
+{% if op_trig %}
+        assign s5_trig_neg = s4_trig_neg;
+{% endif %}
+        assign s5_sign = s4_sign;
+        assign s5_dec_sat = s4_dec_sat;
+        assign s5_op = s4_op;
+        assign s5_x_raw = s4_x_raw;
+    end endgenerate
+
+    // ============ SEG5: interpolation partial products ======================
+    // B*d = B*d[DH-1:0] + (B*d[DF-1:DH] << DH) — exact hi/lo decomposition.
+    wire [AW+DH-1:0] d5_ip_lo = s5_tab_b * s5_d[DH-1:0];
+    wire [AW+DF-DH-1:0] d5_ip_hi = s5_tab_b * s5_d[DF-1:DH];
+
+    // ---- cut: SEG5 -> SEG6 (ps >= 9) ---------------------------------------
+    logic [AW+DH-1:0] s6_ip_lo;
+    logic [AW+DF-DH-1:0] s6_ip_hi;
+    logic [AW-1:0] s6_tab_a, s6_tab_end;
+    logic s6_at_end;
+{% if op_exp %}
+    logic signed [NEW-1:0] s6_n_exp;
+{% endif %}
+{% if op_trig %}
+    logic s6_trig_neg;
+{% endif %}
+    logic s6_sign, s6_dec_sat;
+    logic [2:0] s6_op;
+    logic [W-1:0] s6_x_raw;
+
+    generate if (CUT_INTPP) begin : g_cut_intpp
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+                s6_ip_lo <= '0; s6_ip_hi <= '0;
+                s6_tab_a <= '0; s6_tab_end <= '0; s6_at_end <= 1'b0;
+{% if op_exp %}
+                s6_n_exp <= '0;
+{% endif %}
+{% if op_trig %}
+                s6_trig_neg <= 1'b0;
+{% endif %}
+                s6_sign <= 1'b0; s6_dec_sat <= 1'b0;
+                s6_op <= '0; s6_x_raw <= '0;
+            end else begin
+                s6_ip_lo <= d5_ip_lo; s6_ip_hi <= d5_ip_hi;
+                s6_tab_a <= s5_tab_a; s6_tab_end <= s5_tab_end;
+                s6_at_end <= s5_at_end;
+{% if op_exp %}
+                s6_n_exp <= s5_n_exp;
+{% endif %}
+{% if op_trig %}
+                s6_trig_neg <= s5_trig_neg;
+{% endif %}
+                s6_sign <= s5_sign; s6_dec_sat <= s5_dec_sat;
+                s6_op <= s5_op; s6_x_raw <= s5_x_raw;
+            end
+        end
+    end else begin : g_cut_intpp_comb
+        assign s6_ip_lo = d5_ip_lo;
+        assign s6_ip_hi = d5_ip_hi;
+        assign s6_tab_a = s5_tab_a;
+        assign s6_tab_end = s5_tab_end;
+        assign s6_at_end = s5_at_end;
+{% if op_exp %}
+        assign s6_n_exp = s5_n_exp;
+{% endif %}
+{% if op_trig %}
+        assign s6_trig_neg = s5_trig_neg;
+{% endif %}
+        assign s6_sign = s5_sign;
+        assign s6_dec_sat = s5_dec_sat;
+        assign s6_op = s5_op;
+        assign s6_x_raw = s5_x_raw;
+    end endgenerate
+
+    // ========= SEG6: interp combine + per-op transform ======================
+    wire [AW+DF-1:0] d6_prod = {{ '{' }}{(DF-DH){1'b0}}, s6_ip_lo}
+                               + ({{ '{' }}{DH{1'b0}}, s6_ip_hi} << DH);
+    wire [AW-1:0] d6_y_interp = s6_tab_a + AW'(d6_prod >> DF);
+    wire [AW-1:0] d6_y_tab = s6_at_end ? s6_tab_end : d6_y_interp;
+
+{% if op_exp %}
+    // exp pack: y in [1,2) -> 2^n * y (cheap add; pack is a concat)
+    wire signed [EESW-1:0] d6_e_exp = EESW'(s6_n_exp) + EESW'(BIAS);
+    wire d6_exp_ovfl = (d6_e_exp >= EESW'(EXP_MAX));
+    wire d6_exp_udfl = (d6_e_exp <= EESW'(0));
+    logic [W-1:0] d6_y_exp_out;
+    always_comb begin
+        if (d6_exp_ovfl) begin                  // saturate to +max finite
+            d6_y_exp_out = {1'b0, EBITS'(EXP_MAX - 1), {MBITS{1'b1}}};
+        end else if (d6_exp_udfl) begin         // FTZ
+            d6_y_exp_out = '0;
+        end else begin
+            d6_y_exp_out = {1'b0, d6_e_exp[EBITS-1:0],
+                            d6_y_tab[GUARD +: MBITS]};
+        end
+    end
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+    logic [AW-1:0] d6_y_norm_in;
+    logic d6_sign_norm;
+{% if op_hyp %}
+    wire [AW-1:0] d6_y_tanh = {d6_y_tab[AW-2:0], 1'b0} - ONE_Q; // 2*sigma - 1
+    wire [AW-1:0] d6_y_sig_neg = ONE_Q - d6_y_tab;              // sigma(-x)
+{% endif %}
+    always_comb begin
+        d6_y_norm_in = '0;
+        d6_sign_norm = 1'b0;
+        case (s6_op)
+{% if op_trig %}
+            OP_SIN:     begin d6_y_norm_in = d6_y_tab;  d6_sign_norm = s6_trig_neg ^ s6_sign; end
+            OP_COS:     begin d6_y_norm_in = d6_y_tab;  d6_sign_norm = s6_trig_neg; end
+{% endif %}
+{% if op_hyp %}
+            OP_TANH:    begin d6_y_norm_in = d6_y_tanh; d6_sign_norm = s6_sign; end
+            OP_SIGMOID: begin
+                d6_y_norm_in = s6_sign ? d6_y_sig_neg : d6_y_tab;
+                d6_sign_norm = 1'b0;
+            end
+{% endif %}
+{% if op_erf %}
+            OP_ERF:     begin d6_y_norm_in = d6_y_tab;  d6_sign_norm = s6_sign; end
+{% endif %}
+            default: ;
+        endcase
+    end
+{% endif %}
+
+    // ---- cut: SEG6 -> SEG7 (ps >= 4) ---------------------------------------
+{% if op_exp %}
+    logic [W-1:0] s7_y_exp;
+    logic s7_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+    logic [AW-1:0] s7_y_norm_in;
+    logic s7_sign_norm;
+{% endif %}
+    logic s7_sign, s7_dec_sat;
+    logic [2:0] s7_op;
+    logic [W-1:0] s7_x_raw;
+
+    generate if (CUT_INTERP) begin : g_cut_interp
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+{% if op_exp %}
+                s7_y_exp <= '0; s7_exp_ovfl <= 1'b0;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s7_y_norm_in <= '0; s7_sign_norm <= 1'b0;
+{% endif %}
+                s7_sign <= 1'b0; s7_dec_sat <= 1'b0;
+                s7_op <= '0; s7_x_raw <= '0;
+            end else begin
+{% if op_exp %}
+                s7_y_exp <= d6_y_exp_out; s7_exp_ovfl <= d6_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s7_y_norm_in <= d6_y_norm_in; s7_sign_norm <= d6_sign_norm;
+{% endif %}
+                s7_sign <= s6_sign; s7_dec_sat <= s6_dec_sat;
+                s7_op <= s6_op; s7_x_raw <= s6_x_raw;
+            end
+        end
+    end else begin : g_cut_interp_comb
+{% if op_exp %}
+        assign s7_y_exp = d6_y_exp_out;
+        assign s7_exp_ovfl = d6_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+        assign s7_y_norm_in = d6_y_norm_in;
+        assign s7_sign_norm = d6_sign_norm;
+{% endif %}
+        assign s7_sign = s6_sign;
+        assign s7_dec_sat = s6_dec_sat;
+        assign s7_op = s6_op;
+        assign s7_x_raw = s6_x_raw;
+    end endgenerate
+
+{% if op_trig or op_hyp or op_erf %}
+    // ================== SEG7: LZC priority encode ===========================
+    localparam int PW = $clog2(AW);
+    logic [PW-1:0] d7_msb_p;
+    logic d7_y_nonzero;
+    always_comb begin
+        d7_msb_p = '0;
+        d7_y_nonzero = 1'b0;
+        for (int i = 0; i < AW; i = i + 1) begin
+            if (s7_y_norm_in[i]) begin
+                d7_msb_p = PW'(i);
+                d7_y_nonzero = 1'b1;
+            end
+        end
+    end
+    wire signed [EBITS+1:0] d7_e_norm =
+        (EBITS+2)'(BIAS) + (EBITS+2)'(d7_msb_p) - (EBITS+2)'(MBITS + GUARD);
+{% endif %}
+
+    // ---- cut: SEG7 -> SEG8 (ps >= 7) ---------------------------------------
+{% if op_exp %}
+    logic [W-1:0] s8_y_exp;
+    logic s8_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+    logic [AW-1:0] s8_y_norm_in;
+    logic [PW-1:0] s8_msb_p;
+    logic s8_y_nonzero;
+    logic signed [EBITS+1:0] s8_e_norm;
+    logic s8_sign_norm;
+{% endif %}
+    logic s8_sign, s8_dec_sat;
+    logic [2:0] s8_op;
+    logic [W-1:0] s8_x_raw;
+
+    generate if (CUT_LZC) begin : g_cut_lzc
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+{% if op_exp %}
+                s8_y_exp <= '0; s8_exp_ovfl <= 1'b0;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s8_y_norm_in <= '0; s8_msb_p <= '0; s8_y_nonzero <= 1'b0;
+                s8_e_norm <= '0; s8_sign_norm <= 1'b0;
+{% endif %}
+                s8_sign <= 1'b0; s8_dec_sat <= 1'b0;
+                s8_op <= '0; s8_x_raw <= '0;
+            end else begin
+{% if op_exp %}
+                s8_y_exp <= s7_y_exp; s8_exp_ovfl <= s7_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s8_y_norm_in <= s7_y_norm_in; s8_msb_p <= d7_msb_p;
+                s8_y_nonzero <= d7_y_nonzero; s8_e_norm <= d7_e_norm;
+                s8_sign_norm <= s7_sign_norm;
+{% endif %}
+                s8_sign <= s7_sign; s8_dec_sat <= s7_dec_sat;
+                s8_op <= s7_op; s8_x_raw <= s7_x_raw;
+            end
+        end
+    end else begin : g_cut_lzc_comb
+{% if op_exp %}
+        assign s8_y_exp = s7_y_exp;
+        assign s8_exp_ovfl = s7_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+        assign s8_y_norm_in = s7_y_norm_in;
+        assign s8_msb_p = d7_msb_p;
+        assign s8_y_nonzero = d7_y_nonzero;
+        assign s8_e_norm = d7_e_norm;
+        assign s8_sign_norm = s7_sign_norm;
+{% endif %}
+        assign s8_sign = s7_sign;
+        assign s8_dec_sat = s7_dec_sat;
+        assign s8_op = s7_op;
+        assign s8_x_raw = s7_x_raw;
+    end endgenerate
+
+{% if op_trig or op_hyp or op_erf %}
+    // ==================== SEG8: normalize shift =============================
+    wire [AW-1:0] d8_y_shifted =
+        s8_y_norm_in << ((MBITS + GUARD) - int'(s8_msb_p));
+{% endif %}
+
+    // ---- cut: SEG8 -> SEG9 (ps >= 10) --------------------------------------
+{% if op_exp %}
+    logic [W-1:0] s9_y_exp;
+    logic s9_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+    logic [AW-1:0] s9_y_shifted;
+    logic s9_y_nonzero;
+    logic signed [EBITS+1:0] s9_e_norm;
+    logic s9_sign_norm;
+{% endif %}
+    logic s9_sign, s9_dec_sat;
+    logic [2:0] s9_op;
+    logic [W-1:0] s9_x_raw;
+
+    generate if (CUT_SHIFT) begin : g_cut_shift
+        always_ff @(posedge i_clk) begin
+            if (!i_rst_n) begin
+{% if op_exp %}
+                s9_y_exp <= '0; s9_exp_ovfl <= 1'b0;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s9_y_shifted <= '0; s9_y_nonzero <= 1'b0;
+                s9_e_norm <= '0; s9_sign_norm <= 1'b0;
+{% endif %}
+                s9_sign <= 1'b0; s9_dec_sat <= 1'b0;
+                s9_op <= '0; s9_x_raw <= '0;
+            end else begin
+{% if op_exp %}
+                s9_y_exp <= s8_y_exp; s9_exp_ovfl <= s8_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+                s9_y_shifted <= d8_y_shifted; s9_y_nonzero <= s8_y_nonzero;
+                s9_e_norm <= s8_e_norm; s9_sign_norm <= s8_sign_norm;
+{% endif %}
+                s9_sign <= s8_sign; s9_dec_sat <= s8_dec_sat;
+                s9_op <= s8_op; s9_x_raw <= s8_x_raw;
+            end
+        end
+    end else begin : g_cut_shift_comb
+{% if op_exp %}
+        assign s9_y_exp = s8_y_exp;
+        assign s9_exp_ovfl = s8_exp_ovfl;
+{% endif %}
+{% if op_trig or op_hyp or op_erf %}
+        assign s9_y_shifted = d8_y_shifted;
+        assign s9_y_nonzero = s8_y_nonzero;
+        assign s9_e_norm = s8_e_norm;
+        assign s9_sign_norm = s8_sign_norm;
+{% endif %}
+        assign s9_sign = s8_sign;
+        assign s9_dec_sat = s8_dec_sat;
+        assign s9_op = s8_op;
+        assign s9_x_raw = s8_x_raw;
+    end endgenerate
+
+    // ================== SEG9: pack + output mux =============================
+{% if op_trig or op_hyp or op_erf %}
+    logic [W-1:0] d9_y_norm_out;
+    always_comb begin
+        if (!s9_y_nonzero || (s9_e_norm <= 0)) begin
+            d9_y_norm_out = {s9_sign_norm, {(W-1){1'b0}}};  // signed zero (FTZ)
+        end else begin
+            d9_y_norm_out = {s9_sign_norm, s9_e_norm[EBITS-1:0],
+                             s9_y_shifted[GUARD +: MBITS]};
+        end
+    end
+{% endif %}
+
+    logic [W-1:0] d9_y_out;
+    logic d9_sat;
+    always_comb begin
+        d9_y_out = '0;
+        d9_sat = 1'b0;
+        case (s9_op)
+{% if op_exp %}
+            OP_EXP, OP_EXP2: begin
+                d9_y_out = s9_y_exp;
+                d9_sat = s9_dec_sat | s9_exp_ovfl;
+            end
+{% endif %}
+{% if op_trig %}
+            OP_SIN, OP_COS: begin
+                d9_y_out = d9_y_norm_out;
+                d9_sat = s9_dec_sat;
+            end
+{% endif %}
+{% if op_hyp %}
+            OP_TANH, OP_SIGMOID: begin
+                d9_y_out = d9_y_norm_out;
+                d9_sat = s9_dec_sat;
+            end
+{% endif %}
+{% if op_erf %}
+            OP_ERF: begin
+                d9_y_out = d9_y_norm_out;
+                d9_sat = s9_dec_sat;
+            end
+{% endif %}
+{% if op_relu %}
+            OP_RELU: begin
+                d9_y_out = s9_sign ? '0 : s9_x_raw;
+                d9_sat = 1'b0;
+            end
+{% endif %}
+            default: ;
+        endcase
+    end
+
+    /* verilator lint_on WIDTHTRUNC */
+    /* verilator lint_on WIDTHEXPAND */
+
+    // ---- output register (last stage boundary) ----------------------------
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            o_y <= '0;
+            o_sat <= 1'b0;
+        end else begin
+            o_y <= d9_y_out;
+            o_sat <= d9_sat;
+        end
+    end
+
+endmodule

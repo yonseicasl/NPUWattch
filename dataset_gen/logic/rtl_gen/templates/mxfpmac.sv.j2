@@ -1,0 +1,199 @@
+/* verilator lint_off UNUSEDPARAM */
+module {{ module_name }} #(
+    parameter int BLOCK_ELEMS = {{ block_elems }},
+    parameter int NUM_BLOCKS = {{ num_blocks }},
+    parameter int ELEM_WIDTH = {{ elem_width }},
+    parameter int ELEM_EXP_BITS = {{ elem_exp_bits }},
+    parameter int ELEM_MANT_BITS = {{ elem_mant_bits }},
+    parameter int ELEM_BIAS = {{ elem_bias }},
+    parameter int SCALE_EXP_BITS = {{ scale_exp_bits }},
+    parameter int SCALE_BIAS = {{ scale_bias }},
+    parameter int USE_SCALE = {{ use_scale }},
+    parameter int ACC_WIDTH = {{ acc_width }},
+    parameter int DECODE_WIDTH = {{ decode_width }},
+    parameter int DECODE_FRAC_BITS = {{ decode_frac_bits }},
+    parameter int PRODUCT_WIDTH = {{ product_width }},
+    parameter int TOTAL_ELEMS = {{ total_elems }},
+    parameter int PIPELINE_STAGES = {{ pipeline_stages }}
+) (
+    input  logic                                      i_clk,
+    input  logic                                      i_rst_n,
+    input  logic                                      i_valid,
+    input  logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]         i_a,
+    input  logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]         i_b,
+    input  logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0]      i_scale_a,
+    input  logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0]      i_scale_b,
+    output logic                                      o_valid,
+    output logic signed [ACC_WIDTH-1:0]               o_result
+);
+/* verilator lint_on UNUSEDPARAM */
+
+    // Pipeline plan (latency == PIPELINE_STAGES exactly):
+    //   stages == 1 : decode+multiply+full reduction combinational, output
+    //                 register only (legacy structure).
+    //   stages >= 2 : stage 1 captures the operands (so the in2reg path is
+    //                 just the input flops), the last stage is the output
+    //                 register, and the remaining PIPELINE_STAGES-2 register
+    //                 banks are spread across the reduction tree; the
+    //                 decode+multiply front is weighted as FRONT_WEIGHT tree
+    //                 levels when placing them.
+    // Every addition is two's-complement modular in ACC_WIDTH, so the
+    // levelized tree is bit-identical to the sequential accumulation the
+    // unpipelined version used.
+    localparam int LEVELS = $clog2((TOTAL_ELEMS < 2) ? 2 : TOTAL_ELEMS);
+    localparam int FRONT_WEIGHT = 3;
+    localparam int STAGE_UNITS = FRONT_WEIGHT + LEVELS;
+    localparam int INNER_BANKS = (PIPELINE_STAGES < 2) ? 0 : (PIPELINE_STAGES - 2);
+
+    // Pipeline stage that boundary `b` belongs to, where boundary 0 sits just
+    // after the products and boundary l (1..LEVELS) just after tree level l.
+    // A register bank exists wherever the stage index advances.
+    function automatic integer nw_stage_of(input integer boundary);
+        nw_stage_of = ((FRONT_WEIGHT + boundary) * INNER_BANKS + STAGE_UNITS / 2)
+                      / STAGE_UNITS;
+    endfunction
+
+    logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]    a_q;
+    logic [TOTAL_ELEMS*ELEM_WIDTH-1:0]    b_q;
+    logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0] scale_a_q;
+    logic [NUM_BLOCKS*SCALE_EXP_BITS-1:0] scale_b_q;
+    logic                                 valid_last;
+
+    generate
+        if (PIPELINE_STAGES < 2) begin : gen_comb_in
+            assign a_q = i_a;
+            assign b_q = i_b;
+            assign scale_a_q = i_scale_a;
+            assign scale_b_q = i_scale_b;
+            assign valid_last = i_valid;
+        end else begin : gen_reg_in
+            logic valid_sr [0:PIPELINE_STAGES-2];
+            always_ff @(posedge i_clk) begin
+                if (!i_rst_n) begin
+                    a_q <= '0;
+                    b_q <= '0;
+                    scale_a_q <= '0;
+                    scale_b_q <= '0;
+                    for (int s = 0; s < PIPELINE_STAGES - 1; s = s + 1) begin
+                        valid_sr[s] <= 1'b0;
+                    end
+                end else begin
+                    a_q <= i_a;
+                    b_q <= i_b;
+                    scale_a_q <= i_scale_a;
+                    scale_b_q <= i_scale_b;
+                    valid_sr[0] <= i_valid;
+                    for (int s = 1; s < PIPELINE_STAGES - 1; s = s + 1) begin
+                        valid_sr[s] <= valid_sr[s-1];
+                    end
+                end
+            end
+            assign valid_last = valid_sr[PIPELINE_STAGES-2];
+        end
+    endgenerate
+
+    {{ decode_function }}
+
+    // sum_c[l] = combinational value at tree level l (l==0: aligned element
+    // products); sum_r[l] = the same vector after boundary l's register bank
+    // (a plain copy where no bank is placed). Only the first
+    // ceil(TOTAL_ELEMS/2^l) entries of a level are live.
+    logic signed [ACC_WIDTH-1:0] sum_c [0:LEVELS][0:TOTAL_ELEMS-1];
+    logic signed [ACC_WIDTH-1:0] sum_r [0:LEVELS][0:TOTAL_ELEMS-1];
+
+    always_comb begin
+        for (int flat = 0; flat < TOTAL_ELEMS; flat = flat + 1) begin
+            automatic int block = flat / BLOCK_ELEMS;
+            automatic logic signed [DECODE_WIDTH-1:0] a_dec;
+            automatic logic signed [DECODE_WIDTH-1:0] b_dec;
+            automatic logic signed [PRODUCT_WIDTH-1:0] product;
+            /* verilator lint_off UNUSEDSIGNAL */
+            automatic logic signed [PRODUCT_WIDTH-1:0] aligned;
+            /* verilator lint_on UNUSEDSIGNAL */
+            a_dec = decode_elem(
+                a_q[flat*ELEM_WIDTH +: ELEM_WIDTH],
+                scale_a_q[block*SCALE_EXP_BITS +: SCALE_EXP_BITS]
+            );
+            b_dec = decode_elem(
+                b_q[flat*ELEM_WIDTH +: ELEM_WIDTH],
+                scale_b_q[block*SCALE_EXP_BITS +: SCALE_EXP_BITS]
+            );
+            product = a_dec * b_dec;
+            aligned = product >>> DECODE_FRAC_BITS;
+            sum_c[0][flat] = ACC_WIDTH'(aligned);
+        end
+    end
+
+    generate
+        genvar lvl;
+        for (lvl = 0; lvl <= LEVELS; lvl = lvl + 1) begin : gen_tree
+            localparam int NODES = (TOTAL_ELEMS + (1 << lvl) - 1) >> lvl;
+            localparam int NODES_PREV =
+                (lvl == 0) ? TOTAL_ELEMS : ((TOTAL_ELEMS + (1 << (lvl - 1)) - 1) >> (lvl - 1));
+            localparam int BANK_DEPTH =
+                (lvl == 0) ? nw_stage_of(0) : (nw_stage_of(lvl) - nw_stage_of(lvl - 1));
+
+            if (lvl > 0) begin : gen_level
+                always_comb begin
+                    for (int i = 0; i < TOTAL_ELEMS; i = i + 1) begin
+                        if (i < NODES) begin
+                            sum_c[lvl][i] = sum_r[lvl-1][2*i]
+                                + ((2*i + 1 < NODES_PREV) ? sum_r[lvl-1][2*i+1]
+                                                          : ACC_WIDTH'(0));
+                        end else begin
+                            sum_c[lvl][i] = '0;
+                        end
+                    end
+                end
+            end
+
+            if (BANK_DEPTH == 0) begin : gen_pass
+                always_comb begin
+                    for (int i = 0; i < TOTAL_ELEMS; i = i + 1) begin
+                        sum_r[lvl][i] = (i < NODES) ? sum_c[lvl][i] : ACC_WIDTH'(0);
+                    end
+                end
+            end else begin : gen_bank
+                logic signed [ACC_WIDTH-1:0] chain [0:BANK_DEPTH-1][0:NODES-1];
+                always_ff @(posedge i_clk) begin
+                    if (!i_rst_n) begin
+                        for (int d = 0; d < BANK_DEPTH; d = d + 1) begin
+                            for (int i = 0; i < NODES; i = i + 1) begin
+                                chain[d][i] <= '0;
+                            end
+                        end
+                    end else begin
+                        for (int i = 0; i < NODES; i = i + 1) begin
+                            chain[0][i] <= sum_c[lvl][i];
+                        end
+                        for (int d = 1; d < BANK_DEPTH; d = d + 1) begin
+                            for (int i = 0; i < NODES; i = i + 1) begin
+                                chain[d][i] <= chain[d-1][i];
+                            end
+                        end
+                    end
+                end
+                always_comb begin
+                    for (int i = 0; i < TOTAL_ELEMS; i = i + 1) begin
+                        sum_r[lvl][i] = (i < NODES) ? chain[BANK_DEPTH-1][i] : ACC_WIDTH'(0);
+                    end
+                end
+            end
+        end
+    endgenerate
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            o_valid <= 1'b0;
+            o_result <= '0;
+        end else begin
+            o_valid <= valid_last;
+            if (valid_last) begin
+                o_result <= sum_r[LEVELS][0];
+            end else begin
+                o_result <= '0;
+            end
+        end
+    end
+
+endmodule

@@ -1,10 +1,21 @@
 """NPUWattch Estimator Host Module.
 
-This module manages all estimator modules and provides safe methods for:
-- Scanning available estimators
-- Executing estimation functions (energy, area, timing)
-- Training models
+Discovers the estimator plugins under ``src/estimators`` and calls into them
+**without importing them** (``ast`` for the spec, ``runpy`` for execution), so a
+plugin's heavy dependencies — torch, in particular — never enter the main
+program's import graph.
+
+Responsibilities:
+- Scanning available estimators and reading their ``ESTIMATOR_SPEC``
+- Executing declared entrypoints (``unit_cost_provider``, ``energy``, …)
+- Training models through a plugin's ``train_*`` entrypoint
 - Error handling without program termination
+
+It does **not** decide which estimator a given architecture component belongs
+to. That routing used to live here (class→plugin table + per-component feature
+extraction) and served the retired legacy Accelergy path; it now belongs to the
+harness that reads the description (``harness/timeloop/vocabulary.py``), and
+pricing goes through ``energy.provider_factory``'s composed provider chain.
 """
 
 from __future__ import annotations
@@ -12,9 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from npuwattch.npuwattch_db import ComponentEntry, NPUWattchDatabase
-from npuwattch.npuwattch_class_mapper import map_class_to_estimator, extract_features_from_attributes, reclassify_estimator
-from npuwattch.npuwattch_custom_lib import lookup_custom_component
 
 import ast
 import importlib.util
@@ -23,7 +31,12 @@ import runpy
 
 @dataclass(frozen=True)
 class EstimatorModuleInfo:
-    """Represents one estimator module directory (e.g., 'regfile', 'crossbar')."""
+    """One estimator plugin directory (``logic``, ``sram``).
+
+    A plugin may serve several primitives — the ``logic`` module declares a
+    ``primitives`` list covering all 14 characterized blocks — so the directory
+    name is the plugin's, not a primitive's.
+    """
     name: str
     module_dir: Path
     entry_file: Path
@@ -77,11 +90,11 @@ class EstimatorHost:
     Provides safe estimation methods that return None on error instead of terminating.
     """
 
-    def __init__(self, estimator_root: Optional[Path] = None, verbose: int = 0, custom_lib_path: Optional[str] = None) -> None:
+    def __init__(self, estimator_root: Optional[Path] = None,
+                 verbose: int = 0) -> None:
         self.estimator_root = estimator_root or _resolve_estimator_root()
         self._modules: Dict[str, EstimatorModuleInfo] = {}
         self.verbose = verbose
-        self.custom_lib_path = custom_lib_path
 
     def scan_estimators(self) -> Dict[str, EstimatorModuleInfo]:
         """
@@ -323,133 +336,6 @@ class EstimatorHost:
             "area": self.estimate_area(module_name, features, **kwargs),
             "timing": self.estimate_timing(module_name, features, **kwargs),
         }
-
-    def estimate_component(self, comp: ComponentEntry) -> Dict[str, Any]:
-        """Estimate a single component entry.
-
-        This method is responsible for:
-        - Resolving estimator module name from component class/subclass
-        - Feature extraction from component attributes
-        - Executing estimator entrypoints (energy/area/timing)
-        - Storing results back into the ComponentEntry
-        - Printing per-component messages based on verbosity
-
-        Returns:
-            A dict containing estimator name, features, and estimated values.
-        """
-        estimator_name = map_class_to_estimator(comp.comp_class, comp.subclass)
-
-        if estimator_name is None:
-            # Try custom component library lookup
-            print(f"[INFO] Searching custom component library for component '{comp.base_name}' (class: {comp.comp_class})")
-            custom_features = lookup_custom_component(
-                comp.comp_class, comp.subclass, self.custom_lib_path
-            )
-            if custom_features is not None:
-                estimator_name = "custom"
-                features = custom_features
-            else:
-                if self.verbose >= 1:
-                    print(f"[WARNING] No estimator mapping for component '{comp.base_name}' (class: {comp.comp_class})")
-                comp.energy = None
-                comp.area = None
-                comp.timing = None
-                return {
-                    "component": comp.base_name,
-                    "estimator": None,
-                    "features": None,
-                    "energy": None,
-                    "area": None,
-                    "timing": None,
-                }
-        else:
-            features = extract_features_from_attributes(comp.attributes)
-            estimator_name = reclassify_estimator(estimator_name, features)
-
-        if not self.has_module(estimator_name):
-            print(
-                f"[ERROR] Estimator '{estimator_name}' does not exist for component '{comp.base_name}'"
-            )
-            comp.energy = None
-            comp.area = None
-            comp.timing = None
-            return {
-                "component": comp.base_name,
-                "estimator": estimator_name,
-                "features": None,
-                "energy": None,
-                "area": None,
-                "timing": None,
-            }
-
-        estimates = self.estimate_all(estimator_name, features)
-
-        comp.energy = estimates.get("energy")
-        comp.area = estimates.get("area")
-        comp.timing = estimates.get("timing")
-
-        if self.verbose >= 2:
-            print(f"[INFO] {comp.base_name}:")
-            print(f"       Estimator: {estimator_name}")
-            print(f"       Features: {features}")
-            print(f"       Energy: {comp.energy}, Area: {comp.area}, Timing: {comp.timing}")
-
-        return {
-            "component": comp.base_name,
-            "estimator": estimator_name,
-            "features": features,
-            "energy": comp.energy,
-            "area": comp.area,
-            "timing": comp.timing,
-        }
-
-    def estimate_database(self, db: NPUWattchDatabase) -> Dict[str, Any]:
-        """Run estimation on all components in a database and print a summary."""
-        print(f"[INFO] Running estimation on database: {db.source_file}")
-
-        for comp in db.components:
-            self.estimate_component(comp)
-
-        # Print summary
-        print(f"\n[INFO] Estimation Summary for {db.source_file}")
-        print("=" * 100)
-        print(f"{'COMPONENT':<60} {'ENERGY':>15} {'AREA':>15}")
-        print("-" * 100)
-
-        total_energy = 0.0
-        total_area = 0.0
-
-        for comp in db.components:
-            energy_str = f"{comp.energy:.6e}" if comp.energy is not None else "N/A"
-            area_str = f"{comp.area:.2f}" if comp.area is not None else "N/A"
-            # timing exists but summary table currently prints energy/area only (kept consistent with prior behavior)
-            print(f"{comp.base_name:<60} {energy_str:>15} {area_str:>15}")
-
-            if comp.energy is not None:
-                total_energy += comp.energy * comp.instance_count
-            if comp.area is not None:
-                total_area += comp.area * comp.instance_count
-
-        print("-" * 100)
-        print(
-            f"{'TOTAL':<60} {total_energy:>15.6e} {total_area:>15.2f}"
-        )
-        print("=" * 100)
-
-        return {
-            "source_file": str(db.source_file),
-            "total_instances": db.total_instances(),
-            "total_energy": total_energy,
-            "total_area": total_area,
-        }
-
-    def estimate_databases(self, databases: List[NPUWattchDatabase]) -> List[Dict[str, Any]]:
-        """Run estimation on multiple databases."""
-        summaries: List[Dict[str, Any]] = []
-        for db in databases:
-            summaries.append(self.estimate_database(db))
-        return summaries
-    
 
     def train_model(
         self,

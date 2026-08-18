@@ -231,8 +231,9 @@ class DatabaseBuilder:
         Returns:
             NPUWattchDatabase populated with component entries
         """
-        print(f"[INFO] Starting database construction from: {source_name}")
-        
+        if self.verbose >= 1:
+            print(f"[INFO] Starting database construction from: {source_name}")
+
         # Extract architecture section
         arch = content.get('architecture', {})
         version = arch.get('version', '0.4')
@@ -252,10 +253,11 @@ class DatabaseBuilder:
         # Output detailed info if verbose >= 2
         if self.verbose >= 2:
             self._print_database_contents(db)
-        
-        print(f"[INFO] Database construction complete. "
-              f"Loaded {len(db)} components with {db.total_instances()} total instances.")
-        
+
+        if self.verbose >= 1:
+            print(f"[INFO] Database construction complete. "
+                  f"Loaded {len(db)} components with {db.total_instances()} total instances.")
+
         return db
     
     def _print_database_contents(self, db: NPUWattchDatabase) -> None:

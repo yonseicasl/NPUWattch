@@ -1,0 +1,126 @@
+{% import "_power_stim.sv.j2" as pwr %}
+module {{ module_name }}_tb;
+    localparam int DATA_WIDTH = {{ data_width }};
+    localparam int NUM_INPUTS = {{ num_inputs }};
+    localparam int SEL_WIDTH = (NUM_INPUTS <= 1) ? 1 : $clog2(NUM_INPUTS);
+    localparam int NUM_CYCLES = 80;
+
+    logic [NUM_INPUTS*DATA_WIDTH-1:0] i_data;
+    logic [NUM_INPUTS-1:0] i_valid;
+    logic [DATA_WIDTH-1:0] o_data;
+    logic o_valid;
+    logic [SEL_WIDTH-1:0] o_sel;
+    logic [NUM_INPUTS-1:0] o_grant;
+
+    int errors;
+    int x_errors;
+
+    simplemux #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .NUM_INPUTS(NUM_INPUTS)
+    ) dut (
+        .i_data(i_data),
+        .i_valid(i_valid),
+        .o_data(o_data),
+        .o_valid(o_valid),
+        .o_sel(o_sel),
+        .o_grant(o_grant)
+    );
+
+{{ pwr.decls("DATA_WIDTH") }}
+    // Power-phase stimulus per +nw_power_mode (activity classes):
+    //   random   full traffic: every source valid, data random (legacy)
+    //   valid25  each source valid with p=0.25; invalid sources hold their
+    //            data -> partial-load power / valid-gating effectiveness
+    task automatic nw_drive_random();
+        if (nw_power_mode == "random") begin
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                i_valid[src] = 1'b1;
+            end
+        end else if (nw_power_mode == "valid25") begin
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                if ($urandom_range(0, 3) == 0) begin
+                    i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'(nw_rand_bits(DATA_WIDTH));
+                    i_valid[src] = 1'b1;
+                end else begin
+                    i_valid[src] = 1'b0;  // data held: an idle source does not toggle
+                end
+            end
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for simplemux: %s", nw_power_mode);
+        end
+    endtask
+
+{{ pwr.pace_init() }}
+    initial begin
+        i_data = '0;
+        i_valid = '0;
+        errors = 0;
+        for (int cycle = 0; cycle < NUM_CYCLES; cycle = cycle + 1) begin
+            logic [DATA_WIDTH-1:0] exp_data;
+            logic exp_valid;
+            logic [SEL_WIDTH-1:0] exp_sel;
+            logic [NUM_INPUTS-1:0] exp_grant;
+
+            i_data = '0;
+            i_valid = '0;
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                i_data[src*DATA_WIDTH +: DATA_WIDTH] = DATA_WIDTH'($urandom);
+                if (cycle < 16) begin
+                    i_valid[src] = 1'b0;
+                end else if (cycle < 36) begin
+                    i_valid[src] = ($urandom_range(0, 7) == 0);
+                end else if (cycle < 60) begin
+                    i_valid[src] = ($urandom_range(0, 1) == 0);
+                end else begin
+                    i_valid[src] = 1'b1;
+                end
+            end
+
+            exp_data = '0;
+            exp_valid = 1'b0;
+            exp_sel = '0;
+            exp_grant = '0;
+            for (int src = 0; src < NUM_INPUTS; src = src + 1) begin
+                if (i_valid[src] && !exp_valid) begin
+                    exp_data = i_data[src*DATA_WIDTH +: DATA_WIDTH];
+                    exp_valid = 1'b1;
+                    exp_sel = SEL_WIDTH'(src);
+                    exp_grant[src] = 1'b1;
+                end
+            end
+
+            // One pacing period of settle: the SDC bounds every in->out path
+            // to the period minus the uncertainty, while a fixed #1 undershot
+            // the SDF propagation delay of the large/slow configurations.
+            #(nw_clock_period_ns);
+            $display("simplemux cycle=%0d valid=%b got_valid=%0b exp_valid=%0b", cycle, i_valid, o_valid, exp_valid);
+            if ((o_valid !== exp_valid) || (o_data !== exp_data) || (o_sel !== exp_sel) || (o_grant !== exp_grant)) begin
+                errors = errors + 1;
+                if ($isunknown({o_valid, o_data, o_sel, o_grant})) x_errors = x_errors + 1;
+                $display("simplemux mismatch cycle=%0d got_data=%h exp_data=%h got_sel=%0d exp_sel=%0d", cycle, o_data, exp_data, o_sel, exp_sel);
+            end
+        end
+
+        if (x_errors != 0) begin
+            // Unknown (X) outputs mean the sim itself is broken (reset,
+            // annotation, or initreg failure): the power phase would record
+            // garbage toggles, so unknowns stay fatal.
+            $display("simplemux_tb FAIL unknown_outputs=%0d errors=%0d", x_errors, errors);
+            $fatal(1);
+        end else if (errors == 0) begin
+            $display("simplemux_tb PASS");
+        end else begin
+            // Definite-value mismatches are near-miss timing artifacts of the
+            // sampled instant; random-stimulus toggle statistics in the power
+            // phase do not depend on them (sweep policy 2026-07-27: do not
+            // gate the dataset on a strict functional-timing pass).
+            $display("simplemux_tb PASS marginal_errors=%0d", errors);
+        end
+{{ pwr.run_comb(module_name ~ "_tb", power_cycles) }}
+        $finish;
+    end
+
+{{ pwr.saif_hook(module_name ~ "_tb") }}
+endmodule

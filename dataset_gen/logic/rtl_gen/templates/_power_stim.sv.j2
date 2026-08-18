@@ -1,0 +1,150 @@
+{# Shared power-stimulus building blocks for the generated testbenches.
+
+   Every TB runs its self-checking functional phase first, then (only on PASS)
+   a marked random-stimulus "power phase". In gate-level sims the SAIF toggle
+   window covers exactly the power phase, so the average power PrimeTime
+   derives from the SAIF is measured over defined, reproducible activity:
+   full-rate uniform-random operands at the job's clock period.
+
+   Runtime plusargs (all optional):
+     +nw_clock_period_ps=<int>  TB clock / input pacing period in ps
+                                (default 10000 = 10 ns); autosim passes the
+                                job's clock period so activity is captured at
+                                the frequency the power row claims.
+     +nw_power_cycles=<int>     number of random vectors in the power phase
+                                (default baked in at generation time).
+     +nw_power_warmup=<int>     stimulus vectors driven BEFORE the SAIF window
+                                opens (default 16) so pipelines/occupancy reach
+                                steady state and the measured window is
+                                stationary -- no cold-start undercount, and the
+                                in-flight work leaking out at the window end is
+                                balanced by warmed-up work leaking in at the
+                                start.
+     +nw_power_seed=<int>       $urandom seed for the power phase (default 42).
+     +nw_power_mode=<string>    stimulus class driven during the power phase
+                                (default "random").  Modules whose ports have
+                                distinguishable operations dispatch on it in
+                                nw_drive_random() (read/write/idle/hold_b/...);
+                                see autosweep/activity_modes.md for the mode
+                                table.  A TB $fatal()s on a mode it does not
+                                implement, so a typo can never silently
+                                measure random activity.
+
+   Each TB must define `task automatic nw_drive_random();` that drives one
+   input vector for the active nw_power_mode (plain modules ignore the mode
+   and always drive uniform random).
+#}
+{% macro decls(max_width_expr) %}
+    // Power-stimulus phase state (see templates/_power_stim.sv.j2).
+    localparam int NW_RAND_MAX_BITS = {{ max_width_expr }};
+    bit nw_power_phase;
+    int unsigned nw_power_cycles;
+    int unsigned nw_power_warmup;
+    int unsigned nw_power_seed;
+    real nw_clock_period_ns = 10.0;
+    string nw_power_mode = "random";
+    bit nw_mode_init;  // set by hold-style modes after latching their value
+
+    function automatic logic [NW_RAND_MAX_BITS-1:0] nw_rand_bits(input int nbits);
+        logic [31:0] chunk;
+        nw_rand_bits = '0;
+        for (int b = 0; b < nbits; b = b + 1) begin
+            if ((b % 32) == 0) chunk = $urandom();
+            nw_rand_bits[b] = chunk[b % 32];
+        end
+    endfunction
+{% endmacro %}
+{% macro clock_gen(clk) %}
+    initial begin
+        int unsigned nw_period_ps;
+        if ($value$plusargs("nw_clock_period_ps=%d", nw_period_ps)) begin
+            nw_clock_period_ns = nw_period_ps / 1000.0;
+        end
+        {{ clk }} = 1'b0;
+        forever #(nw_clock_period_ns / 2.0) {{ clk }} = ~{{ clk }};
+    end
+{% endmacro %}
+{% macro pace_init() %}
+    initial begin
+        int unsigned nw_period_ps;
+        if ($value$plusargs("nw_clock_period_ps=%d", nw_period_ps)) begin
+            nw_clock_period_ns = nw_period_ps / 1000.0;
+        end
+    end
+{% endmacro %}
+{% macro run_clocked(tb_name, clk, default_cycles) %}
+        // Power-stimulus phase: one random vector per cycle at full input rate.
+        if (!$value$plusargs("nw_power_cycles=%d", nw_power_cycles)) begin
+            nw_power_cycles = {{ default_cycles }};
+        end
+        if (!$value$plusargs("nw_power_warmup=%d", nw_power_warmup)) begin
+            nw_power_warmup = 16;
+        end
+        if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
+            nw_power_seed = 42;
+        end
+        void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
+        void'($urandom(nw_power_seed));
+        $display("{{ tb_name }} power phase start cycles=%0d warmup=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_warmup, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        // Warmup outside the SAIF window: reach steady state before it opens.
+        repeat (nw_power_warmup) begin
+            @(negedge {{ clk }});
+            nw_drive_random();
+        end
+        nw_power_phase = 1'b1;
+        repeat (nw_power_cycles) begin
+            @(negedge {{ clk }});
+            nw_drive_random();
+        end
+        @(negedge {{ clk }});
+        nw_power_phase = 1'b0;
+        $display("{{ tb_name }} power phase end");
+        repeat (2) @(posedge {{ clk }});
+{% endmacro %}
+{% macro run_comb(tb_name, default_cycles) %}
+        // Power-stimulus phase: one random vector per pacing period.
+        if (!$value$plusargs("nw_power_cycles=%d", nw_power_cycles)) begin
+            nw_power_cycles = {{ default_cycles }};
+        end
+        if (!$value$plusargs("nw_power_warmup=%d", nw_power_warmup)) begin
+            nw_power_warmup = 16;
+        end
+        if (!$value$plusargs("nw_power_seed=%d", nw_power_seed)) begin
+            nw_power_seed = 42;
+        end
+        void'($value$plusargs("nw_power_mode=%s", nw_power_mode));
+        void'($urandom(nw_power_seed));
+        $display("{{ tb_name }} power phase start cycles=%0d warmup=%0d seed=%0d period_ns=%g mode=%s",
+            nw_power_cycles, nw_power_warmup, nw_power_seed, nw_clock_period_ns, nw_power_mode);
+        // Warmup outside the SAIF window (combinational blocks have no state,
+        // but the identical structure keeps the window semantics uniform).
+        repeat (nw_power_warmup) begin
+            nw_drive_random();
+            #(nw_clock_period_ns);
+        end
+        nw_power_phase = 1'b1;
+        repeat (nw_power_cycles) begin
+            nw_drive_random();
+            #(nw_clock_period_ns);
+        end
+        nw_power_phase = 1'b0;
+        $display("{{ tb_name }} power phase end");
+        // Yield before $finish so the SAIF hook can run $toggle_report.
+        #(nw_clock_period_ns);
+{% endmacro %}
+{% macro saif_hook(tb_name) %}
+`ifdef NW_LOGIC_GATE_SIM
+    // Toggle capture is windowed to the power phase, so the SAIF duration --
+    // the interval PrimeTime averages over -- covers only the random stimulus.
+    initial begin
+        $set_gate_level_monitoring("on");
+        $set_toggle_region({{ tb_name }}.dut);
+        @(posedge nw_power_phase);
+        $toggle_start();
+        @(negedge nw_power_phase);
+        $toggle_stop();
+        $toggle_report("sim.saif", 1.0e-9, "{{ tb_name }}.dut");
+    end
+`endif
+{% endmacro %}

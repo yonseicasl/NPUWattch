@@ -1,0 +1,60 @@
+# DRAM device (HBM2) — the off-chip memory dies behind the log's [DRAM]
+# channels. PyTorchSim delegates DRAM timing to Ramulator 2.0 (dram_type:
+# ramulator2), which dumps per-channel controller counters in the log's final
+# "=== DRAM statistics ===" block; the pytorchsim projection charges those
+# command counts against the analytic per-command energies below. This is the
+# same fixed-cost pattern as the NoC's d2dlink (no characterization flow for an
+# off-chip part; energy.unit_cost.HBMCostProvider prices it, labeled `const`
+# in the summary — never claimed as calibrated).
+#
+# ENERGY CONSTANTS — source (do not change without updating the citation):
+#   M. O'Connor, N. Chatterjee, D. Lee, J. Wilson, A. Agrawal, S. W. Keckler,
+#   and W. J. Dally, "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
+#   Bandwidth Systems," in Proc. 50th Annual IEEE/ACM International Symposium
+#   on Microarchitecture (MICRO-50), 2017, Table 3 (HBM2 column).
+#   DOI: 10.1145/3123939.3124545
+#
+#   mem_act_energy_pJ: 909            row activation = precharge + activate of
+#                                     one 1 KB row (Table 3, "Row activation")
+#   mem_access_energy_per_bit_pJ: 3.48  per-bit access energy =
+#                                     1.51 (pre-GSA data movement)
+#                                   + 1.17 (post-GSA data movement, 50% toggle)
+#                                   + 0.80 (I/O, 50% activity)  [Table 3]
+#                                     charged per RD/WR command x data_width
+#                                     (32 B request -> 256 bits -> 890.9 pJ);
+#                                     read and write are charged symmetrically
+#                                     (the paper does not split them).
+#   mem_ref_energy_pJ: 58176          per REFab command, derived first-order
+#                                     from the same activation energy: an 8 Gb
+#                                     HBM2 channel of 1 KB rows has 2^20 rows;
+#                                     JESD235 refresh (tREFI 3.9 us over the
+#                                     64 ms retention window) spreads them over
+#                                     16384 REF commands -> 64 rows/REFab x
+#                                     909 pJ = 58176 pJ. Refresh is <0.1% of
+#                                     the command mix in every sample seen.
+#
+# NOT charged (declared out_of_scope in the projection): background/standby
+# power and the memory-controller/PHY on the NPU die — vendor IDD values for
+# HBM are not public, and the on-chip consequences of DRAM traffic (VMEM
+# fills/drains, DMA engine, NoC flits) are already charged by their own
+# compounds. Override any constant per run by editing this file or pointing
+# --bundle at a copy (a user bundle is the sanctioned override path).
+#
+# data_width resolves from the run config's dram_req_size_byte (default 32 B,
+# injected by the reader); count = the config's dram_channels. Counts are
+# chip-aggregate (the statistics block is summed over channels), so the
+# element stays per: chip — same convention as the NoC.
+
+dram:
+  default_mode: gated
+  elements:
+
+    dram_chan:
+      primitive: hbm
+      config:
+        data_width: "dram_req_size_byte*8"
+        mem_act_energy_pJ: 909
+        mem_access_energy_per_bit_pJ: 3.48
+        mem_ref_energy_pJ: 58176
+      count: dram_channels
+      per: chip

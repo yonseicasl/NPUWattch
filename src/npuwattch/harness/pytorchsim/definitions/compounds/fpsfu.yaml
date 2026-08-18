@@ -1,0 +1,57 @@
+# ============================================================================
+#  fpsfu — the per-core SFU (transcendental special function unit)
+# ============================================================================
+# HARNESS-OWNED. Design: docs/DESIGN_SFU_DMA.md §2 (user decisions 2026-07-23).
+#
+# PyTorchSim's SFU (ARCHITECTURE_SPEC §2/§3: 1 per core, exp/erf/tanh/sin/cos,
+# fixed latency 10) maps to the `fpsfu` primitive — a shared-datapath piecewise-
+# linear evaluator (range reduction → segment LUT → slope·x+intercept →
+# reconstruction) whose op GROUPS are elaboration-time flags:
+#
+#   sfu_op_exp   exp + exp2          (one base-2 core + constant premultiply)
+#   sfu_op_trig  sin + cos           (shared mod-2π range reduction + quadrant)
+#   sfu_op_hyp   tanh + sigmoid      (tanh(x) = 2·sigmoid(2x) − 1)
+#   sfu_op_erf   erf                 (own table)
+#
+# PyTorchSim can emit every group, so all four are on here. sfu_op_relu exists
+# in the primitive but is NOT enabled: PyTorchSim lowers ReLU to a VFU max op,
+# never to the SFU.
+#
+# ASSUMPTIONS (documented in the design doc):
+#   * count: lanes — a SIMD SFU with one PWL pipe per vector lane (the spec's
+#     fixed latency regardless of vector length ⇒ parallel, not iterative);
+#   * table dtype = the kernel's operand dtype (sfu_exponent_bits /
+#     sfu_mantissa_bits symbols injected by activity.read_run; int/unknown
+#     operand → fp32 tables with a warning);
+#   * sfu_segments: 64 PWL entries per table (~2 kbit/table — synthesized
+#     gates, not a ROM macro, matching practice at this size);
+#   * pipeline_stages: 10 — matches PyTorchSim's stated SFU latency of 10 and
+#     is the DEEPEST characterized point (sweep points are ps 4/7/10; staying
+#     on a characterized point keeps the timing MLP interpolating). This
+#     matters for the report's f_max check: crit_path shrinks with ps (the
+#     RTL is REALLY staged — 9 segments, both multipliers split), and a
+#     shallow assumption would flag a spurious "clock > f_max" at sim clocks
+#     like 940 MHz. Energy per op is amortized whole-pipeline energy, so ps
+#     affects the f_max check and (slightly, via pipeline registers)
+#     area/leakage — not the per-event energy accounting.
+#
+# default_mode: gated — only the op group an action names is charged; an SFU
+# that runs nothing contributes leakage/area only (§6).
+
+fpsfu:
+  default_mode: gated
+  elements:
+
+    sfu_pipe:                           # one PWL evaluator pipe per lane
+      primitive: fpsfu
+      config:
+        exponent_bits: sfu_exponent_bits
+        mantissa_bits: sfu_mantissa_bits
+        sfu_op_exp: 1
+        sfu_op_trig: 1
+        sfu_op_hyp: 1
+        sfu_op_erf: 1
+        sfu_segments: 64
+        pipeline_stages: 10
+      count: lanes
+      per: core

@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
   "Jinja2>=3.1",
+  "rich>=13.0",
   "torch",
   "PyYAML>=6.0"
 ]
@@ -23,5 +24,24 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Report template + JSON schema (manual §8 / §3.6).
+"npuwattch.report" = ["templates/*.j2", "schema.json"]
+# System contract for the compound interpreter.
+"npuwattch.harness.compounds" = ["data/*.json", "data/*.md"]
+# Per-harness definition bundles (compounds + projections), JSON or YAML.
+"npuwattch.harness.pytorchsim" = [
+  "definitions/*.md",
+  "definitions/compounds/*.json", "definitions/compounds/*.yaml", "definitions/compounds/*.yml",
+  "definitions/projections/*.json", "definitions/projections/*.yaml", "definitions/projections/*.yml",
+]
+"npuwattch.harness.timeloop" = [
+  "definitions/projections/*.json", "definitions/projections/*.yaml", "definitions/projections/*.yml",
+]
+
 [tool.setuptools.dynamic]
 version = {attr = "npuwattch._version.__version__"}
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,69 @@
+{
+  "component": "intmac",
+  "model": "leakage",
+  "version": "v2",
+  "arch": [
+    128,
+    128,
+    128
+  ],
+  "n_in": 17,
+  "features": [
+    "log10_node_nm",
+    "log10_clock_ns",
+    "log2_a_width",
+    "log2_b_width",
+    "log2_out_width",
+    "log2_acc_width",
+    "log2_pipeline_stages",
+    "node_is_5nm",
+    "node_is_7nm",
+    "node_is_10nm",
+    "node_is_16nm",
+    "node_is_20nm",
+    "mode_none",
+    "mode_random",
+    "mode_hold_b",
+    "mode_sparse50",
+    "mode_idle"
+  ],
+  "stim_modes": [
+    "none",
+    "random",
+    "hold_b",
+    "sparse50",
+    "idle"
+  ],
+  "target": "log10_mW",
+  "target_column": "leak_power_mW",
+  "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
+  "seed": 42,
+  "split": {
+    "train": 1760,
+    "val": 220,
+    "test": 220
+  },
+  "epochs_run": 400,
+  "val_mape": 0.03864805027842522,
+  "test_mape": 0.042618701619683286,
+  "test_spearman": 0.9963541654933444,
+  "per_mode_test_mape": {
+    "hold_b": 0.03831088332404511,
+    "idle": 0.0453956822042866,
+    "none": 0.041200698665489324,
+    "random": 0.04290260209058929,
+    "sparse50": 0.04528364181400609
+  },
+  "per_node_test_mape": {
+    "10nm": 0.051701599397536845,
+    "16nm": 0.032103072463704564,
+    "20nm": 0.05079527732657356,
+    "5nm": 0.04129620121860591,
+    "7nm": 0.03939671805975671
+  },
+  "excluded_nodes": [],
+  "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
+  "loss_max_min_ratio": 14.949106216430664,
+  "date": "2026-08-09T21:33:59",
+  "torch": "2.13.0+cpu"
+}

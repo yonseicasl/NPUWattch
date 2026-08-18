@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.pyo
+tests/
 
 # OS
 .DS_Store
@@ -17,6 +18,22 @@ desktop.ini
 
 # AI agents
 .claude/
+.codex/
+docs/
+CLAUDE.md
 
-# PDKs
-dataset_gen/NW_logic/tech_libs/techlib_*nm/*
+# PDKs / technology collateral (shared by logic and SRAM flows; only
+# tech_libs/catalog.json is committable — never .db/.ndm/.lib/.lef/GDS/tf/
+# tluplus/nxtgrd or SPICE model cards)
+dataset_gen/tech_libs/techlib_*nm/*
+dataset_gen/*.tar.gz
+dataset_gen/logic/TECH_*/0*_*
+dataset_gen/sram/TECH_*/*
+dataset_gen/logic/autosweep/scoreboard.jsonl
+
+# generated files
+dataset_gen/logic/rtl_gen/rtl/*
+dataset_gen/logic/sweep_reports/*
+dataset_gen/sram/autosweep/logs/
+
+

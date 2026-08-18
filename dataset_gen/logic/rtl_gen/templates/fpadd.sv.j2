@@ -1,0 +1,377 @@
+// fpadd -- IEEE-like add/sub with round-to-nearest-even.
+//
+// Pipeline: REAL stage distribution (no output delay banks). The datapath is
+// eight combinational segments; `pipeline_plan.plan_cuts` places the
+// PIPELINE_STAGES-2 register cuts among the seven internal boundaries so the
+// heaviest stage is as light as possible. Banks = input capture + cuts +
+// output = PIPELINE_STAGES, so latency = PIPELINE_STAGES exactly.
+//
+//   SEG1 unpack | SEG2 compare/swap | SEG3 align shift | SEG4 add/sub |
+//   SEG5 leading-zero count | SEG6 exponent resolve | SEG7 normalize+GRS |
+//   SEG8 round + pack
+//
+// The cut placement is generation-time (it depends on EXPONENT_BITS and
+// MANTISSA_BITS through the segment weights), so PIPELINE_STAGES below is the
+// value this file was generated for and is carried for the flow/TB interface
+// -- overriding it at elaboration moves neither the cuts nor the latency.
+//
+// Plan for this variant (relative delay weights):
+{{ stage_plan }}
+//
+// Special-case results (zero/Inf/NaN operands) are resolved in SEG2 and ride
+// the pipe as one value + one valid bit, so the late class mux stays short and
+// the raw operands do not have to be carried to the end.
+module {{ module_name }} #(
+    parameter int EXPONENT_BITS = {{ exp_bits }},
+    parameter int MANTISSA_BITS = {{ mantissa_bits }},
+    parameter int PIPELINE_STAGES = {{ pipeline_stages }}
+) (
+    input  logic [EXPONENT_BITS+MANTISSA_BITS:0] i_a,
+    input  logic [EXPONENT_BITS+MANTISSA_BITS:0] i_b,
+    input  logic                                 i_clk,
+    input  logic                                 i_rst_n,
+    output logic [EXPONENT_BITS+MANTISSA_BITS:0] o_sum,
+    output logic                                 o_ovfl,
+    output logic                                 o_udfl
+);
+
+    function automatic int clogb2(input int bit_depth);
+        int value;
+        begin
+            value = bit_depth - 1;
+            for (clogb2 = 0; value > 0; clogb2 = clogb2 + 1) begin
+                value = value >> 1;
+            end
+        end
+    endfunction
+
+    localparam int W       = EXPONENT_BITS + MANTISSA_BITS + 1;
+    localparam int FP_MSB  = EXPONENT_BITS + MANTISSA_BITS;
+    localparam int EBITS   = EXPONENT_BITS;
+    localparam int MBITS   = MANTISSA_BITS;
+    localparam int SHIFT_COUNTER_BITS = clogb2(MANTISSA_BITS + 5);
+    localparam int SUMW    = MANTISSA_BITS + 5;   // add/sub result width
+    localparam int SHW     = MANTISSA_BITS + 4;   // aligned significand width
+    localparam int SIGW    = MANTISSA_BITS + 1;   // significand incl. hidden bit
+    localparam int MAGW    = EXPONENT_BITS + MANTISSA_BITS;  // |x| field width
+
+{% macro decl(sigs) %}
+{% for s in sigs %}
+    {{ s.t }} {{ s.d }};
+{% endfor %}
+{% endmacro %}
+{% macro bank(idx, sigs) %}
+{% if cuts[idx] %}
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+{% for s in sigs %}
+            {{ s.d }} <= '0;
+{% endfor %}
+        end else begin
+{% for s in sigs %}
+            {{ s.d }} <= {{ s.s }};
+{% endfor %}
+        end
+    end
+{% else %}
+{% for s in sigs %}
+    assign {{ s.d }} = {{ s.s }};
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+    // ---- input capture (stage boundary 0) ---------------------------------
+    logic [FP_MSB:0] s1_a;
+    logic [FP_MSB:0] s1_b;
+
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            s1_a <= '0;
+            s1_b <= '0;
+        end else begin
+            s1_a <= i_a;
+            s1_b <= i_b;
+        end
+    end
+
+    /* verilator lint_off WIDTHEXPAND */
+    /* verilator lint_off WIDTHTRUNC */
+
+    // ======================= SEG1: unpack ==================================
+    wire d1_sign_a = s1_a[FP_MSB];
+    wire d1_sign_b = s1_b[FP_MSB];
+    wire [EBITS-1:0] d1_exp_a = s1_a[FP_MSB-1:MBITS];
+    wire [EBITS-1:0] d1_exp_b = s1_b[FP_MSB-1:MBITS];
+    wire [MBITS-1:0] d1_frac_a = s1_a[MBITS-1:0];
+    wire [MBITS-1:0] d1_frac_b = s1_b[MBITS-1:0];
+
+    wire d1_exp_a_all_ones = &d1_exp_a;
+    wire d1_exp_b_all_ones = &d1_exp_b;
+    wire d1_frac_a_nz = |d1_frac_a;
+    wire d1_frac_b_nz = |d1_frac_b;
+    wire d1_exp_a_is_zero = ~|d1_exp_a;
+    wire d1_exp_b_is_zero = ~|d1_exp_b;
+
+    wire d1_inf_a  = d1_exp_a_all_ones && !d1_frac_a_nz;
+    wire d1_inf_b  = d1_exp_b_all_ones && !d1_frac_b_nz;
+    wire d1_nan_a  = d1_exp_a_all_ones && d1_frac_a_nz;
+    wire d1_nan_b  = d1_exp_b_all_ones && d1_frac_b_nz;
+    wire d1_zero_a = d1_exp_a_is_zero && !d1_frac_a_nz;
+    wire d1_zero_b = d1_exp_b_is_zero && !d1_frac_b_nz;
+
+    // Subnormals (exp field 0) have an effective unbiased exponent of (1 - bias),
+    // i.e. they align as if the exponent field were 1 while keeping a 0 hidden bit.
+    wire [EBITS-1:0] d1_exp_a_eff = d1_exp_a_is_zero ? { {(EBITS-1){1'b0}}, 1'b1} : d1_exp_a;
+    wire [EBITS-1:0] d1_exp_b_eff = d1_exp_b_is_zero ? { {(EBITS-1){1'b0}}, 1'b1} : d1_exp_b;
+
+    wire d1_is_sum = (d1_sign_a == d1_sign_b);
+    wire [MAGW-1:0] d1_abs_a = s1_a[FP_MSB-1:0];
+    wire [MAGW-1:0] d1_abs_b = s1_b[FP_MSB-1:0];
+
+{% set b1 = [
+  {'t':'logic',                'd':'s2_sign_a',       's':'d1_sign_a'},
+  {'t':'logic',                'd':'s2_sign_b',       's':'d1_sign_b'},
+  {'t':'logic [MAGW-1:0]',     'd':'s2_abs_a',        's':'d1_abs_a'},
+  {'t':'logic [MAGW-1:0]',     'd':'s2_abs_b',        's':'d1_abs_b'},
+  {'t':'logic [MBITS-1:0]',    'd':'s2_frac_a',       's':'d1_frac_a'},
+  {'t':'logic [MBITS-1:0]',    'd':'s2_frac_b',       's':'d1_frac_b'},
+  {'t':'logic [EBITS-1:0]',    'd':'s2_exp_a_eff',    's':'d1_exp_a_eff'},
+  {'t':'logic [EBITS-1:0]',    'd':'s2_exp_b_eff',    's':'d1_exp_b_eff'},
+  {'t':'logic',                'd':'s2_exp_a_is_zero','s':'d1_exp_a_is_zero'},
+  {'t':'logic',                'd':'s2_exp_b_is_zero','s':'d1_exp_b_is_zero'},
+  {'t':'logic',                'd':'s2_zero_a',       's':'d1_zero_a'},
+  {'t':'logic',                'd':'s2_zero_b',       's':'d1_zero_b'},
+  {'t':'logic',                'd':'s2_inf_a',        's':'d1_inf_a'},
+  {'t':'logic',                'd':'s2_inf_b',        's':'d1_inf_b'},
+  {'t':'logic',                'd':'s2_nan_a',        's':'d1_nan_a'},
+  {'t':'logic',                'd':'s2_nan_b',        's':'d1_nan_b'},
+  {'t':'logic',                'd':'s2_is_sum',       's':'d1_is_sum'}
+] %}
+    // ---- cut: SEG1 -> SEG2 -------------------------------------------------
+{{ decl(b1) }}{{ bank(0, b1) }}
+
+    // ================== SEG2: compare / swap / specials ====================
+    wire [EBITS:0] d2_exp_diff = (s2_exp_a_eff > s2_exp_b_eff)
+                                 ? (s2_exp_a_eff - s2_exp_b_eff)
+                                 : (s2_exp_b_eff - s2_exp_a_eff);
+    wire d2_abs_a_gt_abs_b = s2_abs_a > s2_abs_b;
+    wire d2_abs_a_eq_abs_b = !d2_abs_a_gt_abs_b && (s2_abs_a == s2_abs_b);
+
+    wire [EBITS-1:0] d2_exp_large = d2_abs_a_gt_abs_b ? s2_exp_a_eff : s2_exp_b_eff;
+    wire [SIGW-1:0] d2_frac_large = d2_abs_a_gt_abs_b ? {!s2_exp_a_is_zero, s2_frac_a}
+                                                      : {!s2_exp_b_is_zero, s2_frac_b};
+    wire [SIGW-1:0] d2_frac_small = d2_abs_a_gt_abs_b ? {!s2_exp_b_is_zero, s2_frac_b}
+                                                      : {!s2_exp_a_is_zero, s2_frac_a};
+    wire d2_sign_sum = (s2_is_sum || d2_abs_a_gt_abs_b || d2_abs_a_eq_abs_b)
+                       ? s2_sign_a : s2_sign_b;
+    wire d2_both_exp_zero = s2_exp_a_is_zero && s2_exp_b_is_zero;
+
+    // Operand classes that fully determine the result. Resolving them here
+    // keeps the SEG8 mux short and stops the raw operands from riding the
+    // whole pipe; SEG8 only has to prefer this value when it is valid, which
+    // matches the priority order of the original single-block mux.
+    wire d2_special_valid = s2_zero_a || s2_zero_b || s2_nan_a || s2_nan_b
+                            || s2_inf_a || s2_inf_b;
+    logic [FP_MSB:0] d2_special_val;
+    always_comb begin
+        d2_special_val = '0;
+        if (s2_zero_a && s2_zero_b) begin
+            // Under round-to-nearest the sum of two zeros is +0 unless both are -0.
+            d2_special_val = {s2_sign_a & s2_sign_b, {(FP_MSB){1'b0}}};
+        end else if (s2_zero_a) begin
+            d2_special_val = {s2_sign_b, s2_abs_b};
+        end else if (s2_zero_b) begin
+            d2_special_val = {s2_sign_a, s2_abs_a};
+        end else if (s2_nan_a || s2_nan_b) begin
+            d2_special_val = {d2_sign_sum, s2_abs_a | s2_abs_b};
+        end else if (s2_inf_a) begin
+            d2_special_val = s2_inf_b
+                ? (s2_is_sum ? {s2_sign_a, s2_abs_a}
+                             : {d2_sign_sum, {EBITS{1'b1}}, 1'b1, {(MBITS-1){1'b0}}})
+                : {s2_sign_a, s2_abs_a};
+        end else if (s2_inf_b) begin
+            d2_special_val = {s2_sign_b, s2_abs_b};
+        end
+    end
+
+{% set b2 = [
+  {'t':'logic [EBITS:0]',   'd':'s3_exp_diff',      's':'d2_exp_diff'},
+  {'t':'logic [SIGW-1:0]',  'd':'s3_frac_large',    's':'d2_frac_large'},
+  {'t':'logic [SIGW-1:0]',  'd':'s3_frac_small',    's':'d2_frac_small'},
+  {'t':'logic [EBITS-1:0]', 'd':'s3_exp_large',     's':'d2_exp_large'},
+  {'t':'logic',             'd':'s3_is_sum',        's':'s2_is_sum'},
+  {'t':'logic',             'd':'s3_sign_sum',      's':'d2_sign_sum'},
+  {'t':'logic',             'd':'s3_both_exp_zero', 's':'d2_both_exp_zero'},
+  {'t':'logic',             'd':'s3_special_valid', 's':'d2_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s3_special_val',   's':'d2_special_val'}
+] %}
+    // ---- cut: SEG2 -> SEG3 -------------------------------------------------
+{{ decl(b2) }}{{ bank(1, b2) }}
+
+    // ======================= SEG3: align shift =============================
+    // Align the smaller operand by a single right shift, preserving every bit that
+    // falls below the three guard/round/sticky positions as a sticky OR. Rounding is
+    // then applied exactly once on the post-add result; pre-rounding the shifted
+    // operand here would cause a double-rounding error.
+    wire [SHW-1:0] d3_small_ext  = {s3_frac_small, 3'b000};
+    wire [SHW-1:0] d3_small_sh   = d3_small_ext >> s3_exp_diff;
+    wire [SHW-1:0] d3_lost_mask  = ~({SHW{1'b1}} << s3_exp_diff);
+    wire d3_sticky_lost = |(d3_small_ext & d3_lost_mask);
+    wire [SHW-1:0] d3_frac_shifted = {d3_small_sh[SHW-1:1],
+                                      d3_small_sh[0] | d3_sticky_lost};
+
+{% set b3 = [
+  {'t':'logic [SHW-1:0]',   'd':'s4_frac_shifted',  's':'d3_frac_shifted'},
+  {'t':'logic [SIGW-1:0]',  'd':'s4_frac_large',    's':'s3_frac_large'},
+  {'t':'logic [EBITS-1:0]', 'd':'s4_exp_large',     's':'s3_exp_large'},
+  {'t':'logic',             'd':'s4_is_sum',        's':'s3_is_sum'},
+  {'t':'logic',             'd':'s4_sign_sum',      's':'s3_sign_sum'},
+  {'t':'logic',             'd':'s4_both_exp_zero', 's':'s3_both_exp_zero'},
+  {'t':'logic',             'd':'s4_special_valid', 's':'s3_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s4_special_val',   's':'s3_special_val'}
+] %}
+    // ---- cut: SEG3 -> SEG4 -------------------------------------------------
+{{ decl(b3) }}{{ bank(2, b3) }}
+
+    // ==================== SEG4: significand add/sub ========================
+    wire [SUMW-1:0] d4_frac_result = s4_is_sum
+        ? ({1'b0, s4_frac_large, 3'b0} + {1'b0, s4_frac_shifted})
+        : ({1'b0, s4_frac_large, 3'b0} - {1'b0, s4_frac_shifted});
+    wire d4_carry_out = d4_frac_result[SUMW-1];
+    // Exact cancellation on the subtract path yields +0 regardless of the
+    // exponent bookkeeping downstream; carry the one-bit verdict instead of
+    // re-deriving it from frac_result at the end of the pipe.
+    wire d4_force_zero = !s4_is_sum && (d4_frac_result == '0);
+
+{% set b4 = [
+  {'t':'logic [SUMW-1:0]',  'd':'s5_frac_result',   's':'d4_frac_result'},
+  {'t':'logic',             'd':'s5_carry_out',     's':'d4_carry_out'},
+  {'t':'logic',             'd':'s5_force_zero',    's':'d4_force_zero'},
+  {'t':'logic [EBITS-1:0]', 'd':'s5_exp_large',     's':'s4_exp_large'},
+  {'t':'logic',             'd':'s5_is_sum',        's':'s4_is_sum'},
+  {'t':'logic',             'd':'s5_sign_sum',      's':'s4_sign_sum'},
+  {'t':'logic',             'd':'s5_both_exp_zero', 's':'s4_both_exp_zero'},
+  {'t':'logic',             'd':'s5_special_valid', 's':'s4_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s5_special_val',   's':'s4_special_val'}
+] %}
+    // ---- cut: SEG4 -> SEG5 -------------------------------------------------
+{{ decl(b4) }}{{ bank(3, b4) }}
+
+    // ================== SEG5: leading-zero count ===========================
+    logic [SHIFT_COUNTER_BITS-1:0] d5_shift_gen [0:MBITS+3];
+    always_comb begin
+        d5_shift_gen[MBITS+3] = s5_frac_result[1] ? MBITS + 3 : MBITS + 4;
+        for (int j = MBITS + 3; j > 0; j = j - 1) begin
+            d5_shift_gen[j-1] = s5_frac_result[MBITS + 5 - j] ? j - 1 : d5_shift_gen[j];
+        end
+    end
+    wire [SHIFT_COUNTER_BITS-1:0] d5_shift_n =
+        s5_is_sum ? (s5_carry_out ? '0 : SHIFT_COUNTER_BITS'(1))
+                  : d5_shift_gen[0];
+
+{% set b5 = [
+  {'t':'logic [SHIFT_COUNTER_BITS-1:0]', 'd':'s6_shift_n',       's':'d5_shift_n'},
+  {'t':'logic [SUMW-1:0]',  'd':'s6_frac_result',   's':'s5_frac_result'},
+  {'t':'logic',             'd':'s6_carry_out',     's':'s5_carry_out'},
+  {'t':'logic',             'd':'s6_force_zero',    's':'s5_force_zero'},
+  {'t':'logic [EBITS-1:0]', 'd':'s6_exp_large',     's':'s5_exp_large'},
+  {'t':'logic',             'd':'s6_is_sum',        's':'s5_is_sum'},
+  {'t':'logic',             'd':'s6_sign_sum',      's':'s5_sign_sum'},
+  {'t':'logic',             'd':'s6_both_exp_zero', 's':'s5_both_exp_zero'},
+  {'t':'logic',             'd':'s6_special_valid', 's':'s5_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s6_special_val',   's':'s5_special_val'}
+] %}
+    // ---- cut: SEG5 -> SEG6 -------------------------------------------------
+{{ decl(b5) }}{{ bank(4, b5) }}
+
+    // ================= SEG6: exponent / shift resolve ======================
+    // The subtract path produces a subnormal result when the normalized exponent
+    // (exp_large_plus_one - shift_n) would drop to zero or below. A subnormal
+    // carries no hidden one, so the significand is left denormalized by shifting
+    // one position short of full normalization while the exponent field is
+    // forced to zero.
+    wire [EBITS-1:0] d6_exp_large_plus_one = s6_exp_large + 1'b1;
+    wire d6_sub_is_normal = d6_exp_large_plus_one > s6_shift_n;
+    wire [SHIFT_COUNTER_BITS-1:0] d6_actual_shift = s6_is_sum
+        ? s6_shift_n
+        : (d6_sub_is_normal ? s6_shift_n : (d6_exp_large_plus_one - 1'b1));
+
+    wire d6_exp_pre_is_zero = s6_is_sum
+        ? (s6_both_exp_zero && !s6_carry_out && !s6_frac_result[MBITS+3])
+        : !d6_sub_is_normal;
+    wire [EBITS-1:0] d6_exp_pre_rounding = d6_exp_pre_is_zero
+        ? '0 : (d6_exp_large_plus_one - s6_shift_n);
+
+{% set b6 = [
+  {'t':'logic [SHIFT_COUNTER_BITS-1:0]', 'd':'s7_actual_shift',  's':'d6_actual_shift'},
+  {'t':'logic [EBITS-1:0]', 'd':'s7_exp_pre',       's':'d6_exp_pre_rounding'},
+  {'t':'logic [SUMW-1:0]',  'd':'s7_frac_result',   's':'s6_frac_result'},
+  {'t':'logic',             'd':'s7_force_zero',    's':'s6_force_zero'},
+  {'t':'logic',             'd':'s7_sign_sum',      's':'s6_sign_sum'},
+  {'t':'logic',             'd':'s7_special_valid', 's':'s6_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s7_special_val',   's':'s6_special_val'}
+] %}
+    // ---- cut: SEG6 -> SEG7 -------------------------------------------------
+{{ decl(b6) }}{{ bank(5, b6) }}
+
+    // ============== SEG7: normalize shift + guard/round/sticky =============
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire [SUMW-1:0] d7_frac_shifted_norm = s7_frac_result << s7_actual_shift;
+    /* verilator lint_on UNUSEDSIGNAL */
+    wire [MBITS-1:0] d7_frac_adj = d7_frac_shifted_norm[MBITS+3:4];
+
+    wire d7_guard = (s7_actual_shift > 3) ? 1'b0 : s7_frac_result[3-s7_actual_shift];
+    wire d7_round_bit = (s7_actual_shift > 2) ? 1'b0 : s7_frac_result[2-s7_actual_shift];
+    wire d7_sticky = (s7_actual_shift > 1) ? 1'b0
+        : (s7_actual_shift[0] ? s7_frac_result[0]
+                              : (s7_frac_result[1] || s7_frac_result[0]));
+    wire d7_round_up = d7_guard && (d7_round_bit || d7_sticky || d7_frac_adj[0]);
+
+{% set b7 = [
+  {'t':'logic [MBITS-1:0]', 'd':'s8_frac_adj',      's':'d7_frac_adj'},
+  {'t':'logic',             'd':'s8_round_up',      's':'d7_round_up'},
+  {'t':'logic [EBITS-1:0]', 'd':'s8_exp_pre',       's':'s7_exp_pre'},
+  {'t':'logic',             'd':'s8_force_zero',    's':'s7_force_zero'},
+  {'t':'logic',             'd':'s8_sign_sum',      's':'s7_sign_sum'},
+  {'t':'logic',             'd':'s8_special_valid', 's':'s7_special_valid'},
+  {'t':'logic [FP_MSB:0]',  'd':'s8_special_val',   's':'s7_special_val'}
+] %}
+    // ---- cut: SEG7 -> SEG8 -------------------------------------------------
+{{ decl(b7) }}{{ bank(6, b7) }}
+
+    // ==================== SEG8: round + pack ===============================
+    wire [FP_MSB-1:0] d8_rounded = {s8_exp_pre, s8_frac_adj} + s8_round_up;
+
+    logic [FP_MSB:0] d8_sum;
+    always_comb begin
+        if (s8_special_valid) begin
+            d8_sum = s8_special_val;
+        end else if (s8_force_zero) begin
+            d8_sum = '0;
+        end else if (&d8_rounded[FP_MSB-1:MBITS]) begin
+            d8_sum = {s8_sign_sum, {EBITS{1'b1}}, {MBITS{1'b0}}};
+        end else begin
+            d8_sum = {s8_sign_sum, d8_rounded};
+        end
+    end
+
+    wire d8_ovfl = &d8_sum[FP_MSB-1:MBITS];
+    wire d8_udfl = ~|d8_sum[FP_MSB-1:MBITS];
+
+    /* verilator lint_on WIDTHTRUNC */
+    /* verilator lint_on WIDTHEXPAND */
+
+    // ---- output register (last stage boundary) ----------------------------
+    always_ff @(posedge i_clk) begin
+        if (!i_rst_n) begin
+            o_sum  <= '0;
+            o_ovfl <= 1'b0;
+            o_udfl <= 1'b0;
+        end else begin
+            o_sum  <= d8_sum;
+            o_ovfl <= d8_ovfl;
+            o_udfl <= d8_udfl;
+        end
+    end
+
+endmodule
