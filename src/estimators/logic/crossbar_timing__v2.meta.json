@@ -1,51 +1,51 @@
 {
-  "component": "crossbar",
-  "model": "timing",
-  "version": "v2",
-  "arch": [
-    64,
-    64
-  ],
-  "n_in": 10,
-  "features": [
-    "log10_node_nm",
-    "log10_clock_ns",
-    "log2_data_width",
-    "log2_num_inputs",
-    "log2_num_outputs",
-    "node_is_5nm",
-    "node_is_7nm",
-    "node_is_10nm",
-    "node_is_16nm",
-    "node_is_20nm"
-  ],
-  "stim_modes": [],
-  "target": "log10_ns",
-  "target_column": "pnr_crit_path_ns",
-  "dataset_sha256": "d16a96e5151e6fee21827636cbb5bd7b6efef7732ea13db5ef5eaa7ea3227d2e",
-  "seed": 42,
-  "split": {
-    "train": 153,
-    "val": 19,
-    "test": 19
-  },
-  "epochs_run": 379,
-  "val_mape": 0.0771896243095398,
-  "test_mape": 0.047120110324364514,
-  "test_spearman": 0.9679411123969828,
-  "per_mode_test_mape": {
-    "-": 0.047120110324364514
-  },
-  "per_node_test_mape": {
-    "10nm": 0.030736212090486402,
-    "16nm": 0.0605190356173326,
-    "20nm": 0.03353870544430937,
-    "5nm": 0.06192754015286306,
-    "7nm": 0.03583640297661478
-  },
-  "excluded_nodes": [],
-  "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
-  "loss_max_min_ratio": 1.0,
-  "date": "2026-08-09T21:40:28",
-  "torch": "2.13.0+cpu"
+ "component": "crossbar",
+ "model": "timing",
+ "version": "v2",
+ "arch": [
+  64,
+  64
+ ],
+ "n_in": 10,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_data_width",
+  "log2_num_inputs",
+  "log2_num_outputs",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm"
+ ],
+ "stim_modes": [],
+ "target": "log10_ns",
+ "target_column": "pnr_crit_path_ns",
+ "dataset_sha256": "40ccbe216136935337064336acf6d84eaebbc9a273bfffe7475962b51abb6370",
+ "seed": 42,
+ "split": {
+  "train": 457,
+  "val": 57,
+  "test": 57
+ },
+ "epochs_run": 464,
+ "val_mape": 0.05091319978237152,
+ "test_mape": 0.06922481789350958,
+ "test_spearman": 0.9611852039154876,
+ "per_mode_test_mape": {
+  "-": 0.06922481789350958
+ },
+ "per_node_test_mape": {
+  "10nm": 0.09432102097815662,
+  "16nm": 0.06411625078123928,
+  "20nm": 0.04082940127026383,
+  "5nm": 0.06620446203009099,
+  "7nm": 0.07963781178053611
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
+ "loss_max_min_ratio": 1.0,
+ "date": "2026-08-25T17:37:06",
+ "torch": "2.13.0+cpu"
 }
