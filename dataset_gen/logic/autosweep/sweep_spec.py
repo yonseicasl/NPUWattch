@@ -244,6 +244,29 @@ def _crossbar():
                 yield cfg
 
 
+# ---------------------------------------------------------------------------
+# NoC fabric scale-back (user decision 2026-08-18)
+# ---------------------------------------------------------------------------
+# The 2026-08-09 expansion raised the port-bit cap to 4096 for both tree
+# fabrics. Measured cost, not guesswork, says that tier does not pay: PnR cell
+# count is superlinear in port-bits (fattree median ``pnr_total_cells`` 19k at
+# 1024 → 87k at 2048 → 172k at 4096), and those runs were taking multi-hour
+# ICC2 sessions each. At the observed ~27 finished jobs/day the untouched
+# fattree + foldedclos remainder was ~28 days.
+#
+# fattree keeps its cap at 2048, where everything is already measured, and
+# drops the never-started radix-8 family — it finishes rather than grows
+# (28 jobs left). foldedclos, the genuinely config-starved one (15 configs vs
+# regfile's 46), spends its budget on breadth instead: capped at 1024 it goes
+# 15 → 43 configs for 280 jobs. Remaining NoC work: 764 → 308 jobs.
+#
+# The caps apply to the EXPANSION blocks only. The original blocks below are
+# the already-characterized set; narrowing them would leave measured rows in
+# the dataset that the spec no longer describes.
+FATTREE_PORT_BIT_CAP = 2048
+FOLDEDCLOS_PORT_BIT_CAP = 1024
+
+
 def _fattree():
     seen = set()
     for radix, levels in ((2, 2), (2, 3), (2, 4), (2, 5), (4, 2), (4, 3)):
@@ -257,14 +280,17 @@ def _fattree():
         cfg = f"data_width={dw};radix={radix};num_levels={levels};oversubscription=0.5"
         seen.add(cfg)
         yield cfg
-    # expansion: radix 8, deeper radix-2 trees, dw 256, and the
-    # oversubscription AXIS (0.5 everywhere, 0.25 on the larger trees) — the
-    # fractional osub feature previously had 3 corner points of support
+    # expansion: deeper radix-2 trees and the oversubscription AXIS (0.5
+    # everywhere, 0.25 on the larger trees) — the fractional osub feature
+    # previously had 3 corner points of support.
+    # SCALED BACK 2026-08-18 (see _SCALE_BACK note above): cap 4096 → 2048 and
+    # radix 8 dropped. Everything at or below 2048 port-bits is already
+    # measured, so this finishes the fabric without starting a new large tree.
     for radix, levels in ((2, 2), (2, 3), (2, 4), (2, 5), (2, 6),
-                          (4, 2), (4, 3), (8, 2)):
+                          (4, 2), (4, 3)):
         nodes = radix ** levels
         for dw in (32, 64, 128, 256):
-            if nodes * dw > 4096:
+            if nodes * dw > FATTREE_PORT_BIT_CAP:
                 continue
             for osub in (1.0, 0.5, 0.25):
                 if osub == 0.25 and nodes < 32:
@@ -303,13 +329,16 @@ def _foldedclos():
     # expansion: vary the spine axis independently of leaves/terminals, add
     # dw 128 for the small fabrics, and give oversubscription real support
     # (0.5 everywhere; 0.25 where terminals_per_leaf >= 8 so it changes the
-    # active-uplink count meaningfully)
+    # active-uplink count meaningfully).
+    # SCALED BACK 2026-08-18 (see _SCALE_BACK note above): cap 4096 → 1024.
+    # This fabric is the config-starved one, so the budget buys BREADTH — 15 →
+    # 43 configs — instead of two tiers of very expensive large instances.
     for tpl, leaves, spines in ((2, 2, 2), (2, 4, 2), (4, 2, 2), (2, 8, 4),
                                 (4, 4, 2), (4, 4, 4), (4, 4, 8), (8, 4, 4),
                                 (4, 8, 4), (8, 8, 4), (8, 8, 8), (16, 4, 4)):
         nodes = tpl * leaves
         for dw in (32, 64, 128):
-            if nodes * dw > 4096:
+            if nodes * dw > FOLDEDCLOS_PORT_BIT_CAP:
                 continue
             for osub in (1.0, 0.5, 0.25):
                 if osub == 0.25 and tpl < 8:

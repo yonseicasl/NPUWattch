@@ -62,10 +62,6 @@ Useful flags:
 - `--report DIR` writes `report.html` + `report.json`; `--tree` shows how the run was interpreted.
 - Technology and operating point (harness modes only — a native description carries its own):
   `--node`, `--transistor`, `--corner`, `--voltage-offset`, `--temperature`, `--clock-mhz`.
-- The node axis is continuous: characterized nodes (5/7/10/16/20nm) answer directly,
-  anything between is log-interpolated, up to ±50% beyond the range (2.5–30nm) is
-  extrapolated with a WARNING, and anything outside that envelope is clamped to it with a
-  WARNING on the CLI and in the report.
 - PyTorchSim extras: `--config-yml`, `--booksim-dir` (anynet NoC runs), `--energy-table`
   (DRAM cost table, e.g. `hbm2.yml`).
 - Any run without activity data falls back to a vectorless estimate (25% of random switching,
