@@ -35,7 +35,6 @@ from ..naming import primitive_of
 __all__ = ["DEFAULT_VECTORLESS_ACTIVITY", "vectorless_activity_rows"]
 
 #: Fraction of full-random switching assumed when no activity log is given.
-#: User decision 2026-07-21 (was 10 % in the HPCA-prototype convention).
 DEFAULT_VECTORLESS_ACTIVITY = 0.25
 
 

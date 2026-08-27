@@ -1,28 +1,28 @@
 """Torch-side vocabulary + net + quartet IO for the LOGIC primitive MLPs.
 
-Deliberately the same shape as ``src/estimators/sram/sram_mlp.py`` (user
-decision 2026-07-28: same MLP structure and code as SRAM, for consistency):
-state_dict-only ``.pt`` with all transforms frozen in the JSON sidecars
-(manual §3.5), absolute log10 targets, ReLU MLP, seed-42 reproducibility.
+Deliberately the same shape as ``src/estimators/sram/sram_mlp.py`` — same
+MLP structure and code as SRAM, for consistency: state_dict-only ``.pt``
+with all transforms frozen in the JSON sidecars (manual §3.5), absolute
+log10 targets, ReLU MLP, seed-42 reproducibility.
 
 Differences from SRAM, driven by what the logic sweep measures:
 
 - one model per **(component, metric)**: 14 components (7 arithmetic +
   mxfpmac + the NoC/memory blocks crossbar/fifo/regfile/fattree/simplemux/
-  foldedclos, joined 2026-08-09) × 4 metrics (energy/leakage/timing/area) —
-  quartets are named ``<component>_<metric>__<VERSION>.*``; categorical
-  params (mxfpmac ``input_format``) are one-hot via CATEGORICAL_COLUMNS;
+  foldedclos) × 4 metrics (energy/leakage/timing/area) — quartets are named
+  ``<component>_<metric>__<VERSION>.*``; categorical params (mxfpmac
+  ``input_format``) are one-hot via CATEGORICAL_COLUMNS;
 - ``stim_mode`` is a one-hot INPUT for the power metrics (energy/leakage):
   the projection layer requests per-mode unit costs (COMPOUND_SCHEMA §6).
-  ``none`` (the unvectored row) is included as a mode per the 2026-07-28
-  decision — drop it only if the A/B in the eval report shows clear damage;
+  ``none`` (the unvectored row) is included as a mode — drop it only if the
+  A/B in the eval report shows clear damage;
 - the adaptive loss axes are **SCR/SAR** (manual §5.3 as written; the SRAM
   models adapted it to the target axis because SPICE rows have no SCR/SAR);
 - ``log10_clock_ns`` is an input for EVERY metric: each design was implemented
   against its clock constraint, so area/timing/power all move with it;
 - no PVT features: the current logic dataset is TT / 25 °C / nominal-V only
-  (user decision 2026-07-28 — constant columns would break the scalers).
-  PVT-swept datasets bump VERSION and re-add the axes.
+  — constant columns would break the scalers. PVT-swept datasets bump
+  VERSION and re-add the axes.
 """
 
 from __future__ import annotations

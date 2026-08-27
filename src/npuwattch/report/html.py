@@ -500,8 +500,8 @@ def build_context(
         "dram_breakdown": dram_breakdown,
         "npu_dram_split": npu_dram_split,
         "efficiency": efficiency,
-        # window/kernel terminology (user decision 2026-07-31): "window" is
-        # the core's harness-neutral time-interval term; PyTorchSim-harness
+        # window/kernel terminology: "window" is the core's harness-neutral
+        # time-interval term; PyTorchSim-harness
         # runs (window_provenance present) address end users as "kernel"
         # since there one kernel == one window by construction.
         "window_term": "kernel" if window_provenance else "window",

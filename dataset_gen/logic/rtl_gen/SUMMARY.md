@@ -89,8 +89,8 @@ bit-exact single source of the PWL tables and TB expectations):
   one group must be on. Each group adds its coefficient table + pre/post
   logic to a shared PWL datapath (decode -> constant premultiply ->
   interpolate -> normalize/pack).
-- `pipeline_stages`: registered pipeline depth, **4 to 10** (user decision
-  2026-07-24). REAL stage distribution — never output delay banks: the
+- `pipeline_stages`: registered pipeline depth, **4 to 10**. REAL stage
+  distribution — never output delay banks: the
   datapath is NINE combinational segments (decode | premult partial products
   | premult combine + u/quadrant | table read | interp partial products |
   interp combine + per-op transform | LZC | normalize shift | pack + mux);

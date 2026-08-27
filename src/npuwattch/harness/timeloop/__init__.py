@@ -29,8 +29,8 @@ interpreter — the Accelergy description declares plain components, not a
 compound bundle. A run without ``--stats`` remains the labeled VECTORLESS
 estimate.
 
-**Design commitment (user decision 2026-07-21): the declared hierarchy is the
-energy-accounting skeleton, not just a view.** Every component the description
+**Design commitment: the declared hierarchy is the energy-accounting
+skeleton, not just a view.** Every component the description
 declares keeps its own identity — its own energy/area/leakage row. Collapsing
 declared components into a few compound-level buckets ("just PE") would defeat
 fine-grained measurement and is not allowed. The *tree display* on the other hand

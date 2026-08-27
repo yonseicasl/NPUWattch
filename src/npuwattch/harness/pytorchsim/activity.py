@@ -86,8 +86,8 @@ _BUILTIN_DRAM_TABLE = "HBM2"
 class KernelWindow:
     """One kernel's architecture + activity, ready for a projection.
 
-    The name states the terminology bridge (user decision 2026-07-31): a
-    "window" is the core's harness-neutral time interval of the §3.3 activity
+    The name states the terminology bridge: a "window" is the core's
+    harness-neutral time interval of the §3.3 activity
     trace; in THIS harness one compiled kernel fills exactly one window, so
     user-facing output calls these "kernels" while schema/code identifiers
     keep "window" (other harnesses have windows that are not kernels — gem5

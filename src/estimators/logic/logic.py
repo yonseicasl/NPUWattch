@@ -1,18 +1,18 @@
 """LOGIC primitive estimator — the trained v2 MLP quartets as a UnitCostProvider.
 
-Serves the gate-passing logic primitives (eval_report.json ``gates``,
-2026-08-09) from the ``<component>_<metric>__v2.*`` checkpoints in this
-directory: per-cycle dynamic energy [pJ] at a stim_mode, leakage power [mW],
-PnR area [um2] and critical path [ns], each a ``logic_mlp`` MLP over
-log-transformed design params + node/mode one-hots.
+Serves the gate-passing logic primitives (eval_report.json ``gates``) from
+the ``<component>_<metric>__v2.*`` checkpoints in this directory: per-cycle
+dynamic energy [pJ] at a stim_mode, leakage power [mW], PnR area [um2] and
+critical path [ns], each a ``logic_mlp`` MLP over log-transformed design
+params + node/mode one-hots.
 
 The NoC fabric blocks — ``crossbar`` (10.2% energy MAPE), ``fattree`` (11.1%)
 and ``foldedclos`` (13.7%) — are served despite missing the 10% promotion
-gate (user decision 2026-08-12). The gate ranks models against each other;
-the question at runtime is *model or placeholder*, and the placeholder is not
-close: on post-layout truth for a 7 nm 128 b 8x8 crossbar (3.049 pJ/cycle) it
-returns 0.006 pJ/cycle — **476x low** — where this model lands within 0.8%.
-Two standing caveats until the 2026-08-09 expanded sweep is trained in:
+gate. The gate ranks models against each other; the question at runtime is
+*model or placeholder*, and the placeholder is not close: on post-layout
+truth for a 7 nm 128 b 8x8 crossbar (3.049 pJ/cycle) it returns
+0.006 pJ/cycle — **476x low** — where this model lands within 0.8%. Two
+standing caveats apply until the expanded NoC sweep is trained in:
 
 - their grids are config-starved (15-19 configs each vs fifo 32 / regfile 46),
   so the quoted MAPEs rest on 1-2 held-out configs and are themselves noisy;
@@ -71,8 +71,8 @@ ESTIMATOR_SPEC = {
     # Served primitives — every v2 quartet. The gate-failing fabric blocks
     # (crossbar/fattree/foldedclos, 10-14% energy) are served anyway: the
     # placeholder they replace is ~500x off, so a config-starved model is
-    # still the accurate choice (user decision 2026-08-12; retrain drops the
-    # caveat when the expanded NoC sweep lands).
+    # still the accurate choice; retrain drops the caveat once the expanded
+    # NoC sweep lands.
     "primitives": ["fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac",
                    "fpsfu", "mxfpmac", "fifo", "regfile", "simplemux",
                    "crossbar", "fattree", "foldedclos"],

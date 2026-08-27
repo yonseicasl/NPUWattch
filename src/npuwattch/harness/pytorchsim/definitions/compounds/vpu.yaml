@@ -4,8 +4,8 @@
 # HARNESS-OWNED (like every file in this bundle): references the PyTorchSim
 # run-config key `vpu_vector_length_bits` as an expression symbol.
 #
-# Closes the last gap inside the author-sanctioned energy scope (2026-07-25:
-# vector processor + VMEM + systolic array + on-chip NoC). The per-lane spad is
+# Closes the last gap inside the author-sanctioned energy scope (vector
+# processor + VMEM + systolic array + on-chip NoC). The per-lane spad is
 # already the spads compound; this adds the lane datapath:
 #
 #   vrf — per-lane RVV vector register file: 32 architectural vregs of
@@ -14,8 +14,8 @@
 #         as the kernel's MAC primitive ({mac_primitive}, ARCHITECTURE_SPEC §5
 #         maps VecMultiplier -> intmac/fpmac — the dominant VFU energy).
 #
-# FIRST CUT, STUB-PRICED (user decision 2026-07-26: fpadd/intadd are
-# pre-characterization): all logic costs are placeholders until workstream D.
+# FIRST CUT, STUB-PRICED (fpadd/intadd are pre-characterization): all logic
+# costs are placeholders until workstream D.
 # Known simplifications, to refine after characterization:
 #   - gem5's FUPool has 4 physical FUs per type per core (VecAdder/Multiplier/
 #     Divider/...); modeled here as ONE lanes-wide datapath (count: lanes).

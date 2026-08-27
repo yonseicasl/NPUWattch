@@ -1,14 +1,14 @@
 """PyTorchSim's instance-hierarchy tree builder (the ``--tree`` view).
 
-**Builders are harness-owned** (user decision 2026-07-21): a tree builder is a
-per-source adapter — its job depends entirely on what hierarchy information the
-source format carries, so it lives with that format's owner. PyTorchSim's
-outputs declare no hierarchy at all (flat stats + config scalars), so this
-builder *reconstructs* the structure the emitter interpreted the run as.
+**Builders are harness-owned**: a tree builder is a per-source adapter — its
+job depends entirely on what hierarchy information the source format
+carries, so it lives with that format's owner. PyTorchSim's outputs declare
+no hierarchy at all (flat stats + config scalars), so this builder
+*reconstructs* the structure the emitter interpreted the run as.
 
-Since the per-instance split (2026-07-21, "never lump"), the emitter names one
-component per physical instance, and the tree **enumerates** those instances so
-every leaf matches one row of the energy summary by name:
+Per the "never lump" per-instance split, the emitter names one component
+per physical instance, and the tree **enumerates** those instances so every
+leaf matches one row of the energy summary by name:
 
     chip → core0 → array0 → pe / w_reg
                  → array1 → …

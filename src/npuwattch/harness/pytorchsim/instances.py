@@ -5,8 +5,8 @@ and several counters per core, but the projection binds chip-aggregate stats.
 Collapsing every PE grid into a single ``systolic.pe`` component would average
 that detail away, so the emitter names one component per physical instance
 (``core0.array1.pe``, ``core1.vmem``, …) and this module splits each window's
-bound actions across those instances (user decision 2026-07-21: report at the
-finest grain the log supports).
+bound actions across those instances, reporting at the finest grain the log
+supports.
 
 Split rules — exact where the log carries a per-instance counter, proportional
 attribution (noted in the emitted warnings) where it carries only kernel

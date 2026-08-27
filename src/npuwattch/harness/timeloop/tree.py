@@ -1,7 +1,7 @@
 """Accelergy/Timeloop instance-hierarchy tree builder (the ``--tree`` view).
 
-**Builders are harness-owned** (user decision 2026-07-21): this format's
-hierarchy is *declared* in the Accelergy v0.4 YAML itself, and the Accelergy
+**Builders are harness-owned**: this format's hierarchy is *declared* in the
+Accelergy v0.4 YAML itself, and the Accelergy
 description path is slated to move under ``--harness timeloop`` — so its tree
 builder lives here already. It is the flattener's ``print_tree`` walk
 re-expressed as data: same node kinds (Component / Container / structural /

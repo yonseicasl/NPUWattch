@@ -245,20 +245,18 @@ def _crossbar():
 
 
 # ---------------------------------------------------------------------------
-# NoC fabric scale-back (user decision 2026-08-18)
+# NoC fabric port-bit caps
 # ---------------------------------------------------------------------------
-# The 2026-08-09 expansion raised the port-bit cap to 4096 for both tree
-# fabrics. Measured cost, not guesswork, says that tier does not pay: PnR cell
-# count is superlinear in port-bits (fattree median ``pnr_total_cells`` 19k at
-# 1024 → 87k at 2048 → 172k at 4096), and those runs were taking multi-hour
-# ICC2 sessions each. At the observed ~27 finished jobs/day the untouched
-# fattree + foldedclos remainder was ~28 days.
+# PnR cell count is superlinear in port-bits (fattree median
+# ``pnr_total_cells`` 19k at 1024 -> 87k at 2048 -> 172k at 4096), and runs
+# above the cap take multi-hour ICC2 sessions each, so both tree fabrics are
+# capped well below their structural maximum.
 #
-# fattree keeps its cap at 2048, where everything is already measured, and
-# drops the never-started radix-8 family — it finishes rather than grows
-# (28 jobs left). foldedclos, the genuinely config-starved one (15 configs vs
-# regfile's 46), spends its budget on breadth instead: capped at 1024 it goes
-# 15 → 43 configs for 280 jobs. Remaining NoC work: 764 → 308 jobs.
+# fattree is capped at 2048, where the full sweep is already characterized,
+# and excludes the never-started radix-8 family. foldedclos, the genuinely
+# config-starved fabric (15 configs vs regfile's 46), is capped at 1024
+# instead, trading port-bit reach for more configs within the same job
+# budget.
 #
 # The caps apply to the EXPANSION blocks only. The original blocks below are
 # the already-characterized set; narrowing them would leave measured rows in
@@ -367,9 +365,9 @@ _FPSFU_FLAGS = ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf",
 
 
 def _fpsfu():
-    # ps range is [4, 10] (user decision 2026-07-24; real stage distribution
-    # over 9 segments — see fpsfu.sv.j2). Endpoints + a middle point so the
-    # timing MLP interpolates across the 2.5x span.
+    # ps range is [4, 10]: the real stage distribution is 9 combinational
+    # segments (see fpsfu.sv.j2). Endpoints + a middle point so the timing
+    # MLP interpolates across the 2.5x span.
     for exp, mant in ((5, 10), (8, 7), (8, 23)):    # fp16, bf16, fp32
         for combo in _FPSFU_COMBOS:
             flags = ";".join(f"{f}={combo.get(f, 0)}" for f in _FPSFU_FLAGS)

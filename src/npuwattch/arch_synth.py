@@ -91,8 +91,8 @@ _META_STATS = frozenset({"total_exec_cycles", "numCycles"})
 _SFU_STAT_KEYS = ("CustomVexp", "CustomVexp2", "CustomVerf", "CustomVtanh",
                   "CustomVsin", "CustomVcos")
 
-# TERMINOLOGY — window vs kernel (user decision 2026-07-31): "window" is the
-# CORE's harness-neutral unit — a time interval [cycle_start, cycle_end] of the
+# TERMINOLOGY — window vs kernel: "window" is the CORE's harness-neutral
+# unit — a time interval [cycle_start, cycle_end] of the
 # §3.3 activity trace. It is NOT a synonym for "kernel": gem5 periodic dumps,
 # Timeloop layers, and the vectorless synthetic interval are windows without
 # being kernels. The PyTorchSim harness maps one compiled kernel to one window
@@ -299,8 +299,8 @@ def _emit_per_instance(
     each ``per: array`` element is emitted once per (core, array) as
     ``core{c}.array{a}.{element}`` and each ``per: core`` element once per core
     as ``core{c}.{element}``, both with the element's own per-instance count
-    (user decision 2026-07-21: report at the finest grain the source supports).
-    ``per: chip`` elements keep their plain name. Emission notes (capacity
+    — reporting at the finest grain the source supports. ``per: chip``
+    elements keep their plain name. Emission notes (capacity
     expansion, attribute gates) are recorded for the first instance only — the
     others are structurally identical.
 

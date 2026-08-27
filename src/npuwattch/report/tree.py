@@ -1,8 +1,7 @@
 """Instance-hierarchy view — the tool-neutral tree structure + renderers.
 
-Ownership (user decision 2026-07-21): **tree builders are per-source adapters
-and belong to the source format's owner** — this module keeps only what every
-source shares:
+Ownership: **tree builders are per-source adapters and belong to the source
+format's owner** — this module keeps only what every source shares:
 
 * ``ArchTreeNode`` — the one structure all builders converge on;
 * ``render_text`` (CLI ``--tree``, ASCII box-drawing) and ``to_dict``

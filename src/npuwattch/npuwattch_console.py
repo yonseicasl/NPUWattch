@@ -251,9 +251,8 @@ def _run_estimator(args) -> int:
 
     ``-d`` takes a native NPUWattch description (``npuwattch:`` root, §3.1).
     An Accelergy/Timeloop description (``architecture:`` root) is a *harness
-    input*: it must go through ``--harness timeloop --arch-yaml`` explicitly
-    (user decision 2026-08-12; the ``-d`` auto-routing shorthand is retired —
-    one spelling per input kind, like every other harness).
+    input*: it must go through ``--harness timeloop --arch-yaml`` explicitly —
+    one spelling per input kind, like every other harness.
     """
     print("[INFO] Starting estimator mode")
     print(tbl.rule("="))
@@ -486,9 +485,8 @@ def _print_window_energy(run, verbose: int = 0,
     non-GEMM subtotal lines — the "how much energy is outside the systolic
     array" split a DSE comparison needs at a glance.
 
-    TERMINOLOGY (user decision 2026-07-31, after a PyTorchSim-authors meeting
-    asked "what is a window?"): ``window`` is the CORE's harness-neutral term —
-    a time interval of the §3.3 activity trace (gem5 periodic dumps, Timeloop
+    TERMINOLOGY: ``window`` is the CORE's harness-neutral term — a time
+    interval of the §3.3 activity trace (gem5 periodic dumps, Timeloop
     layers, the vectorless synthetic interval are all windows but NOT kernels).
     In the PyTorchSim harness one kernel == one window by construction, so
     END-USER text for those runs says "kernel" (the presence of

@@ -2,11 +2,11 @@
 
 The MLP estimators are trained at a handful of characterized nodes (today
 5/7/10/16/20 nm, node one-hot inputs) and hard-error on anything else. The CLI,
-however, must accept the node axis **continuously** (user decision 2026-08-13):
-Accelergy/Timeloop descriptions routinely declare 65/45/32 nm, and a node
-whitelist turns every such run into a crash.
+however, accepts the node axis **continuously**: Accelergy/Timeloop
+descriptions routinely declare 65/45/32 nm, and a node whitelist would turn
+every such run into a crash.
 
-The rule, verbatim from that decision:
+The rule:
 
 * The supported envelope is the characterized range extended by **50 % on each
   side**: lower bound = min characterized node x 0.5, upper = max x 1.5.
@@ -44,8 +44,8 @@ __all__ = [
     "resolve_node",
 ]
 
-#: Envelope factors around the characterized range (user decision 2026-08-13):
-#: accept min x 0.5 ... max x 1.5, clamp-with-warning beyond.
+#: Envelope factors around the characterized range: accept min x 0.5 ...
+#: max x 1.5, clamp-with-warning beyond.
 ENVELOPE_LO_FACTOR = 0.5
 ENVELOPE_HI_FACTOR = 1.5
 
