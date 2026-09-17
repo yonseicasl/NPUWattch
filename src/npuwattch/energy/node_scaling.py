@@ -215,6 +215,28 @@ class NodeScalingProvider:
     def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float:
         return self._blend("crit_path", primitive, features)
 
+    def idle_terms(self, primitive: str, features: Mapping[str, Any]):
+        fn = getattr(self._inner, "idle_terms", None)
+        if fn is None:
+            return None
+        res = self._res
+        lo = fn(primitive, {**features, "node": res.lo})
+        if res.kind == "exact" or lo is None:
+            return lo
+        hi = fn(primitive, {**features, "node": res.hi})
+        if hi is None:
+            return lo
+
+        def mix(y1: float, y2: float) -> float:
+            if y1 == y2:
+                return y1
+            if y1 > 0 and y2 > 0:
+                return math.exp((1.0 - res.weight) * math.log(y1)
+                                + res.weight * math.log(y2))
+            return max(0.0, (1.0 - res.weight) * y1 + res.weight * y2)
+
+        return (mix(lo[0], hi[0]), mix(lo[1], hi[1]))
+
 
 def apply_node_scaling(chain: Any, tech: Any) -> Tuple[Any, Optional[NodeResolution]]:
     """Wrap a ``ProviderChain`` so its provider serves the tech's node continuously.

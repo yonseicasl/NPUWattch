@@ -189,7 +189,7 @@ chip
 │   │   ├── pe [×16384]  (class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4)
 │   │   └── w_reg [×16384]  (class: register_file, data_width=32, mem_depth_per_bank=1)
 │   ├── array1                        (identical to array0)
-│   ├── vmem  (class: sram, mem_banks=32, mem_depth_per_bank=32768, data_width=128)
+│   ├── vmem  (class: sram, mem_banks=32, mem_depth_per_bank=32768, data_width=128 = 16 MB)
 │   ├── vpu_spad [×128], vrf [×128], vfu [×128], sfu_pipe [×128]
 │   ├── dma_q  (class: fifo)
 │   └── dma_addr  (class: intadd)

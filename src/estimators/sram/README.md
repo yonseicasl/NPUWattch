@@ -33,10 +33,20 @@ The host never imports this package — the contract is file-shaped:
    32768` bits here (the rule moved out of the retired
    `npuwattch_class_mapper` on 2026-08-12).
 
-Key feature-dict conventions: `depth` = **words per bank**; `bw` = word width
+Key feature-dict conventions: `mem_depth_per_bank` = **words per bank** (a
+harness divides a total depth by the bank count before it gets here); `bw` = word width
 in bits; `toggle_rate` = fraction of data bits flipping per write access
 (default 0.5); `source` = `auto | table | mlp` (auto prefers the trained MLPs
 when the quartets are present and torch imports, else the measured table).
+
+## Vocabulary
+
+tile (measured bitcell array + its row decoder; CACTI sub-array) → tile group
+(`n_horz` tiles firing together; `n_vert` groups per bank, one selected per
+access) → macro (a template instance: `sram_64k`/`sram_256k`) → bank
+(`mem_banks`: independently addressable, concurrently accessible, own
+decoders) → instance (`count`). Ports are physical ports per bank (≤ 2), never
+the number of concurrent accesses. Full table: DEVELOPMENT_MANUAL §3.8.
 
 ## The solver (features → physical SRAM)
 

@@ -48,8 +48,8 @@ npuwattch --harness timeloop --arch-yaml architecture.yaml \
 ```
 
 Stats level names bind to the description's components by (leaf) name; the optional
-`--stats-map map.yaml` (`levels:` renames, `ignore:` deliberate drops) covers the
-rest. A directory of per-layer stats becomes one report window per layer
+`--stats-map map.yaml` (`levels:` renames or per-event fan-out to several
+components, `ignore:` deliberate drops) covers the rest. A directory of per-layer stats becomes one report window per layer
 (`--stats-mode aggregate` sums them instead).
 
 **3. From NPUWattch's own files.** A native description, plus an optional activity CSV:

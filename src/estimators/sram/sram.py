@@ -4,7 +4,8 @@ Answers CACTI-style queries (node, depth, width, banks, PVT, activity) with
 energy / leakage / area / timing for an SRAM macro composed from the
 SPICE-measured tiles in ``dataset_gen/sram/datasets/``:
 
-- ``sram_array.csv``   — 6T array tiles (rows x cols), read/write energies,
+- ``sram_array.csv``   — the TILE dataset: 6T bitcell tiles (rows x cols) with
+  their read/write energies,
   leakage, delays, GDS areas.
 - ``sram_decoder.csv`` — the pitch-matched registered row decoder for each
   tile, including the wordline RC it drives (the array TB uses an ideal WL
@@ -12,7 +13,7 @@ SPICE-measured tiles in ``dataset_gen/sram/datasets/``:
 
 Model, by construction of the dataset (no column mux, no WL stitching):
 a macro = banks x (n_vert x n_horz) grid of measured tiles, each tile with its
-own row decoder (x ``n_ports``).  One vertical group is selected per access;
+own row decoder (x ``n_ports``).  One vertical tile group is selected per access;
 all horizontal tiles fire together.  The array has no clock, so a non-accessed
 array is leakage-only; a non-firing but clocked decoder burns ``dec_idle`` per
 cycle (charged by default, zeroed by ``tile_clock_gating``).
@@ -26,6 +27,18 @@ Delay composition (same 50%-VDD wordline threshold on both sheets):
 
     t_read  = dec_wlen_wl_ns + rd_delay_ns
     t_write = max(dec_wlen_wl_ns, wr_bl_ns) + wr_cell_ns
+
+Vocabulary (fixed 2026-09-13, aligned with CACTI 5+/6 and memory compilers):
+``tile`` = one measured bitcell array with its own row decoder (CACTI:
+sub-array — one access at a time); ``tile group`` = the ``n_horz`` tiles that
+fire together for one word, ``n_vert`` groups per bank, one selected per
+access (a compiler's internal "bank"/segment); ``macro`` = a template
+instance (``sram_64k``/``sram_256k``: decoder + column mux + I/O, what a
+compiler emits and PnR places); ``bank`` = ``mem_banks`` — an independently
+addressable unit with its own decoders that may be accessed concurrently with
+the other banks (CACTI: "each bank can be concurrently accessed and has its own
+address and data bus"); ``port`` = a physical port of the bank's array
+(1RW / 1R1W / 2RW), never the number of concurrent accesses.
 
 Units follow the repo convention: pJ / mW / um2 / ns.  ``depth`` is words
 PER BANK (total bits = n_banks * depth * bw, matching the class-mapper
@@ -400,9 +413,9 @@ class SramConfig:
     source: str = "auto"                 # auto | table | mlp
     model_dir: Optional[str] = None      # checkpoint dir override
     #: Macro template name. When set, the instance is a bank *hierarchy*:
-    #: ``banks`` banks of ``depth_words / template.depth_words`` subarrays each
-    #: (each subarray = one template macro), composed by
-    #: ``_bank_hierarchy_costs`` from a single-subarray query.
+    #: ``banks`` banks of ``depth_words / template.depth_words`` macros each
+    #: (each macro = one instance of the template), composed by
+    #: ``_bank_hierarchy_costs`` from a single-macro query.
     template: Optional[str] = None
 
 
@@ -469,16 +482,16 @@ SRAM_TEMPLATES: Dict[str, Dict[str, int]] = {
 _TEMPLATE_SMALL, _TEMPLATE_LARGE = "sram_64k", "sram_256k"
 
 
-def _bank_parts(template: str, n_subarrays: int) -> List[Dict[str, Any]]:
-    """Group a template's subarrays into banks of <= 16, largest banks first.
+def _bank_parts(template: str, n_macros: int) -> List[Dict[str, Any]]:
+    """Group a template's macros into banks of <= 16, largest banks first.
 
-    Full 16-subarray banks form one part; a ragged tail becomes its own
+    Full 16-macro banks form one part; a ragged tail becomes its own
     single-bank part (its access charges only the tail's real siblings).
     """
     t = SRAM_TEMPLATES[template]
     parts = []
-    full_banks, tail = divmod(n_subarrays, MAX_SUBARRAYS_PER_BANK)
-    for banks, s_per_bank in ((full_banks, MAX_SUBARRAYS_PER_BANK), (1, tail)):
+    full_banks, tail = divmod(n_macros, MAX_MACROS_PER_BANK)
+    for banks, s_per_bank in ((full_banks, MAX_MACROS_PER_BANK), (1, tail)):
         if banks and s_per_bank:
             parts.append({
                 "mem_template": template,
@@ -492,12 +505,12 @@ def _bank_parts(template: str, n_subarrays: int) -> List[Dict[str, Any]]:
 def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Cover an arbitrary capacity with the two macro templates.
 
-    Subarray count: fill with large (256k) macros; cover the remainder with
+    Macro count: fill with large (256k) macros; cover the remainder with
     small (64k) ones unless that would take a whole large macro's worth (then
-    round up to one more large). Subarrays are then grouped into banks of at
+    round up to one more large). Macros are then grouped into banks of at
     most 16 (``_bank_parts``). Returns ``(parts, warnings)`` where each part is
     a dict of **canonical component attributes** (`mem_template`, `data_width`,
-    `mem_depth_per_bank` = subarrays-per-bank x template depth, `mem_banks`)
+    `mem_depth_per_bank` = macros-per-bank x template depth, `mem_banks`)
     ready for a §3.1 description.
     """
     if capacity_bits <= 0:
@@ -524,7 +537,7 @@ def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str
         f"template(s) "
         + " + ".join(f"{c}x {n}" for n, c in
                      ((_TEMPLATE_LARGE, n_large), (_TEMPLATE_SMALL, n_small)) if c)
-        + f" grouped into banks of <= {MAX_SUBARRAYS_PER_BANK} subarrays; "
+        + f" grouped into banks of <= {MAX_MACROS_PER_BANK} macros; "
         + f"utilization {util:.1%}"
     ]
     if util < 0.5:
@@ -535,16 +548,16 @@ def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str
     return parts, warnings
 
 
-#: Max subarrays (template macros) per bank in a template hierarchy.
-MAX_SUBARRAYS_PER_BANK = 16
+#: Max template macros per bank in a template hierarchy.
+MAX_MACROS_PER_BANK = 16
 
 
 def _apply_template(features: Mapping[str, Any],
                     warnings: List[str]) -> Mapping[str, Any]:
     """Expand/validate ``mem_template`` in a features dict (no-op without one).
 
-    ``mem_depth_per_bank`` encodes the bank's subarray count: it must be
-    ``S x template.depth_words`` with 1 <= S <= 16 (omitted -> one subarray).
+    ``mem_depth_per_bank`` encodes the bank's macro count: it must be
+    ``S x template.depth_words`` with 1 <= S <= 16 (omitted -> one macro).
     """
     name = features.get("mem_template")
     if not name:
@@ -573,11 +586,11 @@ def _apply_template(features: Mapping[str, Any],
     else:
         depth = int(depth)
         s, rem = divmod(depth, t["depth_words"])
-        if rem or not (1 <= s <= MAX_SUBARRAYS_PER_BANK):
+        if rem or not (1 <= s <= MAX_MACROS_PER_BANK):
             raise ValueError(
                 f"mem_template '{name}': mem_depth_per_bank={depth} must be "
                 f"S x {t['depth_words']} words with 1 <= S <= "
-                f"{MAX_SUBARRAYS_PER_BANK} subarrays per bank (got S={s}"
+                f"{MAX_MACROS_PER_BANK} macros per bank (got S={s}"
                 f"{f'+{rem}w' if rem else ''})"
             )
 
@@ -1011,6 +1024,19 @@ class SramUnitCosts:
     warnings: Tuple[str, ...] = ()
     source: str = "table"                        # tile-cost source used
     model_meta: Optional[Dict[str, Any]] = None  # MLP bundle summary (mlp only)
+    # Per-cycle idle accounting (2026-09-13). ``e_read_pJ`` above is the
+    # whole-instance cost of ONE access in a cycle where nothing else fires:
+    # the accessed group's array + decoder energy plus every other clocked
+    # decoder group idling. When the aggregator knows the window's cycle
+    # count it books the idle part once per cycle instead of once per access
+    # (N parallel bank accesses in one cycle then cost N x e_access + the
+    # (n_dec_groups - N) groups that really idled):
+    #   e_read_pJ == e_access_read_pJ + (n_dec_groups - 1) * dec_idle_group_pJ
+    #   e_idle_pJ == n_dec_groups * dec_idle_group_pJ
+    e_access_read_pJ: float = 0.0    # accessed group only (array + decoder)
+    e_access_write_pJ: float = 0.0
+    dec_idle_group_pJ: float = 0.0   # one clocked, non-fired decoder group / cycle
+    n_dec_groups: int = 0            # clocked decoder groups (one bank active)
 
 
 def _horz_tiling(cfg: SramConfig, shapes: Sequence[Tuple[int, int]],
@@ -1110,6 +1136,10 @@ def _compose(cfg: SramConfig, src: TableTilePointSource, k: PvtScale,
         leak_dec_mW=cfg.banks * n_vert * leak_dec,
         structure=structure,
         pvt=k,
+        e_access_read_pJ=rd_array + dec_access,
+        e_access_write_pJ=wr_array + dec_access,
+        dec_idle_group_pJ=(0.0 if cfg.tile_clock_gating else dec_idle_horz),
+        n_dec_groups=cfg.banks * n_vert * P,
     )
 
 
@@ -1127,58 +1157,64 @@ def _rank_key(cfg: SramConfig, c: SramUnitCosts) -> Tuple:
 
 def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
                           extra_warnings: Sequence[str] = ()) -> SramUnitCosts:
-    """Compose a template instance from ONE measured subarray.
+    """Compose a template instance from ONE measured macro.
 
     A template instance is a hierarchy::
 
-        instance -> cfg.banks banks -> S subarrays each -> col-mux tile groups
+        instance -> cfg.banks banks -> S macros each -> col-mux tile groups
                     (S = depth_words / template.depth_words, <= 16)
 
-    where "subarray" = one template macro — the largest thing the datasets can
-    cost directly. The recursive call below prices that subarray (banks=1,
+    where "macro" = one instance of the template (a compiler macro: decoder,
+    column mux, I/O) — the largest thing the datasets can
+    cost directly. The recursive call below prices that macro (banks=1,
     template cleared); everything above it is arithmetic on the result.
 
     Access semantics (user-defined 2026-07-21, bank-level clock gating):
 
-    * the accessed subarray pays a full read/write (its internal col-mux group
+    * the accessed macro pays a full read/write (its internal col-mux group
       composition included — that is the recursive call's own idle_overhead);
     * its S-1 siblings in the SAME bank are clocked but not accessed — one
-      subarray-idle each, folded into the per-access energy;
+      macro-idle each, folded into the per-access energy;
     * every other bank is clock-gated: leakage only, charged by the
       ``leak_power`` term over time, never per access.
     """
     t = SRAM_TEMPLATES[cfg.template]
     s_per_bank = cfg.depth_words // t["depth_words"]
-    n_subarrays = cfg.banks * s_per_bank
+    n_macros = cfg.banks * s_per_bank
 
-    subarray = _unit_costs_for_cfg(
+    macro = _unit_costs_for_cfg(
         replace(cfg, template=None, depth_words=t["depth_words"], banks=1),
         ds, extra_warnings,
     )
-    sibling_idle = (s_per_bank - 1) * subarray.e_idle_pJ
+    sibling_idle = (s_per_bank - 1) * macro.e_idle_pJ
 
-    st = subarray.structure
+    st = macro.structure
     structure = replace(
         st,
         banks=cfg.banks,
         tiles_per_bank=s_per_bank * st.tiles_per_bank,
-        total_tiles=n_subarrays * st.total_tiles,
-        logical_bits=n_subarrays * st.logical_bits,
-        physical_bits=n_subarrays * st.physical_bits,
+        total_tiles=n_macros * st.total_tiles,
+        logical_bits=n_macros * st.logical_bits,
+        physical_bits=n_macros * st.physical_bits,
     )
     return replace(
-        subarray,
-        e_read_pJ=subarray.e_read_pJ + sibling_idle,
-        e_write_pJ=subarray.e_write_pJ + sibling_idle,
-        e_idle_pJ=s_per_bank * subarray.e_idle_pJ,   # one bank held active
-        idle_overhead_pJ=subarray.idle_overhead_pJ + sibling_idle,
-        bank_idle_pJ=s_per_bank * subarray.e_idle_pJ,
-        leak_power_mW=n_subarrays * subarray.leak_power_mW,
-        leak_array_mW=n_subarrays * subarray.leak_array_mW,
-        leak_dec_mW=n_subarrays * subarray.leak_dec_mW,
-        area_um2=n_subarrays * subarray.area_um2,
+        macro,
+        e_read_pJ=macro.e_read_pJ + sibling_idle,
+        e_write_pJ=macro.e_write_pJ + sibling_idle,
+        e_idle_pJ=s_per_bank * macro.e_idle_pJ,   # one bank held active
+        idle_overhead_pJ=macro.idle_overhead_pJ + sibling_idle,
+        bank_idle_pJ=s_per_bank * macro.e_idle_pJ,
+        leak_power_mW=n_macros * macro.leak_power_mW,
+        leak_array_mW=n_macros * macro.leak_array_mW,
+        leak_dec_mW=n_macros * macro.leak_dec_mW,
+        area_um2=n_macros * macro.area_um2,
         structure=structure,
-        # timing stays the single-subarray path; bank select/routing is part of
+        # per-cycle idle terms: the active bank's S macros are the clocked set
+        e_access_read_pJ=macro.e_access_read_pJ,
+        e_access_write_pJ=macro.e_access_write_pJ,
+        dec_idle_group_pJ=macro.dec_idle_group_pJ,
+        n_dec_groups=s_per_bank * macro.n_dec_groups,
+        # timing stays the single-macro path; bank select/routing is part of
         # the approximation warning emitted by _apply_template.
     )
 
@@ -1424,6 +1460,19 @@ class _SramUnitCostProvider:
             return self._delegate("crit_path", primitive, features)
         c = self._costs(features)
         return max(c.t_read_ns, c.t_write_ns)
+
+    def idle_terms(self, primitive: str,
+                   features: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
+        """``(e_idle_per_cycle_pJ, idle_displaced_per_access_pJ)`` for the
+        aggregator's per-cycle idle accounting, or None when the primitive has
+        no clocked-idle term (clock-gated tiles, or not an sram)."""
+        if primitive != "sram":
+            fb = getattr(self._fallback, "idle_terms", None)
+            return fb(primitive, features) if fb is not None else None
+        c = self._costs(features)
+        if c.e_idle_pJ <= 0.0 or c.n_dec_groups <= 0:
+            return None
+        return (c.e_idle_pJ, c.dec_idle_group_pJ)
 
 
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,

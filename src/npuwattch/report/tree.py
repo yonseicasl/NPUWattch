@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
 __all__ = ["ArchTreeNode", "render_text", "to_dict", "tree_from_native",
+           "capacity_suffix",
            "component_label"]
 
 
@@ -107,14 +108,42 @@ _SALIENT = {
 }
 
 
+def capacity_suffix(attrs: Mapping[str, Any]) -> Optional[str]:
+    """``= 32 KB`` for a storage component — the total the estimator sizes
+    (banks x words per bank x word bits), so a mis-declared depth is visible
+    in the tree at a glance."""
+    try:
+        depth = int(attrs.get("mem_depth_per_bank") or 0)
+        width = int(attrs.get("data_width") or 0)
+        banks = int(attrs.get("mem_banks") or 1)
+    except (TypeError, ValueError):
+        return None
+    bits = depth * width * banks
+    if bits <= 0:
+        return None
+    if bits % (8 * 1024 * 1024) == 0:
+        return f"{bits // (8 * 1024 * 1024)} MB"
+    if bits % (8 * 1024) == 0:
+        return f"{bits // (8 * 1024)} KB"
+    if bits % 8 == 0:
+        return f"{bits // 8} B"
+    return f"{bits} bit"
+
+
 def component_label(comp_class: str, attrs: Mapping[str, Any]) -> str:
-    """`class: X, k=v, …` with only that class's salient attributes."""
+    """`class: X, k=v, …` with only that class's salient attributes (storage
+    classes also show the total capacity they were sized to)."""
     parts = [f"class: {comp_class}"]
     for key in _SALIENT.get(str(comp_class), ()):
         v = attrs.get(key)
         if v is not None:
             parts.append(f"{key}={v}")
-    return ", ".join(parts)
+    label = ", ".join(parts)
+    if str(comp_class) in ("sram", "regfile", "register_file"):
+        cap = capacity_suffix(attrs)
+        if cap:
+            label += f" = {cap}"
+    return label
 
 
 def tree_from_native(description: Mapping[str, Any]) -> ArchTreeNode:

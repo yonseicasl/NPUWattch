@@ -74,6 +74,10 @@ class UnitCostProvider(Protocol):
     def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float: ...
     def area(self, primitive: str, features: Mapping[str, Any]) -> float: ...
     def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float: ...
+    # Optional (looked up with getattr): ``idle_terms(primitive, features) ->
+    # (e_idle_per_cycle_pJ, idle_displaced_per_access_pJ) | None`` lets the
+    # aggregator book a memory's clocked-idle energy once per cycle instead of
+    # inside every access event (see aggregate._book_idle_per_cycle).
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +234,12 @@ class D2DLinkCostProvider:
             return self._delegate("crit_path", primitive, features)
         return 0.0
 
+    def idle_terms(self, primitive: str, features: Mapping[str, Any]):
+        if primitive == "d2dlink" or self.fallback is None:
+            return None
+        fb = getattr(self.fallback, "idle_terms", None)
+        return fb(primitive, features) if fb is not None else None
+
 
 # ---------------------------------------------------------------------------
 # Analytic DRAM device model (per-command constants — no characterization flow)
@@ -321,3 +331,9 @@ class HBMCostProvider:
         if primitive != "hbm":
             return self._delegate("crit_path", primitive, features)
         return 0.0
+
+    def idle_terms(self, primitive: str, features: Mapping[str, Any]):
+        if primitive == "hbm" or self.fallback is None:
+            return None
+        fb = getattr(self.fallback, "idle_terms", None)
+        return fb(primitive, features) if fb is not None else None

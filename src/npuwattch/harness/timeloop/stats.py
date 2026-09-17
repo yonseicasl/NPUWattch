@@ -68,6 +68,7 @@ STATS_GLOB = "*.stats.txt"
 
 #: A level header: ``=== mac ===``. Also matched by the Operational Intensity
 #: section's headers, so collection stops at the first post-level section.
+_LIST_SUFFIX_RE = re.compile(r"\[[^\]]*\]$")
 _LEVEL_RE = re.compile(r"^===\s+(.+?)\s+===\s*$")
 #: Sections after the per-level blocks (any of them ends level collection —
 #: exact set varies by Timeloop version).
@@ -242,9 +243,59 @@ def read_stats_input(path: Path) -> List[TimeloopStats]:
 # level → component binding
 # --------------------------------------------------------------------------
 
-def load_stats_map(path: Path) -> Tuple[Dict[str, str], set]:
-    """Read the optional map YAML: ``levels: {level: component}`` renames plus
-    ``ignore: [level, ...]`` deliberate drops."""
+_EVENTS = ("read", "write", "op")
+_ANY = "*"
+
+
+def _normalize_binding(level: str, value: Any) -> Dict[str, List[str]]:
+    """One ``levels:`` entry → ``{event: [component, ...]}``.
+
+    Accepted forms (2026-09-13 fan-out):
+      ``component``                         all events to one component
+      ``[c1, c2]``                          all events to every listed one
+      ``{read: [c1, c2], write: c1}``       per event (``read``/``write``/``op``)
+    A level's read events can thus also charge the read-data mux / crossbar
+    that sits between its banks and the consumer — the logic the RTL has,
+    declared as its own component, with no hardware invented by the tool.
+    """
+    if isinstance(value, str):
+        return {_ANY: [value]}
+    if isinstance(value, (list, tuple)):
+        if not value or not all(isinstance(v, str) for v in value):
+            raise ValueError(
+                f"stats map: level '{level}' must list component names")
+        return {_ANY: [str(v) for v in value]}
+    if isinstance(value, Mapping):
+        out: Dict[str, List[str]] = {}
+        for ev, tgt in value.items():
+            if str(ev) not in _EVENTS:
+                raise ValueError(
+                    f"stats map: level '{level}' has unknown event '{ev}' "
+                    f"(use {', '.join(_EVENTS)})")
+            if isinstance(tgt, str):
+                tgt = [tgt]
+            if not isinstance(tgt, (list, tuple)) or not tgt \
+                    or not all(isinstance(v, str) for v in tgt):
+                raise ValueError(
+                    f"stats map: level '{level}', event '{ev}' must name one "
+                    f"or more components")
+            out[str(ev)] = [str(v) for v in tgt]
+        if not out:
+            raise ValueError(f"stats map: level '{level}' binds nothing")
+        return out
+    raise ValueError(
+        f"stats map: level '{level}' must be a component name, a list of "
+        f"names, or {{read|write|op: names}}")
+
+
+def load_stats_map(path: Path) -> Tuple[Dict[str, Dict[str, List[str]]], set]:
+    """Read the optional map YAML: ``levels: {level: binding}`` plus
+    ``ignore: [level, ...]`` deliberate drops.
+
+    A binding is a component name (rename), a list of names (fan-out: every
+    listed component gets the level's events) or a per-event mapping — see
+    :func:`_normalize_binding`.
+    """
     import yaml
 
     with Path(path).open("r", encoding="utf-8") as f:
@@ -261,7 +312,7 @@ def load_stats_map(path: Path) -> Tuple[Dict[str, str], set]:
         raise ValueError(
             f"{path}: unknown key(s) {', '.join(unknown)} — the stats map "
             f"takes 'levels:' and 'ignore:'")
-    return ({str(k): str(v) for k, v in levels.items()},
+    return ({str(k): _normalize_binding(str(k), v) for k, v in levels.items()},
             {str(v) for v in ignore})
 
 
@@ -275,11 +326,14 @@ def _match_component(level: str, names: Sequence[str]) -> Tuple[Optional[str], L
     """
     if level in names:
         return level, [level]
+    # An Accelergy list component keeps its range in the ingested name
+    # (``wbuf_rd_mux[0..3]``); stats levels and map targets use the base.
+    base = {n: _LIST_SUFFIX_RE.sub("", n) for n in names}
     for fold in (False, True):
         lv = level.lower() if fold else level
         cands = [n for n in names
-                 if (n.lower() if fold else n) == lv
-                 or (n.lower() if fold else n).endswith("." + lv)]
+                 if (base[n].lower() if fold else base[n]) == lv
+                 or (base[n].lower() if fold else base[n]).endswith("." + lv)]
         if cands:
             return (cands[0], cands) if len(cands) == 1 else (None, cands)
     return None, []
@@ -311,6 +365,10 @@ def activity_from_stats(
     Returns ``(rows, total_cycles, window_labels, warnings, notes)``.
     ``mode="windows"`` emits one window per stats file (cumulative cycle
     offsets); ``mode="aggregate"`` sums everything into one window.
+    A ``--stats-map`` ``levels:`` entry may bind one level to several
+    components, per event (``{read: [wbuf, wbuf_rd_mux]}``): that is how the
+    read-data mux between a banked buffer and its consumer is charged with
+    the buffer's own access count (§4.2 banked buffers).
     """
     if mode not in ("windows", "aggregate"):
         raise ValueError(f"stats mode must be 'windows' or 'aggregate', got {mode!r}")
@@ -321,13 +379,28 @@ def activity_from_stats(
     comps = (description.get("npuwattch") or {}).get("components", [])
     names = [str(c["name"]) for c in comps]
     by_name = {str(c["name"]): c for c in comps}
-    mapped_targets = set(level_map.values())
-    missing_targets = sorted(t for t in mapped_targets if t not in by_name)
+    # Map targets bind like level names: exact dotted name or unique leaf
+    # suffix (``wbuf_rd_mux`` ← ``system_top_level.wbuf_rd_mux``).
+    missing_targets: List[str] = []
+    resolved_map: Dict[str, Dict[str, List[str]]] = {}
+    for level, binding in level_map.items():
+        rb: Dict[str, List[str]] = {}
+        for ev, targets in binding.items():
+            rt = []
+            for t in targets:
+                match, _ = _match_component(t, names)
+                if match is None:
+                    missing_targets.append(t)
+                else:
+                    rt.append(match)
+            rb[ev] = rt
+        resolved_map[level] = rb
+    level_map = resolved_map
     if missing_targets:
         raise ValueError(
             f"stats map names component(s) not in the description: "
-            f"{', '.join(missing_targets)} — description components are "
-            f"{', '.join(sorted(names))}")
+            f"{', '.join(sorted(set(missing_targets)))} — description "
+            f"components are {', '.join(sorted(names))}")
 
     try:
         from ..compounds import load_primitive_modes
@@ -340,6 +413,7 @@ def activity_from_stats(
     unmatched: List[str] = []
     ignored_with_activity: List[str] = []
     mode_fallbacks: Dict[str, str] = {}     # component → charged mode (≠ wanted)
+    fanout: Dict[str, Dict[str, List[str]]] = {}   # level → per-event targets
     covered: set = set()
 
     # windows[i] = {(component, event, mode): count}; parallel cycles list.
@@ -355,8 +429,8 @@ def activity_from_stats(
             if lv.name in ignore:
                 ignored_with_activity.append(lv.name)
                 continue
-            target = level_map.get(lv.name)
-            if target is None:
+            binding = level_map.get(lv.name)
+            if binding is None:
                 target, cands = _match_component(lv.name, names)
                 if target is None:
                     if len(cands) > 1:
@@ -367,24 +441,32 @@ def activity_from_stats(
                     else:
                         unmatched.append(lv.name)
                     continue
-            comp = by_name[target]
-            primitive = primitive_of(str(comp.get("class", "")))
-            declared = int(comp.get("count", 1))
-            if lv.instances is not None and lv.instances != declared:
-                warnings.append(
-                    f"stats level '{lv.name}' declares {lv.instances} "
-                    f"instance(s) but the description has {declared} for "
-                    f"'{target}' — are the stats from this architecture?")
-            covered.add(target)
+                binding = {_ANY: [target]}
+            all_targets = sorted({t for ts in binding.values() for t in ts})
+            prim_of: Dict[str, str] = {}
+            for target in all_targets:
+                comp = by_name[target]
+                prim_of[target] = primitive_of(str(comp.get("class", "")))
+                declared = int(comp.get("count", 1))
+                if lv.instances is not None and lv.instances != declared:
+                    warnings.append(
+                        f"stats level '{lv.name}' declares {lv.instances} "
+                        f"instance(s) but the description has {declared} for "
+                        f"'{target}' — are the stats from this architecture?")
+                covered.add(target)
+            if len(all_targets) > 1 or set(binding) != {_ANY}:
+                fanout.setdefault(lv.name, binding)
 
             def _add(event: str, wanted_mode: str, count: float) -> None:
                 if count <= 0:
                     return
-                charged = _mode_for(primitive, wanted_mode, modes_by_prim)
-                if charged != wanted_mode:
-                    mode_fallbacks[target] = charged
-                key = (target, event, charged)
-                counts[key] = counts.get(key, 0.0) + count
+                for target in binding.get(event, binding.get(_ANY, [])):
+                    primitive = prim_of[target]
+                    charged = _mode_for(primitive, wanted_mode, modes_by_prim)
+                    if charged != wanted_mode:
+                        mode_fallbacks[target] = charged
+                    key = (target, event, charged)
+                    counts[key] = counts.get(key, 0.0) + count
 
             if lv.is_compute:
                 _add("op", "hold_b", float(lv.computes))
@@ -442,6 +524,16 @@ def activity_from_stats(
             f"{len(uncovered)} description component(s) get no Timeloop "
             f"activity (charged leakage/area only — Timeloop does not model "
             f"them): {', '.join(uncovered)}")
+    for level, binding in sorted(fanout.items()):
+        parts = []
+        for ev in list(_EVENTS) + [_ANY]:
+            if ev in binding:
+                parts.append(f"{'all events' if ev == _ANY else ev} → "
+                             + ", ".join(binding[ev]))
+        notes.append(
+            f"stats level '{level}' fans out per --stats-map: "
+            + "; ".join(parts)
+            + " (the same access count charges each listed component)")
     for target, charged in sorted(mode_fallbacks.items()):
         notes.append(
             f"{target}: charged in the '{charged}' stim mode — the wanted "

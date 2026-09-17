@@ -55,6 +55,48 @@ becomes MAC operations, charged in the weight-stationary mode this mapping uses.
 component named `weights_spad`. If your names differ, pass a `--stats-map`
 YAML with `levels:` renames and `ignore:` for levels you mean to drop.
 
+## Banked buffers
+
+`shared_glb` is declared the Accelergy way: `depth: 16384, width: 64,
+n_banks: 32`. In Accelergy (as in CACTI behind it) `depth × width` is the
+whole buffer, 128 KB here, and `n_banks` partitions it. NPUWattch's
+`mem_depth_per_bank` is per bank, so the harness divides — the note
+
+```
+shared_glb (sram): depth 16384 is the Accelergy total over 32 banks → mem_depth_per_bank 512 (128 KB total)
+```
+
+says what it did, and the `--tree` label ends with the capacity it sized
+(`= 128 KB`). A canonical `mem_depth_per_bank` in the YAML is taken as-is.
+
+Each bank has its own decoders, and an access event is one word from one
+bank. Timeloop's `read_bandwidth: 16` (words per cycle) therefore means up to
+16 banks are read in the same cycle, and the stats reader charges each as one
+read event; the report's `idle` row is the clocked decoder energy of the banks
+that did not fire, booked once per cycle. Ports (`n_rw_ports`, `n_rd_ports`,
+`n_wr_ports`) are per bank, so a 16-bank buffer with one port per bank is
+`n_banks: 16, n_rw_ports: 1`. `tests/fixtures/timeloop/banked_wbuf/` is a
+minimal example: a 32 KB weight buffer, 16 banks × 2 KB × 256 bit, read
+16 words per cycle.
+
+**Logic between the banks.** If every bank feeds its consumer directly there
+is nothing to add. If several banks share fewer output ports, the read-data
+mux (or crossbar) is real hardware that Timeloop does not know about: declare
+it in the YAML as the RTL has it (`class: mux`, `num_inputs: 16`,
+`datawidth: 256`, named `wbuf_rd_mux[0..3]` for four 16:1 muxes) and bind it to the
+buffer's read events in the stats map:
+
+```yaml
+levels:
+  wbuf:
+    read: [wbuf, wbuf_rd_mux]   # every word read also traverses one mux
+    write: wbuf
+```
+
+Each listed component is charged the level's access count for that event;
+the mux is priced by the logic estimator and appears as its own line.
+`arch_mux.yaml` + `stats_map_mux.yaml` in the same fixture folder show it.
+
 ## One window per layer
 
 `--stats stats/` is a directory, so NPUWattch makes one report window per file,

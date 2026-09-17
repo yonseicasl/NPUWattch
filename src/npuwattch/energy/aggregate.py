@@ -115,6 +115,71 @@ def _exec_cycles(window: Any) -> Optional[int]:
     return None
 
 
+def _book_idle_per_cycle(
+    components: Mapping[str, tuple],
+    dyn: Dict[str, float],
+    dyn_modes: Dict[str, Dict[str, float]],
+    events_by_mode: Dict[str, Dict[str, float]],
+    *,
+    provider: UnitCostProvider,
+    tech: TechContext,
+    clock_MHz: float,
+    exec_cycles: int,
+    warnings: List[str],
+) -> None:
+    """Book a memory's clocked-idle energy once per cycle (2026-09-13).
+
+    A provider may expose ``idle_terms(primitive, features) ->
+    (e_idle_per_cycle, idle_displaced_per_access)``: its access unit costs
+    then include, for one access in an otherwise quiet cycle, the idle energy
+    of every other clocked decoder group (``e_idle - displaced``). Charging
+    that inside every event over-books idle when several accesses share a
+    cycle (parallel banks) and under-books it in cycles with no access. With
+    the window's cycle count known, the idle part is moved out of the events:
+
+        E_events = Σ N_mode · (E_mode - (e_idle - displaced))
+        E_idle   = max(0, instances · e_idle · cycles - N_total · displaced)
+
+    Components whose activity already carries explicit ``idle`` rows keep the
+    event booking (their idle is the activity's business). Without a cycle
+    count the per-access booking stands, and the window says so.
+    """
+    idle_fn = getattr(provider, "idle_terms", None)
+    if idle_fn is None:
+        return
+    pending: List[str] = []
+    for name, (primitive, config, instances) in components.items():
+        modes = dyn_modes.get(name)
+        if not modes or "idle" in modes:
+            continue
+        terms = idle_fn(primitive, _features(config, tech, clock_mhz=clock_MHz))
+        if not terms:
+            continue
+        e_idle_cycle, displaced = float(terms[0]), float(terms[1])
+        if exec_cycles <= 0:
+            pending.append(name)
+            continue
+        per_event_idle = e_idle_cycle - displaced
+        n_total = 0.0
+        for mode_key, n in events_by_mode.get(name, {}).items():
+            modes[mode_key] = max(0.0, modes[mode_key] - n * per_event_idle)
+            n_total += n
+        budget = float(instances) * e_idle_cycle * float(exec_cycles)
+        idle = budget - n_total * displaced
+        if idle < 0.0:
+            warnings.append(
+                f"{name}: {n_total:g} access events exceed the "
+                f"{instances} x {exec_cycles} cycles the component can serve "
+                f"— idle energy floored at 0")
+            idle = 0.0
+        modes["idle"] = modes.get("idle", 0.0) + idle
+        dyn[name] = sum(modes.values())
+    if pending:
+        warnings.append(
+            "no exec cycles: clocked-idle energy of "
+            f"{', '.join(pending)} charged per access event")
+
+
 def _aggregate_one_window(
     components: Mapping[str, tuple],          # name -> (primitive, config, instances)
     activity_items: List[tuple],              # (name, primitive, config, mode, count)
@@ -137,6 +202,7 @@ def _aggregate_one_window(
 
     dyn: Dict[str, float] = {name: 0.0 for name in components}
     dyn_modes: Dict[str, Dict[str, float]] = {}
+    events_by_mode: Dict[str, Dict[str, float]] = {}
     for name, primitive, config, mode, count in activity_items:
         if name not in components:
             continue                               # activity for an unlisted component
@@ -147,6 +213,12 @@ def _aggregate_one_window(
         per_mode = dyn_modes.setdefault(name, {})
         mode_key = str(mode) if mode is not None else "unspecified"
         per_mode[mode_key] = per_mode.get(mode_key, 0.0) + e
+        n_by_mode = events_by_mode.setdefault(name, {})
+        n_by_mode[mode_key] = n_by_mode.get(mode_key, 0.0) + count
+
+    _book_idle_per_cycle(components, dyn, dyn_modes, events_by_mode,
+                         provider=provider, tech=tech, clock_MHz=clock_MHz,
+                         exec_cycles=exec_cycles, warnings=warnings)
 
     comp_energy: Dict[str, ComponentEnergy] = {}
     crit_paths: List[float] = []

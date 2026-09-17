@@ -369,6 +369,14 @@ class _LogicUnitCostProvider:
             return self._delegate("crit_path", primitive, features)
         return self._predict(primitive, "timing", features, None)
 
+    def idle_terms(self, primitive: str, features: Mapping[str, Any]):
+        """Optional protocol hook (per-cycle idle accounting): logic
+        primitives carry none; forwarded to the fallback for the rest."""
+        if primitive in self.SERVED or self._fallback is None:
+            return None
+        fb = getattr(self._fallback, "idle_terms", None)
+        return fb(primitive, features) if fb is not None else None
+
 
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,
                             model_dir: Optional[str] = None,

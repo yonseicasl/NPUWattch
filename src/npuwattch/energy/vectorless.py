@@ -20,7 +20,7 @@ leakage/area come from the §6 machinery unchanged):
 
 Capacity-expansion ``.tail`` parts (§3.8) carry leakage/area only — exactly as
 in harness runs — because a memory instance's ``random`` unit cost already
-models one access with sibling subarrays idle and other banks gated; charging
+models one access with sibling macros idle and other banks gated; charging
 the tail again would multiply that access.
 
 Any result built this way must be labeled **VECTORLESS** in user-facing output.

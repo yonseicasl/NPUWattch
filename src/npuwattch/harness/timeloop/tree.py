@@ -21,6 +21,29 @@ from pathlib import Path
 __all__ = ["tree_from_accelergy"]
 
 
+def _storage_capacity(node) -> "str | None":
+    """``32 KB`` for a storage component, from the same translation the
+    ingest applies (Accelergy depth ÷ n_banks per bank) — so the declared
+    tree shows the capacity the estimator will be sized to."""
+    from ...report.tree import capacity_suffix
+    from .vocabulary import attributes_for, primitive_for
+
+    try:
+        primitive = primitive_for(node.comp_class, node.subclass,
+                                  node.attributes or {})
+        if primitive not in ("sram", "regfile", "fifo"):
+            return None
+        warnings: list = []
+        attrs = attributes_for(primitive, node.attributes or {},
+                               component=node.name, warnings=warnings,
+                               notes=[])
+    except Exception:                       # the tree must never break the run
+        return None
+    if any("assuming" in w for w in warnings):
+        return None                         # width/depth guessed: no capacity claim
+    return capacity_suffix(attrs)
+
+
 def tree_from_accelergy(input_yaml: Path):
     """Parse an Accelergy v0.4 description and convert its declared hierarchy
     into a ``report.tree.ArchTreeNode``."""
@@ -40,6 +63,9 @@ def tree_from_accelergy(input_yaml: Path):
             label = f"class: {node.comp_class}"
             if node.subclass:
                 label += f"/{node.subclass}"
+            cap = _storage_capacity(node)
+            if cap:
+                label += f" = {cap}"
             out = ArchTreeNode(base, count=count, label=label)
         elif kind == "Container":
             spatial = []

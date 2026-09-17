@@ -184,11 +184,13 @@ _DEPTH_KEYS = ("mem_depth_per_bank", "memory_depth", "depth", "entries",
 _CAPACITY_BIT_KEYS = ("capacity_bit", "capacity_bits")
 _CAPACITY_BYTE_KEYS = ("sizekb", "size_kb", "capacity_kb")
 _BANK_KEYS = ("mem_banks", "n_banks", "num_banks", "banks")
-_RW_PORT_KEYS = ("mem_rw_ports", "n_rdwr_ports", "num_rdwr_ports", "n_ports",
-                 "num_ports", "ports")
+_RW_PORT_KEYS = ("mem_rw_ports", "n_rw_ports", "n_rdwr_ports", "num_rw_ports",
+                 "num_rdwr_ports", "n_ports", "num_ports", "ports")
 _R_PORT_KEYS = ("mem_r_ports", "n_rd_ports", "num_read_ports", "read_ports")
 _W_PORT_KEYS = ("mem_w_ports", "n_wr_ports", "num_write_ports", "write_ports")
 _BLOCK_SIZE_KEYS = ("block_size", "blocksize")
+_BANDWIDTH_KEYS = ("read_bandwidth", "write_bandwidth", "shared_bandwidth",
+                   "bandwidth")
 _INPUT_KEYS = ("net_inputs", "num_inputs", "n_inputs", "inputs", "ingresses")
 _OUTPUT_KEYS = ("net_outputs", "num_outputs", "n_outputs", "outputs", "egresses")
 # NOT `latency`: on an Accelergy storage component that is access latency, and
@@ -356,6 +358,24 @@ def _block_width(attrs: Mapping[str, Any], take) -> Optional[int]:
     return datawidth * block
 
 
+def _take_key(attrs: Mapping[str, Any], keys: Tuple[str, ...],
+              consumed: set) -> Tuple[Optional[str], Optional[Any]]:
+    """Like ``take`` but also says WHICH key answered (None, None if none)."""
+    for k in keys:
+        if k in attrs and attrs[k] is not None:
+            consumed.add(k)
+            return k, attrs[k]
+    return None, None
+
+
+def _capacity_str(bits: int) -> str:
+    if bits % (8 * 1024 * 1024) == 0:
+        return f"{bits // (8 * 1024 * 1024)} MB"
+    if bits % (8 * 1024) == 0:
+        return f"{bits // (8 * 1024)} KB"
+    return f"{bits} bit"
+
+
 def _storage_attributes(primitive, attrs, take, out, *, component,
                         warnings, notes, consumed) -> None:
     width = _as_int(take(_WORD_KEYS))
@@ -368,7 +388,14 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
         width = 32
     out["data_width"] = width
 
-    depth = _as_int(take(_DEPTH_KEYS))
+    # Banks first: Accelergy's ``depth`` (and any declared capacity) is the
+    # TOTAL over all banks — the CACTI convention behind Accelergy's SRAM
+    # class (``cache size = width x depth``, ``-UCA bank count = n_banks``).
+    # Only the canonical ``mem_depth_per_bank`` is already per bank.
+    banks = _as_int(take(_BANK_KEYS))
+
+    depth_key, depth_raw = _take_key(attrs, _DEPTH_KEYS, consumed)
+    depth = _as_int(depth_raw)
     if depth is None:
         capacity_bits = _as_int(take(_CAPACITY_BIT_KEYS))
         if capacity_bits is None:
@@ -384,9 +411,19 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
             f"{component} ({primitive}): neither depth nor capacity declared "
             f"— assuming 64 entries")
         depth = 64
+    if banks and banks > 1 and depth_key != "mem_depth_per_bank":
+        per_bank = -(-depth // banks)            # ceil
+        if depth % banks:
+            warnings.append(
+                f"{component} ({primitive}): total depth {depth} is not a "
+                f"multiple of {banks} banks — rounded up to {per_bank} words "
+                f"per bank")
+        notes.append(
+            f"{component} ({primitive}): depth {depth} is the Accelergy total "
+            f"over {banks} banks → mem_depth_per_bank {per_bank} "
+            f"({_capacity_str(banks * per_bank * width)} total)")
+        depth = per_bank
     out["mem_depth_per_bank"] = depth
-
-    banks = _as_int(take(_BANK_KEYS))
     if banks is not None:
         out["mem_banks"] = banks
     if primitive == "fifo":
@@ -406,6 +443,31 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
         out["mem_w_ports"] = w_ports
     if rw_ports is not None:
         out["mem_rw_ports"] = rw_ports
+
+    # Timeloop's bandwidth (words per cycle) is a mapping constraint, not a
+    # physical attribute, but on a banked memory it says how many banks may
+    # be accessed in one cycle — worth echoing so the event accounting is
+    # understood: N accesses in a cycle are charged as N access events.
+    bw_vals = [v for v in (_as_int(attrs.get(k)) for k in _BANDWIDTH_KEYS) if v]
+    if bw_vals:
+        for k in _BANDWIDTH_KEYS:
+            if k in attrs:
+                consumed.add(k)
+        bw = max(bw_vals)
+        n_banks = banks or 1
+        ports = (r_ports or 0) + (w_ports or 0) + (rw_ports or 0) or 1
+        if bw > 1 and n_banks > 1:
+            notes.append(
+                f"{component} ({primitive}): bandwidth {bw} words/cycle → up "
+                f"to {min(bw, n_banks * ports)} bank accesses per cycle; each "
+                f"is charged as one access event")
+        if bw > n_banks * ports:
+            warnings.append(
+                f"{component} ({primitive}): bandwidth {bw} words/cycle "
+                f"exceeds {n_banks} bank(s) × {ports} port(s) = "
+                f"{n_banks * ports} accesses/cycle — the declared structure "
+                f"cannot serve Timeloop's mapping; it would need "
+                f"{-(-bw // ports)} banks (or more ports)")
 
 
 def _int_attributes(primitive, attrs, take, out, *, component,

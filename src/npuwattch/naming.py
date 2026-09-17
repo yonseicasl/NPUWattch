@@ -103,10 +103,14 @@ CANONICAL: Dict[str, Param] = dict([
 
     # -- storage ------------------------------------------------------------
     _p("mem_depth_per_bank", "int", "Entries (words) per bank"),
-    _p("mem_banks", "int", "Number of banks"),
-    _p("mem_r_ports", "int", "Dedicated read ports"),
-    _p("mem_w_ports", "int", "Dedicated write ports"),
-    _p("mem_rw_ports", "int", "Shared read-or-write ports (1RW macros)"),
+    _p("mem_banks", "int",
+       "Independently addressable banks (each with its own decoders; may be "
+       "accessed concurrently — the CACTI 5+ bank)"),
+    _p("mem_r_ports", "int", "Dedicated read ports, physical, per bank"),
+    _p("mem_w_ports", "int", "Dedicated write ports, physical, per bank"),
+    _p("mem_rw_ports", "int",
+       "Shared read-or-write ports, physical, per bank (1RW macros); not the "
+       "number of concurrent accesses — use banks for that"),
     _p("mem_template", "str",
        "SRAM macro template for capacity-only specs: sram_64k | sram_256k "
        "(fixes data_width/depth; see src/estimators/sram)"),
