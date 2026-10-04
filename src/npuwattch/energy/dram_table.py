@@ -1,4 +1,9 @@
-"""Load a PyTorchSim run's DRAM energy-cost table (``energy_cost_table_path``).
+"""DRAM energy-cost tables: PyTorchSim's ``energy_cost_table_path`` format,
+shared by every harness.
+
+Shipped tables (``dram_tables/*.yml``, one per DRAM type Accelergy accepts)
+let the Timeloop harness price an Accelergy ``DRAM`` by its declared ``type``
+(:func:`table_for_type`); ``--energy-table`` overrides them on either harness.
 
 The simulator config names a YAML of DRAM energy constants (author handoff
 2026-08-10, sample ``hbm2.yml``); the log echoes the loaded table as
@@ -14,7 +19,10 @@ Table contract (the authors let us fix the structure)::
 
     name: HBM2                       # required — matched against the log echo
     offchip_dram:
-      row_activation_pj: 909.0       # required — one ACT(+PRE) command
+      row_activation_pj: 909.0       # one ACT(+PRE) command — required for
+                                     #   PyTorchSim (it issues ACTs); optional
+                                     #   for per-bit-only tables (Timeloop has
+                                     #   no ACT events)
       transfer_pj_per_bit:           # required — per-bit terms, summed;
         dram: 1.51                   #   labels are free-form (dram/io/phy in
         io: 1.17                     #   the author sample) and kept for the
@@ -36,7 +44,11 @@ from typing import Dict, Optional
 
 import yaml
 
-__all__ = ["EnergyTable", "EnergyTableError", "load_energy_table"]
+__all__ = ["EnergyTable", "EnergyTableError", "TABLE_DIR", "load_energy_table",
+           "table_for_type"]
+
+#: Shipped per-type tables (package data).
+TABLE_DIR = Path(__file__).resolve().parent / "dram_tables"
 
 
 class EnergyTableError(ValueError):
@@ -47,7 +59,8 @@ class EnergyTableError(ValueError):
 class EnergyTable:
     name: str
     path: Path
-    act_pj: float
+    #: per-ACT(+PRE) energy; None for a per-bit-only table.
+    act_pj: Optional[float]
     #: per-bit transfer terms, label → pJ/bit (order preserved from the file).
     transfer_terms: Dict[str, float] = field(default_factory=dict)
     #: per-REFab refresh energy; None when the table has no refresh term
@@ -72,7 +85,9 @@ def _positive_number(value: object, where: str) -> float:
     return float(value)
 
 
-def load_energy_table(path: Path) -> EnergyTable:
+def load_energy_table(path: Path, *, require_activation: bool = True) -> EnergyTable:
+    """Parse one table. ``require_activation=False`` accepts a per-bit-only
+    table (no ``row_activation_pj``) — fine where no ACT events are charged."""
     path = Path(path)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -91,8 +106,10 @@ def load_energy_table(path: Path) -> EnergyTable:
     if not isinstance(dram, dict):
         raise EnergyTableError(f"energy table {path}: missing 'offchip_dram' mapping")
 
-    act = _positive_number(dram.get("row_activation_pj"),
-                           f"energy table {path}: offchip_dram.row_activation_pj")
+    act_raw = dram.get("row_activation_pj")
+    act = (None if act_raw is None and not require_activation else
+           _positive_number(act_raw,
+                            f"energy table {path}: offchip_dram.row_activation_pj"))
     terms_raw = dram.get("transfer_pj_per_bit")
     if not isinstance(terms_raw, dict) or not terms_raw:
         raise EnergyTableError(
@@ -109,3 +126,16 @@ def load_energy_table(path: Path) -> EnergyTable:
 
     return EnergyTable(name=name, path=path, act_pj=act,
                        transfer_terms=terms, ref_pj=ref_pj)
+
+
+def table_for_type(dram_type: object) -> Optional[EnergyTable]:
+    """The shipped table whose ``name`` is ``dram_type`` (case-insensitive,
+    e.g. Accelergy's ``LPDDR4``), or None when there is none."""
+    if not isinstance(dram_type, str) or not dram_type.strip():
+        return None
+    path = TABLE_DIR / f"{dram_type.strip().lower()}.yml"
+    if not path.is_file():
+        return None
+    table = load_energy_table(path, require_activation=False)
+    return table if table.name.lower() == dram_type.strip().lower() else None
+

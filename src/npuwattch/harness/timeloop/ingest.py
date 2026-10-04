@@ -50,7 +50,11 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     arch_path = Path(inputs["arch"])
     description, warnings, notes = description_from_accelergy(
         arch_path, tech, default_clock_mhz=opts.get("default_clock_mhz"),
-        verbose=int(opts.get("verbose", 0)))
+        verbose=int(opts.get("verbose", 0)),
+        node_explicit=bool(opts.get("node_explicit", False)))
+    if inputs.get("energy_table") is not None:
+        _apply_energy_table(description, Path(inputs["energy_table"]),
+                            warnings, notes)
 
     stats_path = inputs.get("stats")
     if stats_path is not None:
@@ -102,12 +106,49 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     )
 
 
+def _apply_energy_table(description: Dict[str, Any], path: Path,
+                        warnings: List[str], notes: List[str]) -> None:
+    """``--energy-table``: price every DRAM component with the user's table,
+    over the type-matched shipped one (or the HBM2 fallback and its warning).
+    A per-bit-only table is fine here — Timeloop stats carry no ACT/REF."""
+    from ...energy.dram_table import load_energy_table
+
+    table = load_energy_table(path, require_activation=False)
+    drams = [c for c in description["npuwattch"]["components"]
+             if c.get("class") == "hbm"]
+    if not drams:
+        warnings.append(f"--energy-table {path.name} supplied but the "
+                        f"description has no DRAM component — the table is "
+                        f"unused")
+        return
+    for c in drams:
+        attrs = c.setdefault("attributes", {})
+        for key in ("mem_act_energy_pJ", "mem_ref_energy_pJ"):
+            attrs.pop(key, None)
+        attrs["mem_access_energy_per_bit_pJ"] = table.transfer_pj_per_bit
+        if table.act_pj is not None:
+            attrs["mem_act_energy_pJ"] = table.act_pj
+        if table.ref_pj is not None:
+            attrs["mem_ref_energy_pJ"] = table.ref_pj
+        name = str(c["name"])
+        warnings[:] = [w for w in warnings
+                       if not (w.startswith(name + ":")
+                               and "built-in HBM2" in w)]
+        notes[:] = [n for n in notes
+                    if not (n.startswith(name + " (DRAM type")
+                            and "shipped table" in n)]
+        notes.append(f"{name}: {table.transfer_pj_per_bit:g} pJ/bit from "
+                     f"--energy-table {table.name!r} ({path.name}: "
+                     f"{table.transfer_split_str()})")
+
+
 def description_from_accelergy(
     arch_path: Path,
     tech: Any,
     *,
     default_clock_mhz: Optional[float] = None,
     verbose: int = 0,
+    node_explicit: bool = False,
 ) -> Tuple[Dict[str, Any], List[str], List[str]]:
     """Accelergy v0.4 architecture YAML → ``({"npuwattch": ...}, warnings, notes)``.
 
@@ -174,12 +215,16 @@ def description_from_accelergy(
     # A native description carries ONE technology block; Accelergy declares the
     # node per component. Disagreement is worth saying out loud — the run is
     # being evaluated at the CLI's node, not the one written in the file.
+    # An explicit --node is the user saying which node they want — the usual
+    # case for a Timeloop file whose `technology:` only feeds Accelergy's own
+    # tables — so it is a note; the silent 7nm default still warns.
     foreign = sorted(n for n in declared_nodes if n != str(tech.node).lower())
     if foreign:
-        warnings.append(
-            f"the description declares technology {', '.join(foreign)} but the "
-            f"run is evaluated at {tech.node} (--node); NPUWattch models the "
-            f"node it is told to")
+        msg = (f"the description declares technology {', '.join(foreign)} but "
+               f"the run is evaluated at {tech.node} (--node"
+               f"{'' if node_explicit else ' default'}); NPUWattch models the "
+               f"node it is told to")
+        (notes if node_explicit else warnings).append(msg)
 
     clock_mhz, clock_note = _clock_mhz(flattener, tech, default_clock_mhz)
     if clock_note:

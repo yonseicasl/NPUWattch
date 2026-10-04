@@ -1,0 +1,15 @@
+# HBM2 off-chip DRAM energy constants, pJ. Same values as the built-in
+# HBMCostProvider constants and the PyTorchSim authors' hbm2.yml:
+#   M. O'Connor et al., "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
+#   Bandwidth Systems," MICRO-50, 2017, Table 3 (HBM2). DOI 10.1145/3123939.3124545
+# refresh_pj_per_refab is derived first-order from the activation energy
+# (64 rows x 909 pJ per REFab; see energy/unit_cost.py).
+name: HBM2
+
+offchip_dram:
+  row_activation_pj: 909.0
+  transfer_pj_per_bit:
+    dram: 1.51
+    io: 1.17
+    phy: 0.80
+  refresh_pj_per_refab: 58176.0

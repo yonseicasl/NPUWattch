@@ -326,7 +326,8 @@ def _run_harness(args) -> int:
     # --stats runs. --stats-mode only reaches the timeloop harness: the parser
     # ties it to --stats, and the registry rejects `stats` for anyone else.
     opts = {"default_clock_mhz": DEFAULT_HARNESS_CLOCK_MHZ,
-            "verbose": args.verbose}
+            "verbose": args.verbose,
+            "node_explicit": args.node_explicit}
     if args.vectorless_activity is not None:
         opts["vectorless_activity"] = args.vectorless_activity
     if args.stats_mode is not None:

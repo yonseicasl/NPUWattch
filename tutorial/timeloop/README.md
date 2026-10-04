@@ -69,10 +69,10 @@ shared_glb (sram): depth 16384 is the Accelergy total over 32 banks → mem_dept
 says what it did, and the `--tree` label ends with the capacity it sized
 (`= 128 KB`). A canonical `mem_depth_per_bank` in the YAML is taken as-is.
 
-Each bank has its own decoders, and an access event is one word from one
-bank. Timeloop's `read_bandwidth: 16` (words per cycle) therefore means up to
-16 banks are read in the same cycle, and the stats reader charges each as one
-read event; the report's `idle` row is the clocked decoder energy of the banks
+Each bank has its own decoders, and an access event is one row (`width`
+bits) from one bank. Timeloop counts bandwidth in `datawidth` elements, so
+`read_bandwidth: 16` on this 8-element row is 2 bank accesses per cycle, and
+the stats reader charges each as one read event; the report's `idle` row is the clocked decoder energy of the banks
 that did not fire, booked once per cycle. Ports (`n_rw_ports`, `n_rd_ports`,
 `n_wr_ports`) are per bank, so a 16-bank buffer with one port per bank is
 `n_banks: 16, n_rw_ports: 1`. `tests/fixtures/timeloop/banked_wbuf/` is a

@@ -55,6 +55,7 @@ def _ingest(inputs, tech, **opts):
     # Console-level opts other ingests consume; synthesize_run has no use for
     # them (its output is warnings/notes on EmittedArch, not prints).
     opts.pop("verbose", None)
+    opts.pop("node_explicit", None)
     config_path = inputs.get("config")
     base_config = load_config_yml(config_path) if config_path else None
     booksim = inputs.get("booksim")

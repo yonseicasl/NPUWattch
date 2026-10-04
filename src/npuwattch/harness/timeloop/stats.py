@@ -245,9 +245,41 @@ def read_stats_input(path: Path) -> List[TimeloopStats]:
 
 _EVENTS = ("read", "write", "op")
 _ANY = "*"
+_MULT = "multiplicity"      # reserved binding key: {component: events/access}
 
 
-def _normalize_binding(level: str, value: Any) -> Dict[str, List[str]]:
+def _targets(level: str, where: str, tgt: Any) -> Tuple[List[str], Dict[str, int]]:
+    """One target spec → (names, {name: events per access}).
+
+    A target is a component name, or ``{name: N}`` when one access of the
+    level is N events of that component (an 8-lane unit fed one 8-element
+    block per access).
+    """
+    items = tgt if isinstance(tgt, (list, tuple)) else [tgt]
+    names: List[str] = []
+    mult: Dict[str, int] = {}
+    for item in items:
+        if isinstance(item, str):
+            names.append(item)
+            continue
+        if isinstance(item, Mapping) and len(item) == 1:
+            (name, n), = item.items()
+            if isinstance(name, str) and isinstance(n, int) \
+                    and not isinstance(n, bool) and n >= 1:
+                names.append(name)
+                if n > 1:
+                    mult[name] = n
+                continue
+        raise ValueError(
+            f"stats map: level '{level}'{where} must name components "
+            f"(a name, or {{name: N}} for N events per access)")
+    if not names:
+        raise ValueError(
+            f"stats map: level '{level}'{where} must list component names")
+    return names, mult
+
+
+def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
     """One ``levels:`` entry → ``{event: [component, ...]}``.
 
     Accepted forms (2026-09-13 fan-out):
@@ -257,35 +289,35 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, List[str]]:
     A level's read events can thus also charge the read-data mux / crossbar
     that sits between its banks and the consumer — the logic the RTL has,
     declared as its own component, with no hardware invented by the tool.
+    Any target may be ``{name: N}``: each access of the level is N events of
+    that component (e.g. an 8-lane post-processing unit fed 8-element blocks);
+    those multiplicities are kept under the reserved key ``_MULT``.
     """
-    if isinstance(value, str):
-        return {_ANY: [value]}
-    if isinstance(value, (list, tuple)):
-        if not value or not all(isinstance(v, str) for v in value):
+    per_event = isinstance(value, Mapping) and not (
+        len(value) == 1 and isinstance(next(iter(value.values())), int))
+    if per_event:                            # {read: ..., write: ..., op: ...}
+        unknown = [str(ev) for ev in value if str(ev) not in _EVENTS]
+        if unknown:
             raise ValueError(
-                f"stats map: level '{level}' must list component names")
-        return {_ANY: [str(v) for v in value]}
-    if isinstance(value, Mapping):
-        out: Dict[str, List[str]] = {}
-        for ev, tgt in value.items():
-            if str(ev) not in _EVENTS:
-                raise ValueError(
-                    f"stats map: level '{level}' has unknown event '{ev}' "
-                    f"(use {', '.join(_EVENTS)})")
-            if isinstance(tgt, str):
-                tgt = [tgt]
-            if not isinstance(tgt, (list, tuple)) or not tgt \
-                    or not all(isinstance(v, str) for v in tgt):
-                raise ValueError(
-                    f"stats map: level '{level}', event '{ev}' must name one "
-                    f"or more components")
-            out[str(ev)] = [str(v) for v in tgt]
-        if not out:
+                f"stats map: level '{level}' has unknown event '{unknown[0]}' "
+                f"(use {', '.join(_EVENTS)})")
+        if not value:
             raise ValueError(f"stats map: level '{level}' binds nothing")
-        return out
-    raise ValueError(
-        f"stats map: level '{level}' must be a component name, a list of "
-        f"names, or {{read|write|op: names}}")
+        out: Dict[str, Any] = {}
+        mult: Dict[str, int] = {}
+        for ev, tgt in value.items():
+            out[str(ev)], m = _targets(level, f", event '{ev}'", tgt)
+            mult.update(m)
+    elif isinstance(value, (str, list, tuple, Mapping)):   # all events
+        names, mult = _targets(level, "", value)
+        out = {_ANY: names}
+    else:
+        raise ValueError(
+            f"stats map: level '{level}' must be a component name, a list of "
+            f"names, or {{read|write|op: names}}")
+    if mult:
+        out[_MULT] = mult
+    return out
 
 
 def load_stats_map(path: Path) -> Tuple[Dict[str, Dict[str, List[str]]], set]:
@@ -383,9 +415,13 @@ def activity_from_stats(
     # suffix (``wbuf_rd_mux`` ← ``system_top_level.wbuf_rd_mux``).
     missing_targets: List[str] = []
     resolved_map: Dict[str, Dict[str, List[str]]] = {}
+    level_mult: Dict[str, Dict[str, int]] = {}   # level → {component: events/access}
     for level, binding in level_map.items():
         rb: Dict[str, List[str]] = {}
+        resolved: Dict[str, str] = {}
         for ev, targets in binding.items():
+            if ev == _MULT:
+                continue
             rt = []
             for t in targets:
                 match, _ = _match_component(t, names)
@@ -393,8 +429,12 @@ def activity_from_stats(
                     missing_targets.append(t)
                 else:
                     rt.append(match)
+                    resolved[t] = match
             rb[ev] = rt
         resolved_map[level] = rb
+        level_mult[level] = {resolved[t]: n
+                             for t, n in binding.get(_MULT, {}).items()
+                             if t in resolved}
     level_map = resolved_map
     if missing_targets:
         raise ValueError(
@@ -443,18 +483,26 @@ def activity_from_stats(
                     continue
                 binding = {_ANY: [target]}
             all_targets = sorted({t for ts in binding.values() for t in ts})
+            mult = level_mult.get(lv.name, {})
+            # The instance cross-check applies to the component the level IS
+            # (its rename, or the target its name matches); extra fan-out
+            # targets (a mux, a post-processing unit) are other hardware.
+            own = ({all_targets[0]} if len(all_targets) == 1 else
+                   {t for t in all_targets
+                    if _match_component(lv.name, [t])[0] is not None})
             prim_of: Dict[str, str] = {}
             for target in all_targets:
                 comp = by_name[target]
                 prim_of[target] = primitive_of(str(comp.get("class", "")))
                 declared = int(comp.get("count", 1))
-                if lv.instances is not None and lv.instances != declared:
+                if target in own and lv.instances is not None \
+                        and lv.instances != declared:
                     warnings.append(
                         f"stats level '{lv.name}' declares {lv.instances} "
                         f"instance(s) but the description has {declared} for "
                         f"'{target}' — are the stats from this architecture?")
                 covered.add(target)
-            if len(all_targets) > 1 or set(binding) != {_ANY}:
+            if len(all_targets) > 1 or set(binding) != {_ANY} or mult:
                 fanout.setdefault(lv.name, binding)
 
             def _add(event: str, wanted_mode: str, count: float) -> None:
@@ -466,7 +514,8 @@ def activity_from_stats(
                     if charged != wanted_mode:
                         mode_fallbacks[target] = charged
                     key = (target, event, charged)
-                    counts[key] = counts.get(key, 0.0) + count
+                    counts[key] = (counts.get(key, 0.0)
+                                   + count * mult.get(target, 1))
 
             if lv.is_compute:
                 _add("op", "hold_b", float(lv.computes))
@@ -525,11 +574,13 @@ def activity_from_stats(
             f"activity (charged leakage/area only — Timeloop does not model "
             f"them): {', '.join(uncovered)}")
     for level, binding in sorted(fanout.items()):
+        mult = level_mult.get(level, {})
         parts = []
         for ev in list(_EVENTS) + [_ANY]:
             if ev in binding:
                 parts.append(f"{'all events' if ev == _ANY else ev} → "
-                             + ", ".join(binding[ev]))
+                             + ", ".join(t + (f" ×{mult[t]}" if t in mult else "")
+                                         for t in binding[ev]))
         notes.append(
             f"stats level '{level}' fans out per --stats-map: "
             + "; ".join(parts)
@@ -538,4 +589,5 @@ def activity_from_stats(
         notes.append(
             f"{target}: charged in the '{charged}' stim mode — the wanted "
             f"mode is not characterized for this primitive")
+    warnings = list(dict.fromkeys(warnings))  # per-file repeats say it once
     return rows, total_cycles, labels, warnings, notes

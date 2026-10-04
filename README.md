@@ -62,6 +62,9 @@ Useful flags:
 - `--report DIR` writes `report.html` + `report.json`; `--tree` shows how the run was interpreted.
 - Technology and operating point (harness modes only — a native description carries its own):
   `--node`, `--transistor`, `--corner`, `--voltage-offset`, `--temperature`, `--clock-mhz`.
+- DRAM: a Timeloop `DRAM` is priced by its Accelergy `type` (LPDDR4, LPDDR, DDR3, GDDR5,
+  HBM2, HMC — the same per-bit numbers Accelergy uses); `--energy-table` (PyTorchSim or
+  Timeloop) supplies your own table instead.
 - PyTorchSim extras: `--config-yml`, `--booksim-dir` (anynet NoC runs), `--energy-table`
   (DRAM cost table, e.g. `hbm2.yml`).
 - Any run without activity data falls back to a vectorless estimate (25% of random switching,
