@@ -1,42 +1,23 @@
 # PyTorchSim harness definitions
 
-This is the **default bundle** NPUWattch loads for PyTorchSim, and the **worked
-sample** to copy when authoring your own harness definitions. It is edited by
-hand (unlike the system contract in `../../compounds/data/`), so it is authored
-in YAML with inline `#` comments.
+The harness keeps one definition file of its own:
 
 ```
-compounds/systolic_mac.yaml     the compound(s) this harness models (tool-agnostic)
-projections/pytorchsim.yaml     PyTorchSim native action -> {element: stim_mode}
+vocabulary.yaml     PyTorchSim names -> NPUWattch names (datatype spellings,
+                    gem5 instruction classes). Format: manual §3.2.1.
 ```
 
-- **compounds/** — hardware composition as NPUWattch primitives. Tool-agnostic:
-  nothing PyTorchSim-specific appears here. Placeholders `{mac_primitive}` /
-  `{mac_config}` and the symbols `lanes` / `bitwidth` are resolved per kernel by
-  the MAC config inferencer.
-- **projections/** — how PyTorchSim's native actions drive the compound's
-  elements, and which stat gives each action's cycle count (`count_from`).
+The definitions of a **design** are inputs of a run, not part of the harness.
+NPUWattch reads them from the run directory (the directory that contains
+`togsim_results/`), or from the files you give on the command line:
 
-Load the shipped bundle:
+| File (fixed name)          | Option                  | Content |
+|----------------------------|-------------------------|---------|
+| `compound_components.yaml` | `--compound-components` | hardware structures made of NPUWattch primitives |
+| `projection.yaml`          | `--projection`          | PyTorchSim actions -> stim_mode of each compound element |
+| `user_components.yaml`     | `--user-components`     | area and action energies of blocks NPUWattch has no model for |
 
-```python
-from npuwattch.harness.pytorchsim import load_definitions
-b = load_definitions()                 # Bundle(compounds, projections, primitive_modes)
-sm   = b.compound("systolic_mac")
-proj = b.projection("pytorchsim")
-```
-
-## Author your own (JSON or YAML)
-
-Copy this directory, edit the files (or add new compounds/projections), and load
-it — YAML is recommended for hand-authoring, JSON also works:
-
-```python
-from npuwattch.harness.compounds import load_bundle
-b = load_bundle("my_harness_defs")     # <root>/compounds/, <root>/projections/,
-                                       # optional <root>/primitive_modes.*
-```
-
-`primitive_modes` stays the system contract unless your bundle ships its own
-(only if you characterized new modes). Quote any `{...}` in YAML — an unquoted
-`{...}` is a flow mapping.
+There is no default inside NPUWattch: a run without these files stops with an
+error. `tutorial/pytorchsim/` holds a complete, working set to copy and edit.
+The loader is `npuwattch_harness.run_inputs`; the formats are in manual §3.7
+(compounds and projection) and §3.1.2 (user components).

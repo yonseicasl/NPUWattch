@@ -1,21 +1,58 @@
 """NPUWattch simulator harnesses.
 
-Each submodule adapts a specific upstream simulator's output (architecture +
-activity) into NPUWattch's internal vocabulary:
+A harness reads the output of one simulator and gives NPUWattch a description
+of the architecture and its activity. All harnesses have the same layout::
 
-- ``pytorchsim`` — PyTorchSim (PSAL-POSTECH) weight-stationary systolic NPU.
-- ``timeloop``   — Timeloop/Accelergy (planned).
-- ``gem5``       — generic gem5 stats (planned).
+    npuwattch_harness/<simulator>/
+        __init__.py     HARNESS_SPEC: the name, the inputs, the entry point
+        ingest.py       ingest(inputs, tech, **opts) -> EmittedArch
+        <readers>.py    parsers for the files of the simulator
+        definitions/
+            vocabulary.yaml   simulator names -> NPUWattch names
 
-A harness owns only its *log readers* and its *definition bundle*
-(``<sim>/definitions/{compounds,projections}``), authored by whoever introduces
-that simulator's format. Interpreting those definitions into a NPUWattch
-description + activity is **core**, not harness: the emitter lives at
-``npuwattch.arch_synth`` and the interpreter engine at
-``npuwattch.harness.compounds`` (shared by all harnesses).
+The definitions of a design are inputs of the run, not part of a harness.
+A harness reads them from the directory of the run inputs, or from the files
+that the user gives (``run_inputs``)::
 
-``registry`` discovers the ``HARNESS_SPEC``-declaring harnesses and runs the one
-the CLI's ``--harness`` selects.
+    compound_components.yaml   hardware structures made of primitives
+    projection.yaml            simulator actions -> activity of the elements
+    user_components.yaml       the cost of blocks that have no model
+
+Available harnesses:
+
+- ``pytorchsim``: PyTorchSim (PSAL-POSTECH), a weight-stationary systolic NPU.
+- ``timeloop``: Timeloop/Accelergy v0.4.
+
+Modules that all harnesses use:
+
+- ``registry``: finds each harness and runs the one that ``--harness`` selects.
+- ``run_inputs``: finds and loads the definition files of a run.
+- ``vocabulary``: loads and applies a vocabulary table.
+- ``compounds``: loads, checks, and resolves compounds and projections.
+- ``npuwattch.arch_synth``: emits the description and the activity rows.
+
+Terms
+-----
+primitive
+    A hardware block that NPUWattch has a model for (``intmac``, ``sram``, ...).
+compound
+    A hardware structure that is a group of primitives.
+element
+    One primitive in a compound.
+projection
+    A table that connects each simulator action to the activity of the
+    elements of a compound.
+vocabulary table
+    A table that translates simulator names into NPUWattch names.
+stim_mode
+    An activity mode for which a primitive has a characterized energy.
+window
+    One time interval of the activity. For PyTorchSim, one kernel is one
+    window. For Timeloop, one layer is one window.
+warning
+    A message that tells the user that a result can be incorrect.
+note
+    A message that tells the user about a documented convention or exclusion.
 """
 
 from .registry import (

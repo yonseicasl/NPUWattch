@@ -40,6 +40,19 @@ primitives** (`fpmac`, `intmac`, `sram`, `regfile`, `crossbar`, `fifo`, …), as
 the trained model for that primitive's per-access energy, leakage, area, and
 critical path at your technology node, then multiplies by the activity counts.
 
+Each example folder also holds three **definition files** that NPUWattch reads
+by their fixed names (or from `--compound-components`, `--projection`,
+`--user-components`):
+
+| File | What it is |
+| --- | --- |
+| `compound_components.yaml` | Hardware structures built from several primitives (a systolic array = MACs + weight registers; an Accelergy class = several primitives) |
+| `projection.yaml` | Which simulator counter drives which part of a compound, and in which activity mode |
+| `user_components.yaml` | Area and per-action energy of blocks NPUWattch has **no** model for — you supply the numbers |
+
+They are inputs, not part of NPUWattch: a run without them stops with an
+error. NPUWattch never invents a number for a block it cannot model.
+
 The models are small MLPs trained on **post-layout measurements** — RTL through
 synthesis, place-and-route, parasitic extraction, and power sign-off for logic;
 SPICE on extracted layout for SRAM. That is why the answer is a prediction of
@@ -179,7 +192,7 @@ repository's `run.sh` finds them for you when they share a root:
 ```
 
 Here NPUWattch does **not** read an architecture file. It reconstructs the
-hardware from the simulator's own configuration — that is what `--tree` prints
+hardware from the simulator's own configuration and `compound_components.yaml` — that is what `--tree` prints
 (abridged here):
 
 ```
@@ -226,8 +239,9 @@ Two messages in this run are worth understanding:
 3. **Per-window energy** — one row per layer (Timeloop) or kernel (PyTorchSim).
 4. **Per-window component energy** — where the energy went, per window.
 5. **Energy summary** — the whole run per component, with area and leakage.
-   `model` says `cal` for a calibrated MLP prediction and `const` for an
-   analytic constant (today only DRAM devices).
+   `model` says `cal` for a calibrated MLP prediction, `const` for a table
+   constant (DRAM devices, die-to-die links), and `user` for a block priced
+   from your `user_components.yaml`.
 6. Totals, and which primitives were available.
 
 **`out/report.html`** is the same information, self-contained (no internet, no
@@ -262,9 +276,14 @@ cd timeloop && ./run --stats-mode aggregate
 - **You use Timeloop or Accelergy** → point `--arch-yaml` at your architecture
   and `--stats` at your `timeloop-model.stats.txt` (or a directory of per-layer
   files). If a stats level name does not match a component name, pass a
-  `--stats-map` YAML with `levels:` renames and `ignore:` drops.
+  `--stats-map` YAML with `levels:` renames and `ignore:` drops. Copy the
+  three definition files from `timeloop/` next to your `arch.yaml`.
 - **You use PyTorchSim** → copy your run root (the folder holding
-  `togsim_results/` and `outputs/`) and run `run.sh <root>`.
+  `togsim_results/` and `outputs/`), copy the three definition files from
+  `pytorchsim/` into it, and run `run.sh <root>`.
+- **Your design has a block NPUWattch cannot model** → add it to
+  `user_components.yaml` (name, area, energy per action), or describe an
+  Accelergy class as several primitives in `compound_components.yaml`.
 - **You use something else** → write NPUWattch's native description YAML and an
   activity CSV, then `npuwattch -d description.yaml -l activity.csv`. The
   quickest way to learn those two formats is to have a harness write them for

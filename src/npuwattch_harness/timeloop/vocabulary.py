@@ -1,121 +1,85 @@
-"""Timeloop/Accelergy vocabulary → NPUWattch's canonical vocabulary.
+"""Timeloop/Accelergy vocabulary -> NPUWattch vocabulary.
 
-Per ``npuwattch.naming``, translating a simulator's own spelling into ours is
-**the harness author's job, done once, at ingest** — downstream only canonical
-names exist. This module is that translation for Timeloop/Accelergy v0.4
-architecture descriptions:
+The name translation is a table: ``definitions/vocabulary.yaml``. The shared
+engine ``npuwattch_harness.vocabulary`` loads and applies the table. To support
+a new Accelergy spelling, change the table.
 
-* ``class:``/``subclass:`` strings → a NPUWattch primitive (:data:`CLASS_TO_PRIMITIVE`);
-* the component's ``attributes:`` block → canonical ``§3.1`` attributes
-  (:func:`attributes_for`).
+This module contains the derivation rules. A derivation rule calculates a
+NPUWattch attribute that Accelergy does not declare directly. There is one rule
+for each attribute family:
 
-Two deliberate properties:
+=========  ==============================================================
+Family     Derivations
+=========  ==============================================================
+storage    word width, depth for each bank, port count
+dram       word width; the energy constants come from ``dram.py``
+int        operand widths, output width, accumulator width
+fp         exponent and mantissa widths, SFU defaults
+fabric     data width, port counts
+link       data width
+=========  ==============================================================
 
-**Unmapped classes are not errors.** An Accelergy description may declare
-anything; a class we do not recognize becomes ``user_defined`` and is
-placeholder-priced, with a warning naming it. Guessing a primitive would be
-worse than saying "I don't model this".
+Two properties are intentional:
 
-**Every inference is announced.** Accelergy carries less information than our
-primitives need — an ``intmac`` has no declared accumulator width, an ``fpmac``
-no declared exponent/mantissa split. Where we fill a gap from a documented
-convention we emit a note, so a user reading the run output can see exactly
-which numbers were declared and which were inferred.
+* An unknown class is not an error. :func:`primitive_for` returns ``None``.
+  The ingest then uses the user component library entry of the same name. If
+  there is no entry, the component is not in the description and the run
+  gives a warning. NPUWattch gives no value for a block without a model.
+* Each derived value gives a message. A warning tells the user that the result
+  can be incorrect. A note tells the user that a documented convention was
+  applied.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
-from ...naming import CANONICAL, CONTEXT_NAMES, LEGACY_ALIASES, PRIMITIVE_PARAMS
+from npuwattch.naming import CONTEXT_NAMES, PRIMITIVE_PARAMS
+from .dram import CONSTANT_NAMES, constants_for
+from ..vocabulary import (
+    AttributeReader,
+    Vocabulary,
+    load_vocabulary,
+    positive_int,
+)
 
 __all__ = [
     "CLASS_TO_PRIMITIVE",
-    "UNMAPPED_PRIMITIVE",
+    "VOCABULARY",
     "primitive_for",
     "attributes_for",
     "reclassify_regfile_as_sram",
     "REGFILE_TO_SRAM_THRESHOLD_BITS",
 ]
 
-#: Class for a component whose Accelergy class we do not model. No estimator
-#: claims it, so the provider chain prices it with the placeholder.
-UNMAPPED_PRIMITIVE = "user_defined"
+#: The vocabulary table of this harness.
+VOCABULARY: Vocabulary = load_vocabulary(
+    Path(__file__).resolve().parent / "definitions" / "vocabulary.yaml")
 
-#: An Accelergy ``regfile`` above this many bits is a memory macro, not a
-#: flop-based register file — the SRAM estimator models it far better. Carried
-#: over from the retired ``npuwattch_class_mapper`` (32 Kib).
+#: Accelergy ``class`` (lowercase) -> NPUWattch primitive.
+CLASS_TO_PRIMITIVE: Mapping[str, str] = VOCABULARY.classes
+
+#: A ``regfile`` that is larger than this number of bits is a memory macro.
+#: The SRAM estimator models it (32 Kib).
 REGFILE_TO_SRAM_THRESHOLD_BITS = 32768
 
-
-# ---------------------------------------------------------------------------
-# class vocabulary
-# ---------------------------------------------------------------------------
-
-#: Accelergy/Timeloop ``class`` (lowercased) → NPUWattch primitive.
-#:
-#: Network classes (``XY_NoC``, ``legacy_network``, …) are deliberately absent:
-#: a mesh router is not one of our characterized fabrics, and inventing a radix
-#: for it would fabricate energy. Declare the fabric explicitly (``crossbar`` /
-#: ``fattree`` / ``foldedclos``) to have it modeled.
-CLASS_TO_PRIMITIVE: Dict[str, str] = {
-    # -- storage ------------------------------------------------------------
-    "sram": "sram",
-    "smartbuffer_sram": "sram",
-    "smartbuffer": "sram",
-    "scratchpad": "sram",
-    "storage": "sram",
-    "buffer": "sram",
-    "regfile": "regfile",
-    "register_file": "regfile",
-    "rf": "regfile",
-    "smartbuffer_rf": "regfile",
-    "fifo": "fifo",
-    # The `hbm` primitive is our only DRAM-device model (analytic per-command
-    # constants). Any off-chip main memory routes here; `attributes_for` warns
-    # that HBM2 constants are being charged.
-    "dram": "hbm",
-    "main_memory": "hbm",
-    "hbm": "hbm",
-    # -- compute ------------------------------------------------------------
-    "intmac": "intmac",
-    "mac": "intmac",
-    "intmultiplier_accumulator": "intmac",
-    "fpmac": "fpmac",
-    "intadd": "intadd",
-    "adder": "intadd",
-    "int_adder": "intadd",
-    "integer_adder": "intadd",
-    "intmul": "intmul",
-    "multiplier": "intmul",
-    "int_multiplier": "intmul",
-    "intmultiplier": "intmul",
-    "fpadd": "fpadd",
-    "fp_adder": "fpadd",
-    "float_adder": "fpadd",
-    "fpmul": "fpmul",
-    "fp_multiplier": "fpmul",
-    "float_multiplier": "fpmul",
-    "mxfpmac": "mxfpmac",
-    "fpsfu": "fpsfu",
-    # -- interconnect -------------------------------------------------------
-    "crossbar": "crossbar",
-    "xbar": "crossbar",
-    "mux": "simplemux",
-    "multiplexer": "simplemux",
-    "simplemux": "simplemux",
-    "fattree": "fattree",
-    "foldedclos": "foldedclos",
-    "wire": "d2dlink",
-    "d2dlink": "d2dlink",
+#: Exponent and mantissa widths for each total width. The rule for the ``fp``
+#: family uses this table when the component declares only a total width.
+_FP_SPLIT_BY_WIDTH: Dict[int, Tuple[int, int]] = {
+    8: (4, 3),      # OCP fp8 E4M3
+    16: (5, 10),    # IEEE half
+    32: (8, 23),    # IEEE single
+    64: (11, 52),   # IEEE double
 }
 
-#: int primitive → its fp sibling, for a class whose attributes declare a
-#: floating-point datatype (Accelergy's generic ``mac``/``adder``/``multiplier``
-#: name a structure, not a number format).
-_INT_TO_FP = {"intmac": "fpmac", "intadd": "fpadd", "intmul": "fpmul"}
+#: Accumulator width = this value x operand width. Accelergy does not declare
+#: an accumulator width. The NPU convention is int8 x int8 -> int32.
+_ACC_WIDTH_MULTIPLIER = 4
 
-_FP_FORMAT_WORDS = ("fp", "float", "floating", "bfloat", "bf16", "half", "double")
+#: Only arithmetic units have a pipeline depth. For a memory or a link, the
+#: same Accelergy word is an access latency.
+_ARITHMETIC_FAMILIES = ("int", "fp", "mx")
 
 
 def primitive_for(
@@ -123,40 +87,16 @@ def primitive_for(
     subclass: Optional[str] = None,
     attributes: Optional[Mapping[str, Any]] = None,
 ) -> Optional[str]:
-    """Resolve an Accelergy class/subclass to a NPUWattch primitive.
+    """Return the NPUWattch primitive for an Accelergy class, or ``None``.
 
-    Returns ``None`` when nothing matches — the caller decides what an unmapped
-    component becomes (see :data:`UNMAPPED_PRIMITIVE`). ``class`` wins over
-    ``subclass``: the subclass is a refinement of the class, so if both are
-    known the more specific declaration is still the same family.
+    The caller decides what to do with an unknown class (``None``).
+    ``comp_class`` has priority over ``subclass``.
     """
-    prim: Optional[str] = None
-    for candidate in (comp_class, subclass):
-        if not candidate:
-            continue
-        prim = CLASS_TO_PRIMITIVE.get(str(candidate).strip().lower())
-        if prim is not None:
-            break
-    if prim is None:
-        return None
-    # A generic structural class (mac/adder/multiplier) with a declared
-    # floating-point datatype is an fp unit, not an int one.
-    if prim in _INT_TO_FP and _declares_float(attributes or {}):
-        return _INT_TO_FP[prim]
-    return prim
-
-
-def _declares_float(attributes: Mapping[str, Any]) -> bool:
-    for key in ("number_format", "datatype", "data_type", "format", "precision"):
-        value = attributes.get(key)
-        if isinstance(value, str) and any(w in value.lower()
-                                          for w in _FP_FORMAT_WORDS):
-            return True
-    return False
+    return VOCABULARY.primitive_for(comp_class, subclass, attributes)
 
 
 def reclassify_regfile_as_sram(attributes: Mapping[str, Any]) -> bool:
-    """Is this ``regfile`` big enough that the SRAM estimator should own it?"""
+    """Return ``True`` if the SRAM estimator must model this ``regfile``."""
     try:
         bits = (int(attributes.get("mem_depth_per_bank", 0))
                 * int(attributes.get("data_width", 0))
@@ -166,90 +106,6 @@ def reclassify_regfile_as_sram(attributes: Mapping[str, Any]) -> bool:
     return bits > REGFILE_TO_SRAM_THRESHOLD_BITS
 
 
-# ---------------------------------------------------------------------------
-# attribute vocabulary
-# ---------------------------------------------------------------------------
-
-# Candidate source keys per concept, most explicit first. Names are matched
-# after `-`→`_` normalization and lowercasing (canonical spellings are kept
-# verbatim, since a few of them carry a unit suffix in caps).
-#
-# `datawidth` is absent from the storage list on purpose: in Accelergy it is the
-# *element* datatype width, and the memory word is `datawidth x block-size`
-# (see `_block_width`). For a compute unit the same key IS the operand width.
-_WORD_KEYS = ("data_width", "word_bits", "memory_width", "width")
-_OPERAND_KEYS = ("data_width", "datawidth", "width", "word_bits")
-_DEPTH_KEYS = ("mem_depth_per_bank", "memory_depth", "depth", "entries",
-               "num_entries", "n_entries")
-_CAPACITY_BIT_KEYS = ("capacity_bit", "capacity_bits")
-_CAPACITY_BYTE_KEYS = ("sizekb", "size_kb", "capacity_kb")
-_BANK_KEYS = ("mem_banks", "n_banks", "num_banks", "banks")
-_RW_PORT_KEYS = ("mem_rw_ports", "n_rw_ports", "n_rdwr_ports", "num_rw_ports",
-                 "num_rdwr_ports", "n_ports", "num_ports", "ports")
-_R_PORT_KEYS = ("mem_r_ports", "n_rd_ports", "num_read_ports", "read_ports")
-_W_PORT_KEYS = ("mem_w_ports", "n_wr_ports", "num_write_ports", "write_ports")
-_BLOCK_SIZE_KEYS = ("block_size", "blocksize")
-_BANDWIDTH_KEYS = ("read_bandwidth", "write_bandwidth", "shared_bandwidth",
-                   "bandwidth")
-_INPUT_KEYS = ("net_inputs", "num_inputs", "n_inputs", "inputs", "ingresses")
-_OUTPUT_KEYS = ("net_outputs", "num_outputs", "n_outputs", "outputs", "egresses")
-# NOT `latency`: on an Accelergy storage component that is access latency, and
-# on a compute component it is unrelated to the registered depth our models take.
-_PIPELINE_KEYS = ("pipeline_stages", "n_stages", "stages")
-
-#: Accelergy keys that carry no physical NPUWattch attribute — dropped without
-#: a per-key note (spatial fanout is already folded into the instance count;
-#: the rest are mapping/placement hints Timeloop uses, not hardware).
-_SILENTLY_DROPPED = frozenset({
-    "meshx", "meshy", "cluster_size", "clustersize", "instances",
-    "read_bandwidth", "write_bandwidth", "bandwidth", "shared_bandwidth",
-    "network_read", "network_write", "network_fill", "network_drain",
-    "allow_overbooking", "has_power_gating", "utilized_capacity",
-    # The clock is a description-level property (`_clock_mhz` reads it from the
-    # top-level attributes), but Accelergy inheritance copies it onto every
-    # component — reporting it as "ignored" once per component is just noise.
-    "clockrate", "clock_rate", "frequency_mhz", "clock_mhz",
-    "global_cycle_seconds", "cycle_seconds",
-})
-
-#: IEEE-754-ish (exponent, mantissa) by total width, for an fp unit declared
-#: only by its datapath width.
-_FP_SPLIT_BY_WIDTH: Dict[int, Tuple[int, int]] = {
-    8: (4, 3),      # OCP fp8 E4M3
-    16: (5, 10),    # IEEE half
-    32: (8, 23),    # IEEE single
-    64: (11, 52),   # IEEE double
-}
-
-#: Accumulator width for a MAC declared only by its operand width. int8×int8
-#: into int32 is the NPU convention (4x); Accelergy declares no accumulator.
-_ACC_WIDTH_MULTIPLIER = 4
-
-
-def _norm_key(key: Any) -> str:
-    """``block-size`` → ``block_size``; canonical names pass through verbatim
-    (``net_energy_per_bit_pJ`` must not be lowercased into a stranger)."""
-    text = str(key).strip()
-    if text in CANONICAL:
-        return text
-    return text.replace("-", "_").lower()
-
-
-def _first(attrs: Mapping[str, Any], keys: Tuple[str, ...]) -> Optional[Any]:
-    for k in keys:
-        if k in attrs and attrs[k] is not None:
-            return attrs[k]
-    return None
-
-
-def _as_int(value: Any) -> Optional[int]:
-    try:
-        out = int(value)
-    except (TypeError, ValueError):
-        return None
-    return out if out > 0 else None
-
-
 def attributes_for(
     primitive: str,
     raw: Mapping[str, Any],
@@ -257,109 +113,54 @@ def attributes_for(
     component: str,
     warnings: List[str],
     notes: List[str],
+    energy_table: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Translate one component's Accelergy ``attributes`` into canonical form.
+    """Translate the Accelergy ``attributes`` of one component.
 
-    ``warnings`` collects things that may make the answer wrong (an unmodeled
-    device family, a required attribute we had to guess at); ``notes`` collects
-    documented conventions applied (an inferred accumulator width). Keys that
-    carry no NPUWattch meaning are dropped and listed once per component.
+    ``energy_table`` is the ``EnergyTable`` of ``--energy-table``, or ``None``.
+    Only a DRAM component uses it.
+
+    The function adds messages to two lists:
+
+    * ``warnings``: the result can be incorrect (for example, a necessary
+      attribute was not declared and a default value was used).
+    * ``notes``: a documented convention was applied, or attributes were
+      ignored.
     """
-    attrs = {_norm_key(k): v for k, v in (raw or {}).items()}
-    attrs.pop("technology", None)          # PVT lives in the description header
+    reader = VOCABULARY.read(primitive, raw)
+    # The technology is in the header of the description, not in a component.
+    reader.values.pop("technology", None)
     out: Dict[str, Any] = {}
-    consumed: set = {"technology"}
 
-    def take(keys: Tuple[str, ...]) -> Optional[Any]:
-        for k in keys:
-            if k in attrs and attrs[k] is not None:
-                consumed.add(k)
-                return attrs[k]
-        return None
-
-    if primitive in ("sram", "regfile", "fifo"):
-        _storage_attributes(primitive, attrs, take, out, component=component,
-                            warnings=warnings, notes=notes, consumed=consumed)
-    elif primitive == "hbm":
-        width = _as_int(take(_WORD_KEYS)) or _block_width(attrs, take)
-        if width is None:
-            warnings.append(
-                f"{component} (hbm): no word width declared — charging a 32 B "
-                f"burst (256 bits) per access")
-            width = 256
-        out["data_width"] = width
-        # Accelergy's DRAM `type` picks the shipped energy table of the same
-        # name (energy/dram_tables/) — the per-bit number Accelergy itself
-        # charges for that type, HBM2 with the cited per-command split.
-        from ...energy.dram_table import table_for_type
-        dram_type = take(("type",))
-        table = table_for_type(dram_type)
-        if table is not None:
-            out["mem_access_energy_per_bit_pJ"] = table.transfer_pj_per_bit
-            if table.act_pj is not None:
-                out["mem_act_energy_pJ"] = table.act_pj
-            if table.ref_pj is not None:
-                out["mem_ref_energy_pJ"] = table.ref_pj
-            notes.append(
-                f"{component} (DRAM type {table.name}): "
-                f"{table.transfer_pj_per_bit:g} pJ/bit from the shipped table "
-                f"{table.path.name} (override with --energy-table)")
-        else:
-            what = (f"type {dram_type!r} has no shipped energy table"
-                    if dram_type else "no DRAM type declared")
-            warnings.append(
-                f"{component}: {what} — priced with the built-in HBM2 "
-                f"constants; declare an Accelergy type (LPDDR4, LPDDR, DDR3, "
-                f"GDDR5, HBM2, HMC) or pass --energy-table")
-    elif primitive in ("intadd", "intmul", "intmac"):
-        _int_attributes(primitive, attrs, take, out, component=component,
-                        warnings=warnings, notes=notes)
-    elif primitive in ("fpadd", "fpmul", "fpmac", "fpsfu"):
-        _fp_attributes(primitive, attrs, take, out, component=component,
-                       warnings=warnings, notes=notes)
-    elif primitive in ("crossbar", "simplemux"):
-        _fabric_attributes(primitive, attrs, take, out, component=component,
-                           warnings=warnings)
-    elif primitive == "d2dlink":
-        width = _as_int(take(_OPERAND_KEYS))
-        if width is None:
-            warnings.append(
-                f"{component} (d2dlink): no width declared — assuming 64 bits")
-            width = 64
-        out["data_width"] = width
+    family = VOCABULARY.family(primitive)
+    rule = _RULES.get(family)
+    if family == "dram":
+        _dram_rule(primitive, reader, out, component, warnings, notes,
+                   energy_table=energy_table)
+    elif rule is not None:
+        rule(primitive, reader, out, component, warnings, notes)
     else:
-        # user_defined / fattree / foldedclos / mxfpmac: pass through whatever
-        # is already canonical (or a known alias) and let §3.1 validation speak.
-        for key, value in attrs.items():
-            canon = key if key in CANONICAL else LEGACY_ALIASES.get(key)
-            if canon:
-                out[canon] = value
-                consumed.add(key)
+        out.update(reader.take_named())
 
-    # Anything already spelled canonically that belongs to this primitive and
-    # the branch above did not claim: the `hbm` per-part constants the warning
-    # above invites you to override, an sram `mem_template`, a d2dlink
-    # `net_energy_per_bit_pJ`. Context keys stay out — the description's
-    # technology block governs PVT, not a per-component attribute.
+    # Keep each attribute of this primitive that already has its NPUWattch
+    # name and that the rule did not take. Examples: an sram `mem_template`,
+    # a d2dlink `net_energy_per_bit_pJ`. Context names stay out, because the
+    # technology block of the description controls them.
     spec = PRIMITIVE_PARAMS.get(primitive)
     if spec is not None:
         for key in spec.all():
-            if key in CONTEXT_NAMES or key in consumed or key in out:
+            if key in CONTEXT_NAMES or key in reader.consumed or key in out:
                 continue
-            if attrs.get(key) is not None:
-                out[key] = attrs[key]
-                consumed.add(key)
+            if reader.values.get(key) is not None:
+                out[key] = reader.values[key]
+                reader.consumed.add(key)
 
-    # Only the arithmetic primitives take a registered depth; on a memory or a
-    # link the same word would be access latency, which our models do not read.
-    if primitive in ("intadd", "intmul", "intmac", "fpadd", "fpmul", "fpmac",
-                     "fpsfu", "mxfpmac"):
-        stages = _as_int(take(_PIPELINE_KEYS))
+    if family in _ARITHMETIC_FAMILIES:
+        stages = reader.take_int("pipeline_stages")
         if stages is not None:
             out["pipeline_stages"] = stages
 
-    ignored = sorted(k for k in attrs
-                     if k not in consumed and k not in _SILENTLY_DROPPED)
+    ignored = reader.ignored()
     if ignored:
         notes.append(
             f"{component} ({primitive}): ignored Accelergy attribute(s) "
@@ -367,39 +168,22 @@ def attributes_for(
     return out
 
 
-def _block_width(attrs: Mapping[str, Any], take) -> Optional[int]:
-    """Accelergy's ``word-bits = datawidth x block-size`` convention."""
-    datawidth = _as_int(_first(attrs, ("datawidth",)))
-    if datawidth is None:
+# ---------------------------------------------------------------------------
+# Derivation rules, one for each family
+# ---------------------------------------------------------------------------
+
+def _block_width(reader: AttributeReader) -> Optional[int]:
+    """Return the Accelergy word width, ``datawidth x block_size``."""
+    if reader.peek_int("element_width") is None:
         return None
-    take(("datawidth",))
-    block = _as_int(take(_BLOCK_SIZE_KEYS)) or 1
-    return datawidth * block
+    return reader.take_int("element_width") * (reader.take_int("block_size") or 1)
 
 
-def _take_key(attrs: Mapping[str, Any], keys: Tuple[str, ...],
-              consumed: set) -> Tuple[Optional[str], Optional[Any]]:
-    """Like ``take`` but also says WHICH key answered (None, None if none)."""
-    for k in keys:
-        if k in attrs and attrs[k] is not None:
-            consumed.add(k)
-            return k, attrs[k]
-    return None, None
-
-
-def _capacity_str(bits: int) -> str:
-    if bits % (8 * 1024 * 1024) == 0:
-        return f"{bits // (8 * 1024 * 1024)} MB"
-    if bits % (8 * 1024) == 0:
-        return f"{bits // (8 * 1024)} KB"
-    return f"{bits} bit"
-
-
-def _storage_attributes(primitive, attrs, take, out, *, component,
-                        warnings, notes, consumed) -> None:
-    width = _as_int(take(_WORD_KEYS))
+def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+                  component: str, warnings: List[str], notes: List[str]) -> None:
+    width = reader.take_int("data_width")
     if width is None:
-        width = _block_width(attrs, take)
+        width = _block_width(reader)
     if width is None:
         warnings.append(
             f"{component} ({primitive}): no word width declared — assuming "
@@ -407,18 +191,17 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
         width = 32
     out["data_width"] = width
 
-    # Banks first: Accelergy's ``depth`` (and any declared capacity) is the
-    # TOTAL over all banks — the CACTI convention behind Accelergy's SRAM
-    # class (``cache size = width x depth``, ``-UCA bank count = n_banks``).
-    # Only the canonical ``mem_depth_per_bank`` is already per bank.
-    banks = _as_int(take(_BANK_KEYS))
+    # Read the banks first. The Accelergy `depth` and capacity are totals for
+    # all banks (the CACTI convention). Only `mem_depth_per_bank` is a value
+    # for one bank.
+    banks = reader.take_int("mem_banks")
 
-    depth_key, depth_raw = _take_key(attrs, _DEPTH_KEYS, consumed)
-    depth = _as_int(depth_raw)
+    depth_key, depth_raw = reader.take_with_key("mem_depth_per_bank")
+    depth = positive_int(depth_raw)
     if depth is None:
-        capacity_bits = _as_int(take(_CAPACITY_BIT_KEYS))
+        capacity_bits = reader.take_int("capacity_bits")
         if capacity_bits is None:
-            kb = _as_int(take(_CAPACITY_BYTE_KEYS))
+            kb = reader.take_int("capacity_kb")
             capacity_bits = kb * 1024 * 8 if kb else None
         if capacity_bits is not None:
             depth = max(1, capacity_bits // width)
@@ -431,16 +214,23 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
             f"— assuming 64 entries")
         depth = 64
     if banks and banks > 1 and depth_key != "mem_depth_per_bank":
-        per_bank = -(-depth // banks)            # ceil
+        per_bank = -(-depth // banks)            # ceiling division
         if depth % banks:
             warnings.append(
                 f"{component} ({primitive}): total depth {depth} is not a "
                 f"multiple of {banks} banks — rounded up to {per_bank} words "
                 f"per bank")
+        total_bits = banks * per_bank * width
+        if total_bits % (8 * 1024 * 1024) == 0:
+            capacity = f"{total_bits // (8 * 1024 * 1024)} MB"
+        elif total_bits % (8 * 1024) == 0:
+            capacity = f"{total_bits // (8 * 1024)} KB"
+        else:
+            capacity = f"{total_bits} bit"
         notes.append(
             f"{component} ({primitive}): depth {depth} is the Accelergy total "
             f"over {banks} banks → mem_depth_per_bank {per_bank} "
-            f"({_capacity_str(banks * per_bank * width)} total)")
+            f"({capacity} total)")
         depth = per_bank
     out["mem_depth_per_bank"] = depth
     if banks is not None:
@@ -448,9 +238,9 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
     if primitive == "fifo":
         return
 
-    r_ports = _as_int(take(_R_PORT_KEYS))
-    w_ports = _as_int(take(_W_PORT_KEYS))
-    rw_ports = _as_int(take(_RW_PORT_KEYS))
+    r_ports = reader.take_int("mem_r_ports")
+    w_ports = reader.take_int("mem_w_ports")
+    rw_ports = reader.take_int("mem_rw_ports")
     if r_ports is None and w_ports is None and rw_ports is None:
         rw_ports = 1
         notes.append(
@@ -463,24 +253,19 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
     if rw_ports is not None:
         out["mem_rw_ports"] = rw_ports
 
-    # Timeloop's bandwidth is a mapping constraint, not a physical attribute,
-    # but on a banked memory it says how many banks may be accessed in one
-    # cycle — worth echoing so the event accounting is understood: N accesses
-    # in a cycle are charged as N access events. Its unit is Timeloop's word,
-    # i.e. one `datawidth` element, while one bank access moves a whole block
-    # of `width / datawidth` elements (the stats reader divides by the same
-    # block size), so accesses/cycle = ceil(bandwidth / block).
-    bw_vals = [v for v in (_as_int(attrs.get(k)) for k in _BANDWIDTH_KEYS) if v]
-    if bw_vals:
-        for k in _BANDWIDTH_KEYS:
-            if k in attrs:
-                consumed.add(k)
-        bw = max(bw_vals)
-        elem = _as_int(attrs.get("datawidth"))
-        block = width // elem if elem and width % elem == 0 else 1
-        accesses = -(-bw // block)
-        per = (f"{bw} words/cycle ({block} words per access)" if block > 1
-               else f"{bw} words/cycle")
+    # The Timeloop bandwidth is a mapping constraint, not hardware. But for a
+    # banked memory it gives the number of bank accesses in one cycle.
+    # The unit of the bandwidth is one `datawidth` element. One bank access
+    # moves a block of `width / datawidth` elements.
+    # Thus: accesses in one cycle = ceil(bandwidth / block).
+    bandwidths = reader.take_all_ints("bandwidth")
+    if bandwidths:
+        bandwidth = max(bandwidths)
+        element = reader.peek_int("element_width")
+        block = width // element if element and width % element == 0 else 1
+        accesses = -(-bandwidth // block)
+        per = (f"{bandwidth} words/cycle ({block} words per access)"
+               if block > 1 else f"{bandwidth} words/cycle")
         n_banks = banks or 1
         ports = (r_ports or 0) + (w_ports or 0) + (rw_ports or 0) or 1
         if accesses > 1 and n_banks > 1:
@@ -497,13 +282,30 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
                 f"{-(-accesses // ports)} banks (or more ports)")
 
 
-def _int_attributes(primitive, attrs, take, out, *, component,
-                    warnings, notes) -> None:
-    # `multiplier_width` / `width_a` / `width_b` are the Accelergy spellings
-    # (intmac compound class, aladdin_multiplier primitive).
-    a = _as_int(take(("data_width_a", "a_width", "width_a")))
-    b = _as_int(take(("data_width_b", "b_width", "width_b")))
-    width = _as_int(take(("multiplier_width",) + _OPERAND_KEYS))
+def _dram_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+               component: str, warnings: List[str], notes: List[str],
+               energy_table: Optional[Any] = None) -> None:
+    width = reader.take_int("data_width") or _block_width(reader)
+    if width is None:
+        warnings.append(
+            f"{component} (hbm): no word width declared — charging a 32 B "
+            f"burst (256 bits) per access")
+        width = 256
+    out["data_width"] = width
+
+    # The module `dram` selects the energy constants. It raises an error if
+    # the necessary DRAM energy table is not available.
+    out.update(constants_for(
+        reader.take("dram_type"), energy_table, component=component,
+        declared=reader.values, warnings=warnings, notes=notes))
+    reader.consumed.update(CONSTANT_NAMES)
+
+
+def _int_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+              component: str, warnings: List[str], notes: List[str]) -> None:
+    a = reader.take_int("data_width_a")
+    b = reader.take_int("data_width_b")
+    width = reader.take_int("operand_width")
     a = a or width
     if a is None:
         warnings.append(
@@ -515,9 +317,9 @@ def _int_attributes(primitive, attrs, take, out, *, component,
     out["data_width_a"] = a
     out["data_width_b"] = b
 
-    declared_out = _as_int(take(("data_width_out", "out_width")))
+    declared_out = reader.take_int("data_width_out")
     if primitive == "intmac":
-        acc = _as_int(take(("data_width_acc", "acc_width", "adder_width")))
+        acc = reader.take_int("data_width_acc")
         if acc is None:
             acc = _ACC_WIDTH_MULTIPLIER * max(a, b)
             notes.append(
@@ -532,11 +334,11 @@ def _int_attributes(primitive, attrs, take, out, *, component,
         out["data_width_out"] = declared_out or max(a, b)
 
 
-def _fp_attributes(primitive, attrs, take, out, *, component,
-                   warnings, notes) -> None:
-    exp = _as_int(take(("exponent_bits", "exp_bits")))
-    mant = _as_int(take(("mantissa_bits", "man_bits")))
-    width = _as_int(take(_OPERAND_KEYS))
+def _fp_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+             component: str, warnings: List[str], notes: List[str]) -> None:
+    exp = reader.take_int("exponent_bits")
+    mant = reader.take_int("mantissa_bits")
+    width = reader.take_int("data_width")
     if exp is None or mant is None:
         split = _FP_SPLIT_BY_WIDTH.get(width or 32)
         if split is None:
@@ -564,7 +366,7 @@ def _fp_attributes(primitive, attrs, take, out, *, component,
     if primitive == "fpsfu":
         for key in ("sfu_segments", "sfu_op_exp", "sfu_op_trig", "sfu_op_hyp",
                     "sfu_op_erf", "sfu_op_relu"):
-            value = _as_int(take((key,)))
+            value = reader.take_int(key)
             if value is not None:
                 out[key] = value
         if "sfu_segments" not in out:
@@ -572,27 +374,51 @@ def _fp_attributes(primitive, attrs, take, out, *, component,
             notes.append(
                 f"{component} (fpsfu): sfu_segments not declared — assuming "
                 f"a 16-segment PWL table")
-        for key, default in (("sfu_op_exp", 1), ("sfu_op_trig", 1),
-                             ("sfu_op_hyp", 1), ("sfu_op_erf", 1)):
-            out.setdefault(key, default)
+        for key in ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf"):
+            out.setdefault(key, 1)
 
 
-def _fabric_attributes(primitive, attrs, take, out, *, component,
-                       warnings) -> None:
-    width = _as_int(take(_OPERAND_KEYS))
+def _fabric_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+                 component: str, warnings: List[str], notes: List[str]) -> None:
+    width = reader.take_int("data_width")
     if width is None:
         warnings.append(
             f"{component} ({primitive}): no flit/data width declared — "
             f"assuming 64 bits")
         width = 64
     out["data_width"] = width
-    ni = _as_int(take(_INPUT_KEYS))
-    no = _as_int(take(_OUTPUT_KEYS))
-    if ni is None and no is None:
+    inputs = reader.take_int("net_inputs")
+    outputs = reader.take_int("net_outputs")
+    if inputs is None and outputs is None:
         warnings.append(
             f"{component} ({primitive}): no port count declared — assuming a "
             f"2-port element")
-        ni = no = 2
-    out["net_inputs"] = ni if ni is not None else no
+        inputs = outputs = 2
+    out["net_inputs"] = inputs if inputs is not None else outputs
     if primitive == "crossbar":
-        out["net_outputs"] = no if no is not None else ni
+        out["net_outputs"] = outputs if outputs is not None else inputs
+
+
+def _link_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
+               component: str, warnings: List[str], notes: List[str]) -> None:
+    width = reader.take_int("data_width")
+    if width is None:
+        warnings.append(
+            f"{component} (d2dlink): no width declared — assuming 64 bits")
+        width = 64
+    out["data_width"] = width
+
+
+_Rule = Callable[[str, AttributeReader, Dict[str, Any], str, List[str],
+                  List[str]], None]
+
+#: Family -> derivation rule. A family without a rule keeps only the
+#: attributes that already have a NPUWattch name.
+_RULES: Dict[str, _Rule] = {
+    "storage": _storage_rule,
+    "dram": _dram_rule,
+    "int": _int_rule,
+    "fp": _fp_rule,
+    "fabric": _fabric_rule,
+    "link": _link_rule,
+}

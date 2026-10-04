@@ -1,9 +1,12 @@
-"""Read the native activity table (§3.3 ``activity.csv``, incl. the ``mode`` column).
+"""Read the activity table (manual §3.3, ``activity.csv``).
 
-The counterpart to ``arch_synth.write_arch``: turns a native activity CSV back into
-the row dicts + ``total_cycles`` that ``energy.aggregate_native`` consumes. The
-harness path skips this (it has ``EmittedArch.activity_rows`` in memory); this reader
-serves the direct ``-l activity.csv`` path and any user-supplied activity table.
+``arch_synth.write_arch`` writes an activity CSV. This module reads such a
+file and gives the activity rows that ``energy.aggregate_native`` uses, and
+``total_cycles``.
+
+A harness run does not use this module, because the harness has
+``EmittedArch.activity_rows`` in memory. The ``-l activity.csv`` path uses
+it, for the file of a harness or a file that the user makes.
 """
 
 from __future__ import annotations
@@ -14,7 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 __all__ = ["read_activity_csv"]
 
-# §3.3 numeric columns to coerce (strings for component/event/mode stay as-is).
+# The integer columns of §3.3. The component, event, and mode columns are
+# strings.
 _INT_COLS = ("window", "cycle_start", "cycle_end")
 
 
@@ -24,11 +28,12 @@ def _num(value: str) -> float:
 
 
 def read_activity_csv(path: Union[str, Path]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-    """Parse a native §3.3 activity CSV.
+    """Read an activity CSV (manual §3.3).
 
-    Returns ``(rows, total_cycles)`` where ``rows`` are the activity rows (the
-    ``__meta__`` total_cycles row is pulled out into ``total_cycles``). Numeric
-    columns are coerced; ``mode`` is optional (older §3.3 files omit it).
+    Return ``(rows, total_cycles)``. ``rows`` are the activity rows.
+    ``total_cycles`` comes from the ``__meta__`` row of the file, which is
+    not in ``rows``. The function changes the numeric columns into numbers.
+    The ``mode`` column is optional.
     """
     rows: List[Dict[str, Any]] = []
     total_cycles: Optional[int] = None

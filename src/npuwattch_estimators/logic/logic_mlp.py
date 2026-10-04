@@ -1,28 +1,34 @@
-"""Torch-side vocabulary + net + quartet IO for the LOGIC primitive MLPs.
+"""Torch code of the logic primitive MLPs: the feature vocabulary, the net,
+and the checkpoint files.
 
-Deliberately the same shape as ``src/estimators/sram/sram_mlp.py`` — same
-MLP structure and code as SRAM, for consistency: state_dict-only ``.pt``
-with all transforms frozen in the JSON sidecars (manual §3.5), absolute
-log10 targets, ReLU MLP, seed-42 reproducibility.
+The structure is the same as ``src/npuwattch_estimators/sram/sram_mlp.py``:
 
-Differences from SRAM, driven by what the logic sweep measures:
+- a ``.pt`` file that contains only the state_dict
+- JSON sidecar files that contain all the transforms (manual §3.5)
+- absolute log10 targets
+- a ReLU MLP
+- seed 42, for reproducible results
 
-- one model per **(component, metric)**: 14 components (7 arithmetic +
-  mxfpmac + the NoC/memory blocks crossbar/fifo/regfile/fattree/simplemux/
-  foldedclos) × 4 metrics (energy/leakage/timing/area) — quartets are named
-  ``<component>_<metric>__<VERSION>.*``; categorical params (mxfpmac
-  ``input_format``) are one-hot via CATEGORICAL_COLUMNS;
-- ``stim_mode`` is a one-hot INPUT for the power metrics (energy/leakage):
-  the projection layer requests per-mode unit costs (COMPOUND_SCHEMA §6).
-  ``none`` (the unvectored row) is included as a mode — drop it only if the
-  A/B in the eval report shows clear damage;
-- the adaptive loss axes are **SCR/SAR** (manual §5.3 as written; the SRAM
-  models adapted it to the target axis because SPICE rows have no SCR/SAR);
-- ``log10_clock_ns`` is an input for EVERY metric: each design was implemented
-  against its clock constraint, so area/timing/power all move with it;
-- no PVT features: the current logic dataset is TT / 25 °C / nominal-V only
-  — constant columns would break the scalers. PVT-swept datasets bump
-  VERSION and re-add the axes.
+The differences from SRAM come from the data of the logic sweep:
+
+- There is one model for each **(component, metric)** pair. There are 14
+  components: 7 arithmetic blocks, mxfpmac, and the NoC and memory blocks
+  (crossbar, fifo, regfile, fattree, simplemux, foldedclos). There are 4
+  metrics: energy, leakage, timing, area. The files of a model have the name
+  ``<component>_<metric>__<VERSION>.*``. A categorical parameter (the
+  ``input_format`` of mxfpmac) is a one-hot input from CATEGORICAL_COLUMNS.
+- ``stim_mode`` is a one-hot INPUT of the power metrics (energy, leakage). The
+  projection asks for the unit cost of each mode (COMPOUND_SCHEMA §6). The
+  mode ``none`` is the row without vectors. Remove it for a component only if
+  the A/B test in the eval report shows a clear increase of the error.
+- The axes of the adaptive loss are **SCR and SAR** (manual §5.3). The SRAM
+  models use the target axis because SPICE rows have no SCR or SAR.
+- ``log10_clock_ns`` is an input of EACH metric. Each design was implemented
+  for its clock constraint, thus the area, the timing, and the power change
+  with it.
+- There are no PVT features. The logic dataset has only TT, 25 °C, and the
+  nominal voltage, and a constant column breaks the scalers. A dataset with a
+  PVT sweep needs a new VERSION and these axes.
 """
 
 from __future__ import annotations
@@ -38,36 +44,38 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import torch
 from torch import nn
 
-VERSION = "v2"   # v2 2026-08-09: clean leakage libs (BUF_X32/OR2_X4 re-char,
-                 # no node exclusion) + re-pipelined fpadd/fpmul/fpmac RTL
+VERSION = "v2"   # The v2 dataset: re-characterized cell libraries and the
+                 # re-pipelined fpadd/fpmul/fpmac RTL.
 
 COMPONENTS = ("fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac", "fpsfu",
-              # joined 2026-08-09 once their sweeps completed:
               "mxfpmac", "crossbar", "fifo", "regfile", "fattree",
               "simplemux", "foldedclos")
 METRICS = ("energy", "leakage", "timing", "area")
 
-#: dataset CSV column -> metric target (absolute log10 of these, linear units)
+#: The dataset CSV column of each metric. The column has linear units. The
+#: target of the model is the absolute log10 of the value.
 TARGET_COLUMNS = {
-    "energy": "dyn_energy_pJ",          # per-cycle dynamic energy at the mode
+    "energy": "dyn_energy_pJ",          # dynamic energy of one cycle at the mode
     "leakage": "leak_power_mW",
-    # period the post-route netlist meets (per-group SDC budgets, clock
-    # uncertainty included; collector schema 3) — NOT pnr_crit_path_ns, which
-    # schema <= 2 filled from ICC2's input-delay-bound in2reg group
+    # The minimum period that the post-route netlist meets (collector
+    # schema 3). It includes the SDC budget of each path group and the clock
+    # uncertainty. Do NOT use pnr_crit_path_ns: in schema <= 2 it is the delay
+    # of the in2reg path group of ICC2, which the input delay controls.
     "timing": "pnr_min_period_ns",
     "area": "pnr_total_area_um2",
 }
 TARGET_UNITS = {"energy": "pJ", "leakage": "mW", "timing": "ns", "area": "um2"}
 
-#: metrics whose rows are per stim_mode (one-hot input); timing/area are
-#: implementation properties — one row per design, no mode axis.
+#: The metrics that have one row for each stim_mode (a one-hot input). Timing
+#: and area are properties of the implementation. They have one row for each
+#: design and no mode axis.
 MODE_METRICS = ("energy", "leakage")
 
 NODE_LIST = (5, 7, 10, 16, 20)
 
-#: integer design params per component (dataset columns; log2-transformed
-#: inputs, per the size-like→log convention). Order is frozen — it is the
-#: feature order.
+#: The numeric design parameters of each component (dataset columns). The
+#: model input is log2 of the value, because these are size parameters. Do not
+#: change the order: it is the feature order.
 PARAM_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "fpadd": ("exp_bits", "mantissa_bits", "pipeline_stages"),
     "fpmul": ("exp_bits", "mantissa_bits", "pipeline_stages"),
@@ -76,8 +84,8 @@ PARAM_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "intmul": ("a_width", "b_width", "out_width", "pipeline_stages"),
     "intmac": ("a_width", "b_width", "out_width", "acc_width", "pipeline_stages"),
     "fpsfu": ("exp_bits", "mantissa_bits", "sfu_segments", "pipeline_stages"),
-    # a missing/empty pipeline_stages cell = 1 (the pre-07-21 mxfpmac
-    # template is combinational; train_logic defaults it)
+    # An empty pipeline_stages cell is 1. Such an mxfpmac row is a
+    # combinational design. train_logic supplies the default.
     "mxfpmac": ("block_elems", "num_blocks", "pipeline_stages"),
     "crossbar": ("data_width", "num_inputs", "num_outputs"),
     "fifo": ("width", "depth"),
@@ -88,22 +96,24 @@ PARAM_COLUMNS: Dict[str, Tuple[str, ...]] = {
                    "num_spines", "oversubscription"),
 }
 
-#: binary design flags (0/1 inputs, unscaled)
+#: The binary design flags. They are 0/1 inputs without scaling.
 FLAG_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "fpsfu": ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf",
               "sfu_op_relu"),
 }
 
-#: categorical design params, one-hot encoded (unscaled). Frozen
-#: (column, value-order) pairs — the order IS the feature order.
+#: The categorical design parameters. They are one-hot inputs without scaling.
+#: Do not change the (column, value order) pairs: the order IS the feature
+#: order.
 CATEGORICAL_COLUMNS: Dict[str, Tuple[Tuple[str, Tuple[str, ...]], ...]] = {
     "mxfpmac": (("input_format", ("mxfp4_e2m1", "mxfp6_e2m3", "mxfp6_e3m2",
                                   "mxfp8_e4m3", "mxfp8_e5m2", "mxint8",
                                   "bf16")),),
 }
 
-#: frozen stim_mode one-hot order per component (mirrors POWER_MODES + 'none',
-#: the unvectored row — see module docstring).
+#: The one-hot order of the stim_mode of each component. Do not change it. It
+#: is the same as POWER_MODES, with 'none' added. 'none' is the row without
+#: vectors (see the module docstring).
 STIM_MODES: Dict[str, Tuple[str, ...]] = {
     "fpadd": ("none", "random"),
     "fpmul": ("none", "random"),
@@ -113,10 +123,9 @@ STIM_MODES: Dict[str, Tuple[str, ...]] = {
     "intmac": ("none", "random", "hold_b", "sparse50", "idle"),
     "fpsfu": ("none", "random", "exp", "trig", "hyp", "erf", "idle"),
     "mxfpmac": ("none", "random", "hold_scale", "sparse50", "idle"),
-    # crossbar/simplemux/foldedclos: 'none' DROPPED per the 2026-08-09 A/B
-    # (the user's 07-28 rule: drop only on clear damage) — including it cost
-    # 2.5-7.7%p energy MAPE on these small combinational blocks
-    # (crossbar 11.5->8.9, simplemux 9.0->6.5, foldedclos 16.6->9.0).
+    # crossbar, simplemux, and foldedclos do NOT have the mode 'none'. For
+    # these small combinational blocks, 'none' makes the energy model less
+    # accurate.
     "crossbar": ("random", "fixed_route", "valid25"),
     "fifo": ("none", "random", "stream", "idle"),
     "regfile": ("none", "random", "read", "write", "idle"),
@@ -128,7 +137,7 @@ STIM_MODES: Dict[str, Tuple[str, ...]] = {
 DEFAULT_ARCH: Dict[str, List[int]] = {
     "energy": [128, 128, 128],
     "leakage": [128, 128, 128],
-    "timing": [64, 64],                 # per-design rows only (no mode axis)
+    "timing": [64, 64],                 # one row for each design (no mode axis)
     "area": [64, 64],
 }
 
@@ -162,8 +171,9 @@ def _n_continuous(component: str) -> int:
 def base_features(component: str, nm: int, clock_ns: float,
                   params: Mapping[str, Any]) -> List[float]:
     f = [math.log10(nm), math.log10(clock_ns)]
-    # floor at 2^-8, NOT 1: fattree/foldedclos oversubscription is fractional
-    # (0.25/0.5/1.0) and must stay distinguishable after the log transform
+    # The minimum is 2^-8, NOT 1. The oversubscription of fattree and
+    # foldedclos is a fraction (0.25, 0.5, 1.0). The values must stay different
+    # after the log transform.
     f += [math.log2(max(float(params[c]), 2.0 ** -8))
           for c in PARAM_COLUMNS[component]]
     f += [1.0 if float(params.get(c, 0)) else 0.0
@@ -197,7 +207,10 @@ def n_inputs(component: str, metric: str) -> int:
 
 
 def scale_mask(component: str, metric: str) -> List[bool]:
-    """True = standardize (continuous); flags/one-hots left as-is."""
+    """Return True for each continuous input, which the scaler standardizes.
+
+    Flags and one-hot inputs stay as they are.
+    """
     n_cont = _n_continuous(component)
     total = n_inputs(component, metric)
     return [True] * n_cont + [False] * (total - n_cont)
@@ -223,7 +236,10 @@ def dataset_csv(dataset_dir: Path, component: str) -> Path:
 
 
 def dataset_hash(dataset_dir: Path, components: Sequence[str] = COMPONENTS) -> str:
-    """sha256 over the trained components' CSVs (sorted, raw bytes)."""
+    """Return the sha256 of the CSV files of the trained components.
+
+    The hash uses the raw bytes, in the sorted order of the components.
+    """
     h = hashlib.sha256()
     for c in sorted(components):
         h.update(dataset_csv(dataset_dir, c).read_bytes())
@@ -232,26 +248,30 @@ def dataset_hash(dataset_dir: Path, components: Sequence[str] = COMPONENTS) -> s
 
 # -- characterized envelope ---------------------------------------------------
 #
-# The MLPs answer any input, including ones no design point was ever built at
-# (a pipeline depth below the shallowest RTL, a clock faster than any
-# implementation closed). The envelope records what the dataset actually
-# covers so the provider can refuse the structurally impossible (depth) and
-# flag the extrapolated (params, clock). Written next to the quartets by
-# train_logic.py from the same CSVs, so it always matches the trained data.
+# The MLPs give an answer for each input. This includes an input that has no
+# design point: a pipeline depth below the minimum of the RTL, or a clock
+# faster than each implementation. The envelope records the range of the
+# dataset. The provider uses it to change a depth that the RTL does not have,
+# and to report an extrapolated parameter or clock. train_logic.py writes the
+# envelope from the training CSVs, into the directory of the checkpoints.
+# Thus the envelope always agrees with the trained data.
 
 def envelope_path(model_dir: Path) -> Path:
     return Path(model_dir) / f"envelope__{VERSION}.json"
 
 
 def _param_value(row: Mapping[str, Any], col: str) -> float:
-    # empty numeric param = 1, exactly as train_logic._mk reads it
+    # An empty numeric parameter is 1, the same as in train_logic._mk.
     v = row.get(col, "")
     return float(v) if v not in ("", None) else 1.0
 
 
 def config_key(component: str, params: Mapping[str, Any]) -> str:
-    """Canonical string for one design configuration (params + flags +
-    categoricals) — the key of ``config_min_clock_ns``."""
+    """Return the string that identifies one design configuration.
+
+    The string contains the parameters, the flags, and the categorical
+    values. It is the key of ``config_min_clock_ns``.
+    """
     parts = [f"{c}={float(params[c]):g}" for c in PARAM_COLUMNS[component]]
     parts += [f"{c}={1 if float(params.get(c, 0) or 0) else 0}"
               for c in FLAG_COLUMNS.get(component, ())]
@@ -262,9 +282,15 @@ def config_key(component: str, params: Mapping[str, Any]) -> str:
 
 def build_envelope(dataset_dir: Path,
                    components: Sequence[str] = COMPONENTS) -> Dict[str, Any]:
-    """Per component: numeric param ranges, the distinct pipeline depths,
-    the clock range per node, and the fastest clock each exact configuration
-    was implemented at per node."""
+    """Make the characterized envelope of each component.
+
+    The envelope contains:
+
+    - the range of each numeric parameter
+    - the pipeline depths that the dataset has
+    - the clock range of each node
+    - the fastest clock of each configuration, for each node
+    """
     import csv
     out: Dict[str, Any] = {"version": VERSION,
                            "dataset_sha256": dataset_hash(dataset_dir, components),
@@ -339,7 +365,7 @@ def save_quartet(model_dir: Path, component: str, metric: str, net: LogicMlp,
                  scalers: Mapping[str, Any], loss_spec: Mapping[str, Any],
                  meta: Mapping[str, Any]) -> None:
     paths = quartet_paths(Path(model_dir), component, metric)
-    torch.save(net.state_dict(), paths["pt"])      # state_dict ONLY (§3.5)
+    torch.save(net.state_dict(), paths["pt"])      # only the state_dict (§3.5)
     paths["scalers"].write_text(json.dumps(dict(scalers), indent=1))
     paths["loss"].write_text(json.dumps(dict(loss_spec), indent=1))
     paths["meta"].write_text(json.dumps(dict(meta), indent=1))
@@ -358,7 +384,7 @@ class LoadedModel:
     meta: Dict[str, Any]
 
     def predict_linear(self, rows: Sequence[Sequence[float]]) -> List[float]:
-        """Feature rows -> linear-domain values (10**log10)."""
+        """Return the linear values (10**log10) of the feature rows."""
         with torch.no_grad():
             x = torch.tensor(rows, dtype=torch.float32)
             xs = torch.where(self.x_scale_mask,

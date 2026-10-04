@@ -1,12 +1,14 @@
-"""The run's ``config.yml`` — the file passed to TOGSim via ``--config``.
+"""Reader for the ``config.yml`` of a run. This is the file that TOGSim gets
+with ``--config``.
 
-The log *header* (the binary's echo of this file at run time) is the per-run
-truth and always wins; ``config.yml`` is an optional side input that
+TOGSim prints this file in the header of each log. The header shows the
+configuration that the run used, thus the header always has priority.
+``config.yml`` is an optional input with two functions:
 
-* **fills in** keys a damaged/truncated header is missing, and
-* **cross-checks** the pairing: a key present in both with different values
-  means the directory mixes files from different runs — surfaced as warnings,
-  never an error.
+* It supplies the keys that a damaged or incomplete header does not have.
+* It lets the harness compare the two sources. If a key has different values
+  in the file and in the header, the files can be from different runs. The
+  harness gives a warning for each such key and does not stop.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ __all__ = ["load_config_yml", "config_conflicts"]
 
 
 def load_config_yml(path: Path) -> Dict[str, Any]:
-    """Parse a TOGSim ``config.yml`` into a flat key/value dict."""
+    """Read a TOGSim ``config.yml`` and return its keys and values as a dict."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{path}: expected a YAML mapping, got {type(data).__name__}")
@@ -28,10 +30,12 @@ def load_config_yml(path: Path) -> Dict[str, Any]:
 
 
 def config_conflicts(base: Mapping[str, Any], merged: Mapping[str, Any]) -> List[str]:
-    """Keys where config.yml (``base``) disagrees with the header-merged config.
+    """Return one message for each key that has different values in
+    ``config.yml`` (``base``) and in ``merged``.
 
-    ``merged`` is ``{**base, **header}``, so a differing value means the header
-    carried the key too and won — evidence of a mixed run directory.
+    ``merged`` is ``{**base, **header}``. Thus a different value shows that
+    the header also has the key and that the header value replaced the file
+    value. In that case, the files can be from different runs.
     """
     return [
         f"config.yml disagrees with the log header: {k} = {base[k]!r} vs {merged[k]!r}"

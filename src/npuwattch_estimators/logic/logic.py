@@ -1,68 +1,72 @@
-"""LOGIC primitive estimator — the trained v2 MLP quartets as a UnitCostProvider.
+"""Logic primitive estimator: the trained v2 MLP models as a UnitCostProvider.
 
-Serves the gate-passing logic primitives (eval_report.json ``gates``) from
-the ``<component>_<metric>__v2.*`` checkpoints in this directory: per-cycle
-dynamic energy [pJ] at a stim_mode, leakage power [mW], PnR area [um2] and
-critical path [ns], each a ``logic_mlp`` MLP over log-transformed design
-params + node/mode one-hots.
+This estimator gives the cost of the logic primitives. The models are the
+``<component>_<metric>__v2.*`` checkpoints in this directory. Each primitive
+has four models:
 
-The NoC fabric blocks — ``crossbar`` (10.2% energy MAPE), ``fattree`` (11.1%)
-and ``foldedclos`` (13.7%) — are served despite missing the 10% promotion
-gate. The gate ranks models against each other; the question at runtime is
-*model or placeholder*, and the placeholder is not close: on post-layout
-truth for a 7 nm 128 b 8x8 crossbar (3.049 pJ/cycle) it returns
-0.006 pJ/cycle — **476x low** — where this model lands within 0.8%. Two
-standing caveats apply until the expanded NoC sweep is trained in:
+- the dynamic energy of one cycle [pJ] at a stim_mode
+- the leakage power [mW]
+- the PnR area [um2]
+- the critical path [ns]
 
-- their grids are config-starved (15-19 configs each vs fifo 32 / regfile 46),
-  so the quoted MAPEs rest on 1-2 held-out configs and are themselves noisy;
-- large fabrics extrapolate: the emitter's production crossbar (BookSim 32 B
-  flit = 256 b, 32 ports) sits ~2x past the trained 128 b / 16-port envelope.
-  Extrapolation is monotone and ~N^2 in port count, i.e. physically ordered,
-  but unvalidated.
+Each model is a ``logic_mlp`` MLP. Its inputs are the log-transformed design
+parameters and the one-hot codes of the node and of the mode.
 
-``net_switch_radix`` is accepted for foldedclos and ignored: the RTL derives
-it from terminals + active uplinks, so the sweep never varied it.
+The estimator also serves the NoC fabric blocks (``crossbar``, ``fattree``,
+``foldedclos``). The fabric models have one limit:
 
-Feature translation (canonical vocabulary → dataset columns) lives here, on
-the estimator side of the naming freeze: a description speaks
-``exponent_bits`` / ``data_width_a`` / ``mem_depth_per_bank`` /
-``net_inputs`` (npuwattch.naming), the dataset speaks the RTL sweep's
-``exp_bits`` / ``a_width`` / ``depth`` / ``num_inputs``.
+- A large fabric is an extrapolation. The crossbar of the BookSim emitter has
+  a 256 b flit (32 B) and 32 ports. This is approximately 2x more than the
+  trained envelope of 128 b and 16 ports. The extrapolation is monotone and
+  approximately N^2 in the port count. There is no data to validate it.
 
-Model inputs the description does not carry:
+The estimator accepts ``net_switch_radix`` for foldedclos and ignores it. The
+RTL calculates it from the terminals and the active uplinks, thus the sweep
+did not change it.
 
-- ``clock`` — every design was implemented against its clock constraint, so
-  all four metrics take ``log10_clock_ns``. The §6 aggregator injects the
-  run's clock as the ``clock_mhz`` feature (an explicit ``--clock-mhz`` /
-  TechContext clock wins); a query without one uses 1 ns (1 GHz), the sweep's
-  center.
-- PVT — the v2 dataset is TT / 25 °C / nominal-V only; corner/voltage/
-  temperature features are accepted but ignored (a PVT-swept dataset bumps
-  VERSION and re-adds the axes).
-- ``node`` must be one of the characterized nodes (5/7/10/16/20 nm) — anything
-  else raises rather than extrapolating a one-hot the models cannot express.
-  The continuous node axis lives ABOVE this estimator:
-  ``npuwattch.energy.node_scaling`` queries the bracketing characterized nodes
-  and log-log combines the predictions (manual §6.2), so this layer only ever
-  sees anchor nodes.
+This module changes the NPUWattch names of a description into the dataset
+columns. A description uses ``exponent_bits``, ``data_width_a``,
+``mem_depth_per_bank``, and ``net_inputs`` (npuwattch.naming). The dataset
+uses the names of the RTL sweep: ``exp_bits``, ``a_width``, ``depth``, and
+``num_inputs``.
 
-Characterized envelope (``envelope__v2.json``, written by train_logic.py
+Model inputs that are not in the description:
+
+- ``clock``. Each design was implemented for its clock constraint, thus all
+  four metrics use ``log10_clock_ns``. The §6 aggregator supplies the clock of
+  the run as the ``clock_mhz`` feature. An explicit ``--clock-mhz`` or the
+  clock of the TechContext has priority. A query without a clock uses 1 ns
+  (1 GHz), which is the center of the sweep.
+- PVT. The v2 dataset has only TT, 25 °C, and the nominal voltage. The
+  estimator accepts the corner, voltage, and temperature features and ignores
+  them. A dataset with a PVT sweep needs a new VERSION and these axes.
+- ``node``. The node must be one of the characterized nodes (5, 7, 10, 16,
+  20 nm). A different node raises an error, because the models have a one-hot
+  node input. The continuous node axis is above this estimator:
+  ``npuwattch.energy.node_scaling`` queries the two adjacent characterized
+  nodes and combines the results on a log-log scale (manual §6.2). Thus this
+  estimator gets only characterized nodes.
+
+Characterized envelope (``envelope__v2.json``, which train_logic.py writes
 from the training CSVs; see ``envelope_warnings``):
 
-- ``pipeline_stages`` outside the characterized depths is **clamped** to the
-  nearest one — a shallower/deeper design does not exist in the RTL (depth =
-  registered latency incl. the input and output registers, so an fpadd/fpmul
-  ps=2 is the single-cycle reg->logic->reg unit and fpmac starts at ps=4),
-  and the MLP's extrapolation along that axis has no physical anchor.
-- other params outside their characterized range, and a clock faster than
-  the fastest implementation of that exact configuration (or outside the
-  node's clock range), are evaluated but reported as extrapolated.
+- If ``pipeline_stages`` is outside the characterized depths, the estimator
+  uses the nearest characterized depth. The RTL has no design with a smaller
+  or larger depth, and the MLP has no physical reference there. The depth is
+  the registered latency and includes the input and output registers. Thus an
+  fpadd or fpmul with ps=2 is the single-cycle reg->logic->reg unit, and the
+  minimum depth of fpmac is ps=4.
+- The estimator calculates a query that has other parameters outside their
+  characterized range, and reports it as an extrapolation.
+- The estimator does the same for a clock that is faster than the fastest
+  implementation of that configuration, or outside the clock range of the
+  node.
 
-This module is loaded by ``EstimatorHost`` via runpy, so it imports its
-sibling ``logic_mlp.py`` (and torch, transitively) lazily by file path —
-a torch-less environment fails at ``make_unit_cost_provider`` time, which the
-provider factory records as a note and skips, never killing the run.
+``EstimatorHost`` loads this module with runpy. Thus the module imports its
+sibling ``logic_mlp.py`` by file path, and only when it is necessary. That
+import also imports torch. If torch is not available,
+``make_unit_cost_provider`` raises. The provider factory then records a note
+and does not use this estimator.
 """
 
 from __future__ import annotations
@@ -75,21 +79,19 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 MODULE_DIR = Path(__file__).resolve().parent
 
 # --------------------------------------------------------------------------
-# ESTIMATOR_SPEC — pure literal (EstimatorHost ast.literal_eval's it).
+# ESTIMATOR_SPEC must be a pure literal. The EstimatorHost reads it with
+# ast.literal_eval.
 # --------------------------------------------------------------------------
 
 ESTIMATOR_SPEC = {
     "primitive": "logic",
-    # Served primitives — every v2 quartet. The gate-failing fabric blocks
-    # (crossbar/fattree/foldedclos, 10-14% energy) are served anyway: the
-    # placeholder they replace is ~500x off, so a config-starved model is
-    # still the accurate choice; retrain drops the caveat once the expanded
-    # NoC sweep lands.
+    # The served primitives: each primitive that has v2 models.
     "primitives": ["fpadd", "fpmul", "fpmac", "intadd", "intmul", "intmac",
                    "fpsfu", "mxfpmac", "fifo", "regfile", "simplemux",
                    "crossbar", "fattree", "foldedclos"],
-    # Characterized nodes (must mirror logic_mlp.NODE_LIST) — the anchor set
-    # energy.node_scaling interpolates the continuous CLI node axis over.
+    # The characterized nodes. They must be the same as logic_mlp.NODE_LIST.
+    # energy.node_scaling interpolates the continuous node axis of the CLI
+    # between these nodes.
     "nodes": ["5nm", "7nm", "10nm", "16nm", "20nm"],
     "version": "2.2",
     "description": (
@@ -97,21 +99,19 @@ ESTIMATOR_SPEC = {
         "quartets (energy/leakage/timing/area) for every characterized logic "
         "primitive — arithmetic, SFU, MX, fifo/regfile and the NoC blocks; "
         "stim_mode is a model input for the power metrics. The fabric models "
-        "(crossbar 10.2%, fattree 11.1%, foldedclos 13.7% energy MAPE) are "
-        "config-starved pending the expanded NoC sweep and extrapolate past "
-        "their trained envelopes on large fabrics."
+        "extrapolate past their trained envelopes on large fabrics."
     ),
     "entrypoints": {
         "unit_cost_provider": "make_unit_cost_provider",
     },
 }
 
-#: clock period used when a query carries no clock_mhz feature [ns].
+#: The clock period [ns] for a query that has no clock_mhz feature.
 DEFAULT_CLOCK_NS = 1.0
 
-#: pipeline_stages default per component when the description omits it — the
-#: characterized range minimum (naming.py doc: int 2-5, fpadd/fpmul 2-9,
-#: fpmac 4-18, fpsfu 4-10; mxfpmac's pre-07-21 template is combinational).
+#: The default pipeline_stages of each component, if the description does not
+#: give it. The characterized ranges are in naming.py: int 2-5, fpadd/fpmul
+#: 2-9, fpmac 4-18, fpsfu 4-10. The default mxfpmac is combinational (1 stage).
 _PIPELINE_DEFAULTS = {
     "fpadd": 2, "fpmul": 2, "fpmac": 4,
     "intadd": 2, "intmul": 2, "intmac": 2,
@@ -122,7 +122,7 @@ _MLP_MOD_CACHE: Dict[str, Any] = {"mod": None, "err": None}
 
 
 def _mlp():
-    """Import sibling logic_mlp.py by path (runpy-safe), memoized."""
+    """Import the sibling module logic_mlp.py by its path. Keep the result."""
     if _MLP_MOD_CACHE["mod"] is None and _MLP_MOD_CACHE["err"] is None:
         try:
             spec = importlib.util.spec_from_file_location(
@@ -158,14 +158,17 @@ def _opt(features: Mapping[str, Any], key: str,
     return default
 
 
-#: oversubscription values the fabric sweep characterized. The RTL requires
-#: (0, 1]; the models saw only these three, and the feature is log2 of the
-#: value, so an unseen ratio interpolates between them.
+#: The oversubscription values of the fabric sweep. The RTL accepts a value
+#: in (0, 1]. The feature is log2 of the value, thus the models interpolate a
+#: value that is between these three.
 _OVERSUB_CHARACTERIZED = (0.25, 0.5, 1.0)
 
 
 def _oversubscription(f: Mapping[str, Any], component: str) -> float:
-    """Up/down capacity ratio, defaulting to the sweep's fully-provisioned 1.0."""
+    """Return the ratio of the up capacity to the down capacity.
+
+    The default is 1.0 (no oversubscription), as in the sweep.
+    """
     v = _opt(f, "net_oversubscription", 1.0)
     if not 0.0 < v <= 1.0:
         raise ValueError(
@@ -175,7 +178,7 @@ def _oversubscription(f: Mapping[str, Any], component: str) -> float:
 
 
 def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
-    """Canonical component attributes → the component's dataset params."""
+    """Change the attributes of a component into its dataset parameters."""
     if component in ("fpadd", "fpmul", "fpmac"):
         return {
             "exp_bits": _need(f, "exponent_bits", component),
@@ -202,8 +205,8 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "sfu_segments": _need(f, "sfu_segments", component),
             "pipeline_stages": _opt(f, "pipeline_stages",
                                     _PIPELINE_DEFAULTS[component]),
-            # op-group tables present in the design (compound default: all
-            # four transcendental groups on, relu off)
+            # The operation-group tables that the design contains. The
+            # default is the four transcendental groups, without relu.
             "sfu_op_exp": _opt(f, "sfu_op_exp", 1),
             "sfu_op_trig": _opt(f, "sfu_op_trig", 1),
             "sfu_op_hyp": _opt(f, "sfu_op_hyp", 1),
@@ -224,8 +227,8 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "depth": _need(f, "mem_depth_per_bank", component),
         }
     if component == "regfile":
-        # A shared-RW port has no separate RTL parameter; a 1RW file is
-        # approximated as 1R1W (same array, one port pair).
+        # The RTL has no parameter for a shared read/write port. A 1RW file
+        # uses the 1R1W model: the same array with one port pair.
         rw = _opt(f, "mem_rw_ports", 0) or 0
         return {
             "width": _need(f, "data_width", component),
@@ -239,12 +242,13 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "num_inputs": _need(f, "net_inputs", component),
         }
     if component == "crossbar":
-        # The NoC compound emits a k x k router as net_inputs == net_outputs;
-        # a query giving only one side is read as square rather than rejected.
+        # The NoC compound component gives a k x k router with net_inputs
+        # equal to net_outputs. If a query gives only one side, the crossbar
+        # is square.
         ni = _opt(f, "net_inputs", None)
         no = _opt(f, "net_outputs", None)
         if ni is None and no is None:
-            _need(f, "net_inputs", component)          # raises with the name
+            _need(f, "net_inputs", component)   # raises an error with the name
         return {
             "data_width": _need(f, "data_width", component),
             "num_inputs": ni if ni is not None else no,
@@ -258,9 +262,9 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "oversubscription": _oversubscription(f, component),
         }
     if component == "foldedclos":
-        # net_switch_radix is a required description attribute but NOT a
-        # model input: the RTL derives it (terminals + active uplinks), so
-        # the sweep never varied it independently.
+        # net_switch_radix is a necessary attribute of the description, but
+        # it is NOT a model input. The RTL calculates it from the terminals
+        # and the active uplinks, thus the sweep did not change it.
         return {
             "data_width": _need(f, "data_width", component),
             "terminals_per_leaf": _need(f, "net_terminals_per_leaf", component),
@@ -272,14 +276,16 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 class _LogicUnitCostProvider:
-    """Routes the served logic primitives to the v2 MLPs; the rest delegate.
+    """A provider that gets the cost of the served logic primitives from the
+    v2 MLPs.
 
-    "The rest" is now only non-logic (sram, d2dlink, hbm) and user blocks —
-    every characterized logic primitive is served.
+    A query for a different primitive (sram, d2dlink, hbm, or a user
+    component) goes to ``fallback``.
 
-    Implements the ``UnitCostProvider`` protocol structurally (calibrated flag
-    + four methods) without importing npuwattch, so this file stays
-    runpy-safe. Predictions are memoized per resolved query.
+    The class has the structure of the ``UnitCostProvider`` protocol: the
+    ``calibrated`` flag and four methods. It does not import npuwattch, thus
+    runpy can load this file. The provider keeps each prediction and uses it
+    again for an equal query.
     """
 
     SERVED = tuple(ESTIMATOR_SPEC["primitives"])
@@ -291,12 +297,12 @@ class _LogicUnitCostProvider:
         self._fallback = fallback
         self._models: Dict[Tuple[str, str], Any] = {}
         self._memo: Dict[tuple, float] = {}
-        self._env: Any = None               # envelope JSON, loaded on first use
+        self._env: Any = None               # the envelope JSON, loaded at its first use
         self._env_loaded = False
         self.calibrated = (True if fallback is None
                            else bool(getattr(fallback, "calibrated", False)))
 
-    # -- model access ------------------------------------------------------
+    # -- access to the models ----------------------------------------------
 
     def _model(self, component: str, metric: str):
         key = (component, metric)
@@ -324,7 +330,11 @@ class _LogicUnitCostProvider:
 
     def _resolve(self, component: str, features: Mapping[str, Any]
                  ) -> Tuple[int, float, Dict[str, Any], Optional[int]]:
-        """(node nm, clock ns, dataset params, requested depth if clamped)."""
+        """Return the node [nm], the clock [ns], and the dataset parameters.
+
+        The fourth value is the requested depth if the provider changed it to
+        a characterized depth. If not, it is None.
+        """
         mlp = _mlp()
         merged = {**self._defaults, **dict(features)}
         node = str(merged.get("node", ""))
@@ -369,7 +379,10 @@ class _LogicUnitCostProvider:
         return hit
 
     def _leak_mode(self, component: str) -> str:
-        """Leakage is a static rating: prefer the quiescent rows."""
+        """Return the mode of the leakage query.
+
+        Leakage is a static value, thus a mode without activity has priority.
+        """
         mlp = _mlp()
         for m in ("idle", "none", "random"):
             if m in mlp.STIM_MODES[component]:
@@ -383,7 +396,7 @@ class _LogicUnitCostProvider:
                 f"logic provider got primitive '{primitive}' and has no fallback")
         return getattr(self._fallback, method)(primitive, features)
 
-    # -- UnitCostProvider protocol ----------------------------------------
+    # -- the UnitCostProvider protocol -------------------------------------
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
         if primitive not in self.SERVED:
@@ -408,8 +421,11 @@ class _LogicUnitCostProvider:
         return self._predict(primitive, "timing", features, None)
 
     def idle_terms(self, primitive: str, features: Mapping[str, Any]):
-        """Optional protocol hook (per-cycle idle accounting): logic
-        primitives carry none; forwarded to the fallback for the rest."""
+        """Return the idle terms of a primitive (optional protocol method).
+
+        Logic primitives have no idle terms. A query for a different
+        primitive goes to the fallback.
+        """
         if primitive in self.SERVED or self._fallback is None:
             return None
         fb = getattr(self._fallback, "idle_terms", None)
@@ -417,9 +433,13 @@ class _LogicUnitCostProvider:
 
     def envelope_warnings(self, primitive: str,
                           features: Mapping[str, Any]) -> List[str]:
-        """Optional protocol hook: why this query is not a characterized
-        design point (clamped depth, extrapolated params/clock) — one message
-        per issue, empty when the query sits inside the envelope."""
+        """Return the reasons why a query is not a characterized design point
+        (optional protocol method).
+
+        The reasons are a changed depth, an extrapolated parameter, or an
+        extrapolated clock. There is one message for each reason. The list is
+        empty if the query is in the envelope.
+        """
         if primitive not in self.SERVED:
             fb = getattr(self._fallback, "envelope_warnings", None)
             return list(fb(primitive, features)) if fb is not None else []
@@ -448,8 +468,8 @@ class _LogicUnitCostProvider:
                    .get(mlp.config_key(primitive, params)))
         lo_hi = env.get("clock_ns", {}).get(str(nm))
         mhz = 1000.0 / clock_ns
-        # 0.5% slack: a clock given in rounded MHz (307.7 for 3.25 ns) is the
-        # characterized point, not an extrapolation
+        # A tolerance of 0.5%: a clock in rounded MHz (307.7 for 3.25 ns) is
+        # the characterized point, not an extrapolation.
         tol = 0.005
         if fastest is not None and clock_ns < fastest * (1 - tol):
             out.append(
@@ -471,16 +491,17 @@ class _LogicUnitCostProvider:
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,
                             model_dir: Optional[str] = None,
                             fallback: Any = None) -> _LogicUnitCostProvider:
-    """Build a UnitCostProvider for the served logic primitives.
+    """Make a UnitCostProvider for the served logic primitives.
 
-    ``defaults`` merge UNDER each call's features; ``fallback`` handles every
-    primitive this estimator does not serve (sram, d2dlink, hbm, user blocks).
-    Raises when torch or the v2 checkpoints are unavailable — the provider
-    factory records that as a note and keeps the chain.
+    The features of each query have priority over ``defaults``. ``fallback``
+    answers each primitive that this estimator does not serve (sram, d2dlink,
+    hbm, user components). The function raises if torch or the v2 checkpoints
+    are not available. The provider factory then records a note and does not
+    change the provider chain.
     """
     provider = _LogicUnitCostProvider(defaults=defaults, model_dir=model_dir,
                                       fallback=fallback)
-    # Fail fast (and factory-visibly) if the checkpoints cannot serve: load
-    # one quartet now instead of exploding mid-aggregation.
+    # Load one model now. Thus a checkpoint problem stops the provider
+    # factory, and not the energy aggregation.
     provider._model("fpmac", "energy")
     return provider

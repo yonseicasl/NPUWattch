@@ -1,9 +1,36 @@
-# HBM2 off-chip DRAM energy constants, pJ. Same values as the built-in
-# HBMCostProvider constants and the PyTorchSim authors' hbm2.yml:
-#   M. O'Connor et al., "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
-#   Bandwidth Systems," MICRO-50, 2017, Table 3 (HBM2). DOI 10.1145/3123939.3124545
-# refresh_pj_per_refab is derived first-order from the activation energy
-# (64 rows x 909 pJ per REFab; see energy/unit_cost.py).
+# HBM2 off-chip DRAM energy constants, in pJ.
+#
+# This is the default DRAM energy table of NPUWattch. All default `hbm`
+# constants come from this file. The values are the same as the hbm2.yml of
+# the PyTorchSim authors.
+#
+# The values are literature constants. No public HBM power tool or vendor IDD
+# datasheet is available. If you change a value, update this citation also.
+# Source:
+#   M. O'Connor, N. Chatterjee, D. Lee, J. Wilson, A. Agrawal, S. W. Keckler,
+#   and W. J. Dally, "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
+#   Bandwidth Systems," in Proc. 50th Annual IEEE/ACM International Symposium
+#   on Microarchitecture (MICRO-50), 2017, Table 3 (HBM2 column).
+#   DOI: 10.1145/3123939.3124545
+#
+# row_activation_pj: 909
+#     Row activation: precharge and activate of one 1 KB row.
+#     Source: Table 3, "Row activation".
+# transfer_pj_per_bit: 3.48 in total
+#     Access energy for each bit, from Table 3:
+#         dram  1.51  pre-GSA data movement
+#         io    1.17  post-GSA data movement, 50% toggle
+#         phy   0.80  I/O, 50% activity
+#     Each RD or WR command is charged this energy x data_width.
+#     Example: a 32 B request is 256 bits, thus 890.9 pJ.
+#     Read and write have the same energy, because the paper does not divide
+#     them.
+# refresh_pj_per_refab: 58176
+#     Energy of one REFab command. This is a first-order value from the row
+#     activation energy.
+#     An 8 Gb HBM2 channel with 1 KB rows has 2^20 rows.
+#     JESD235 refresh uses 16384 REF commands for these rows.
+#     Thus one REFab refreshes 64 rows: 64 x 909 pJ = 58176 pJ.
 name: HBM2
 
 offchip_dram:

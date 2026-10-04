@@ -1,27 +1,25 @@
 """Console table rendering.
 
-Every CLI table goes through this module so that **column widths are measured
-from the data**, never hardcoded. The previous hand-rolled ``f"{name:<26}"``
-layout silently broke alignment whenever a value was wider than its column —
-which is the normal case for hierarchical component names such as
-``system_top_level.eyeriss.PE_column.PE.weights_spad`` (50 chars in a 26-char
-column).
+Each CLI table uses this module. The module **measures the column widths
+from the data**. A fixed column width is not sufficient, because a
+hierarchical component name can be long. For example,
+``system_top_level.eyeriss.PE_column.PE.weights_spad`` has 50 characters.
 
-Two rules the renderer keeps:
+The renderer obeys two rules:
 
-* **Never truncate.** If a table's natural width exceeds the target console
-  width, the console is widened to fit instead of eliding cells. Component
-  names and energy figures are what the reader came for; a wrapped log line is
-  a smaller problem than a name cut to ``system_top_level.eyeriss.PE_col…``.
-* **Log-safe by default.** ``rich`` falls back to an 80-column, colourless
-  console when stdout is not a terminal, which would make redirected runs
-  (``npuwattch ... > run.log``) *narrower* than the old fixed layout. Here a
-  non-tty gets :data:`DEFAULT_LOG_WIDTH` instead, and colour is left to rich's
-  own tty detection (off when redirected).
+* **No truncation.** If a table is wider than the target console width, the
+  renderer makes the console wider. It does not cut a cell, because the
+  reader needs the full component names and energy values. A wrapped log
+  line is a smaller problem than a name cut to
+  ``system_top_level.eyeriss.PE_col…``.
+* **Safe output to a log file.** If stdout is not a terminal, ``rich`` uses
+  a console of 80 columns, which is too narrow for a redirected run
+  (``npuwattch ... > run.log``). This module uses :data:`DEFAULT_LOG_WIDTH`
+  instead. ``rich`` controls the colour and sets it off for redirected output.
 
-Names are shortened by :func:`strip_common_prefix`: the hierarchy prefix shared
-by every row is removed and reported once in the caption, so the column carries
-only the part that differs.
+:func:`strip_common_prefix` makes the names shorter. It removes the hierarchy
+prefix that all rows share. The caller prints the prefix one time above the
+table. Thus the column contains only the part that is different.
 """
 
 from __future__ import annotations
@@ -47,12 +45,12 @@ __all__ = [
     "target_width",
 ]
 
-#: Console width assumed when stdout is not a terminal (redirected to a file).
-#: Matches the width of the ``=``/``-`` section rules the CLI has always used.
+#: The console width if stdout is not a terminal (output redirected to a file).
+#: It is equal to the width of the ``=``/``-`` section rules of the CLI.
 DEFAULT_LOG_WIDTH = 100
 
-#: Only strip a shared name prefix when it buys at least this many columns —
-#: below that the caption costs more attention than the saving is worth.
+#: Remove a shared name prefix only if it saves this number of columns or
+#: more. For a smaller saving, the added note is not worth the space.
 MIN_PREFIX_SAVING = 4
 
 
@@ -61,9 +59,11 @@ MIN_PREFIX_SAVING = 4
 # ---------------------------------------------------------------------------
 
 def target_width() -> int:
-    """Preferred console width: the terminal's when attached to one, else
-    :data:`DEFAULT_LOG_WIDTH`. ``COLUMNS`` overrides both (rich honours it too,
-    and CI/pytest set it)."""
+    """Return the preferred console width.
+
+    If stdout is a terminal, the width is the terminal width. If not, it is
+    :data:`DEFAULT_LOG_WIDTH`. ``COLUMNS`` has priority over the two. ``rich``
+    also obeys ``COLUMNS``, and CI and pytest set it."""
     env = os.environ.get("COLUMNS")
     if env and env.isdigit() and int(env) > 0:
         return int(env)
@@ -76,30 +76,30 @@ def target_width() -> int:
 
 
 def _console(width: int) -> Console:
-    """A console writing to the *current* ``sys.stdout``.
+    """Return a console that writes to the *current* ``sys.stdout``.
 
-    ``file`` is deliberately not passed: rich resolves ``sys.stdout`` at write
-    time when it is ``None``, so a module-level console would keep writing to
-    the real stdout under ``capsys``. ``highlight=False`` stops rich from
-    recolouring numbers inside cells we have already formatted.
+    ``file`` is not given, on purpose. If ``file`` is ``None``, rich finds
+    ``sys.stdout`` at write time. A module-level console keeps the initial
+    stdout, which is incorrect under ``capsys``. ``highlight=False`` prevents
+    a colour change of the numbers in cells that are already formatted.
     """
     return Console(width=width, highlight=False, soft_wrap=False)
 
 
 def _natural_width(table: Table) -> int:
-    """Width the table wants if nothing constrains it."""
+    """Return the width of the table without a width limit."""
     probe = Console(width=10_000, file=io.StringIO(), highlight=False)
     return probe.measure(table).maximum
 
 
 def print_table(table: Table) -> None:
-    """Render *table*, widening the console rather than truncating any cell."""
+    """Print *table*. Make the console wider if necessary. Do not cut a cell."""
     width = max(target_width(), _natural_width(table))
     _console(width).print(table)
 
 
 def rule(char: str = "=") -> str:
-    """A full-width separator line, for the section banners around tables."""
+    """Return a full-width separator line for the section banners."""
     return char * target_width()
 
 
@@ -108,22 +108,24 @@ def rule(char: str = "=") -> str:
 # ---------------------------------------------------------------------------
 
 def _rendered_width(col_widths: Sequence[int]) -> int:
-    """Total width of a bordered table whose columns hold *col_widths* chars.
+    """Return the total width of a bordered table with *col_widths* columns.
 
-    Each column costs its content plus one space of padding either side; the
-    box then adds one vertical rule per column plus the closing one. Matches
-    the geometry of :func:`make_table` — keep the two in step.
+    Each column uses its content plus one space of padding on each side. The
+    box adds one vertical rule for each column, and one more to close the
+    table. This agrees with the geometry of :func:`make_table`. Keep the two
+    the same.
     """
     return sum(w + 2 for w in col_widths) + len(col_widths) + 1
 
 
 def column_capacity(first_width: int, other_width: int,
                     available: Optional[int] = None) -> int:
-    """How many ``other_width`` columns fit next to a fixed first column.
+    """Return the number of ``other_width`` columns that fit after a fixed
+    first column.
 
-    Used to chunk the component x window matrix into groups that fit the
-    console. Always at least 1: a single window column is printed even if it
-    overflows, because dropping it would lose data.
+    The component x window matrix uses this to divide its columns into groups
+    that fit the console. The result is 1 or more. One window column is
+    printed even if it is too wide, because the table must show all the data.
     """
     limit = target_width() if available is None else available
     n = 1
@@ -133,21 +135,22 @@ def column_capacity(first_width: int, other_width: int,
 
 
 def strip_common_prefix(names: Sequence[str]) -> Tuple[List[str], str]:
-    """Drop the dot-separated hierarchy prefix shared by every name.
+    """Remove the dot-separated hierarchy prefix that all names share.
 
-    Returns ``(short_names, prefix)``; *prefix* is ``""`` when nothing was
-    stripped, and the caller is expected to report a non-empty one in the
-    table caption so the short names stay unambiguous.
+    Returns ``(short_names, prefix)``. *prefix* is ``""`` if nothing was
+    removed. The caller must print a non-empty prefix near the table, thus
+    the short names stay clear.
 
-    Only whole segments are removed, and never the last one — a component must
-    keep a name. ``["a.b.x", "a.b.y"]`` becomes ``(["x", "y"], "a.b")``, while
-    ``["core0.pe", "dram"]`` shares nothing and is returned unchanged.
+    Only complete segments are removed. The last segment always stays,
+    because a component must keep a name. ``["a.b.x", "a.b.y"]`` becomes
+    ``(["x", "y"], "a.b")``. ``["core0.pe", "dram"]`` shares no prefix and
+    does not change.
     """
     if len(names) < 2:
         return list(names), ""
     split = [n.split(".") for n in names]
     shared: List[str] = []
-    for i in range(min(len(p) for p in split) - 1):   # never the leaf segment
+    for i in range(min(len(p) for p in split) - 1):   # not the last segment
         seg = split[0][i]
         if all(p[i] == seg for p in split):
             shared.append(seg)
@@ -165,22 +168,22 @@ def strip_common_prefix(names: Sequence[str]) -> Tuple[List[str], str]:
 # ---------------------------------------------------------------------------
 
 def make_table() -> Table:
-    """An empty table in the house style.
+    """Return an empty table in the standard style.
 
-    Notes that would otherwise become a rich ``caption`` are printed by the
-    caller as ordinary ``[INFO]``-style lines instead: rich pads a caption out
-    to the full table width, leaving trailing whitespace in redirected logs,
-    and a note above the table is read before the rows it qualifies.
+    A table has no rich ``caption``. The caller prints a note as an
+    ``[INFO]``-style line above the table. Rich pads a caption to the full
+    table width, which puts trailing spaces in redirected logs. Also, the
+    reader sees a note above the table before the rows that it applies to.
     """
     return Table()
 
 
 def add_columns(table: Table, headers: Iterable[Tuple[str, str]]) -> None:
-    """Add ``(header, justify)`` columns, none of which may wrap."""
+    """Add ``(header, justify)`` columns. The columns do not wrap."""
     for header, justify in headers:
         table.add_column(header, justify=justify, no_wrap=True, overflow="fold")
 
 
 def note(text: str) -> str:
-    """Indent a qualifying note to sit under its ``[INFO]`` heading."""
+    """Indent a note, to put it below its ``[INFO]`` heading."""
     return f"       {text}"

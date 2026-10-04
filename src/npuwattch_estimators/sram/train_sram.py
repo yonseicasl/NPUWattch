@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 """Train the four SRAM MLPs (energy / leakage / timing / area) — manual §5.
 
-Standalone-plugin rule: everything lives in src/estimators/sram/.  This script
-loads its siblings ``sram.py`` (dataset loader = single source of the
-leak-subtraction) and ``sram_mlp.py`` (feature vocabulary, net, quartet IO) by
-file path, trains per manual §5.4 (Adam 1e-3 + plateau decay, batch 256 capped
-at n/8, early stop on val MAPE patience 30, seed 42, CPU), with the §5.3
-histogram-weighted L1 adapted to one axis (the log10 target) — weights are
-ACTUALLY applied.  Targets are ABSOLUTE log10 values in the estimator's
-internal space (leak-subtracted dynamic pJ / mW / ns / um2).
+The SRAM estimator is self-contained: all its files are in
+src/npuwattch_estimators/sram/. This script loads two files of that directory
+by file path:
 
-Outputs (to --out-dir, default = this directory):
+- ``sram.py``: the dataset loader. It is the only code that does the leakage
+  subtraction.
+- ``sram_mlp.py``: the feature vocabulary, the network, and the quartet IO.
+
+Training procedure (manual §5.4):
+
+- Adam with a learning rate of 1e-3 and a decrease on a plateau.
+- Batch size 256, with a maximum of n/8.
+- An early stop on the validation MAPE (default patience: 300 epochs).
+- Seed 42, CPU only.
+
+The loss is the histogram-weighted L1 of manual §5.3 on one axis, the log10
+target. The loss applies the weights. The targets are ABSOLUTE log10 values in
+the internal units of the estimator: dynamic pJ without leakage, mW, ns, and
+um2.
+
+Outputs (in --out-dir, which is this directory by default):
   <metric>__v1.{pt,scalers.json,loss.json,meta.json}   x4   (§3.5 quartets)
   eval_report.json                                          (metrics + audits)
 
@@ -58,7 +69,7 @@ ENERGY_DEC_ATTRS = {"dec_act": "act_dyn_pJ", "dec_flip": "flip_dyn_pJ",
 
 
 # ---------------------------------------------------------------------------
-# sample assembly
+# Assembly of the samples
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -117,8 +128,8 @@ def assemble(ds) -> Tuple[Dict[str, List[Sample]], List[Dict]]:
         if s:
             samples["leakage"].append(s)
 
-    # timing: composed access times (needs BOTH sheets at the same point;
-    # unpaired points are dropped and logged)
+    # Timing: composed access times. A sample needs the two sheets at the same
+    # point. A point in only one sheet is not used and is recorded in `dropped`.
     a_map = {(n, r, c, 0.0, 25.0): p for (n, r, c), p in ds.nominal_array.items()}
     a_map.update(ds.pvt_array)
     d_map = {(n, r, c, 0.0, 25.0): p for (n, r, c), p in ds.nominal_dec.items()}
@@ -137,7 +148,8 @@ def assemble(ds) -> Tuple[Dict[str, List[Sample]], List[Dict]]:
             if s:
                 samples["timing"].append(s)
 
-    # area: PVT-independent -> nominal rows only (dedup by construction)
+    # Area: it does not change with PVT. Thus use only the nominal rows, which
+    # have no duplicates.
     for (node, r, c), pt in ds.nominal_array.items():
         s = _mk("area", node, r, c, 0.0, 25.0, "array", pt.array_area_um2, dropped)
         if s:
@@ -152,7 +164,10 @@ def assemble(ds) -> Tuple[Dict[str, List[Sample]], List[Dict]]:
 
 def split_by_group(items: Sequence[Sample], seed: int,
                    fracs=(0.8, 0.1, 0.1)) -> Tuple[List[Sample], ...]:
-    """80/10/10 by design point — all op-rows of one simulation stay together."""
+    """Split the samples 80/10/10 by design point.
+
+    All rows of one simulation (one row for each op) go into the same set.
+    """
     groups = sorted({s.group for s in items})
     rng = random.Random(seed)
     rng.shuffle(groups)
@@ -169,7 +184,7 @@ def split_by_group(items: Sequence[Sample], seed: int,
 
 
 # ---------------------------------------------------------------------------
-# §5.3 loss (one axis = the log10 target), weights applied
+# The loss of manual §5.3 on one axis (the log10 target), with the weights applied
 # ---------------------------------------------------------------------------
 
 def fit_loss_weights(y_train: Sequence[float], bins: int = 30,
@@ -177,11 +192,12 @@ def fit_loss_weights(y_train: Sequence[float], bins: int = 30,
     y = torch.tensor(list(y_train), dtype=torch.float32)
     hist, edges = torch.histogram(y, bins=bins)
     pmf = hist / hist.sum()
-    # Empty bins get weight 0 (no sample ever falls there) — including their
-    # 1/eps in the normalization would crush every occupied bin's weight to
-    # ~0 and starve the bulk of the data of gradient. Normalize to unit mean
-    # over SAMPLES (sum pmf*w == 1), which is the usable reading of §5.3's
-    # unit-mean rule for a sparse 1-D axis.
+    # An empty bin has the weight 0, because no sample is in it. If the
+    # normalization included the 1/eps of the empty bins, the weights of all
+    # other bins would be almost 0. Then most of the data would have almost
+    # no gradient. Normalize to a mean of 1 across the SAMPLES
+    # (sum pmf*w == 1). This is how the unit-mean rule of manual §5.3 applies
+    # to a sparse axis with one dimension.
     w = torch.where(hist > 0, 1.0 / (pmf + eps), torch.zeros_like(pmf))
     w = w / float((pmf * w).sum())
     return {"axes": [{"name": "target_log10",
@@ -203,7 +219,7 @@ def loss_weight_for(spec: Dict[str, Any], y_log10: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# metrics
+# Metrics
 # ---------------------------------------------------------------------------
 
 def _ranks(v: Sequence[float]) -> List[float]:
@@ -240,7 +256,7 @@ def mape(truth: Sequence[float], pred: Sequence[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# training
+# Training
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -372,7 +388,7 @@ def eval_per_op(net, scalers, samples: Sequence[Sample]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# audits + table baseline
+# Audits and the table baseline
 # ---------------------------------------------------------------------------
 
 AUDITS: List[Tuple[str, Callable[[Sample], bool]]] = [
@@ -392,7 +408,7 @@ def run_audits(model: str, samples: List[Sample], arch: List[int],
     out: Dict[str, Any] = {}
     for name, held in AUDITS:
         if model == "area" and name.startswith("leave_corner"):
-            continue                       # area has no PVT axis
+            continue                       # the area model has no PVT axis
         holdout = [s for s in samples if held(s)]
         rest = [s for s in samples if not held(s)]
         if len(holdout) < 8 or len(rest) < 50:
@@ -419,8 +435,11 @@ _NOM_ATTR = {**{op: ("array", attr) for op, attr in ENERGY_ARRAY_ATTRS.items()},
 
 def table_baseline(ds, results: Dict[str, TrainResult],
                    test_sets: Dict[str, List[Sample]]) -> Dict[str, Any]:
-    """MLP vs separable-k table on held-out PVT rows (energy/leakage per-op,
-    timing at the composed level)."""
+    """Compare the MLPs with the separable-k table on the PVT rows of the test set.
+
+    Energy and leakage are compared for each op. Timing is compared as the
+    composed access times.
+    """
     out: Dict[str, Any] = {}
     kcache: Dict[Tuple, Any] = {}
 
@@ -456,7 +475,7 @@ def table_baseline(ds, results: Dict[str, TrainResult],
                       for op, d in sorted(rows.items())}
         out[model]["_skipped_no_nominal"] = skipped
 
-    # timing: composed t_read / t_write per held-out (node, shape, corner)
+    # Timing: the composed t_read and t_write of each (node, shape, PVT point) in the test set.
     groups = {s.group for s in test_sets["timing"]
               if not (s.dv == 0.0 and s.temp == 25.0)}
     comp = {"t_read": {"t": [], "mlp": [], "tab": []},
@@ -495,7 +514,7 @@ def table_baseline(ds, results: Dict[str, TrainResult],
 
 
 # ---------------------------------------------------------------------------
-# main
+# Main
 # ---------------------------------------------------------------------------
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -510,8 +529,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--skip-audits", action="store_true")
     args = ap.parse_args(argv)
 
-    # Tiny nets: more threads oversubscribe the matmuls and hurt both speed
-    # and run-to-run reproducibility. 4 is plenty.
+    # The networks are small. More than 4 threads decrease the speed and make
+    # the results less reproducible between runs.
     torch.set_num_threads(4)
     ddir = Path(args.dataset_dir) if args.dataset_dir else sram._resolve_dataset_dir()
     out_dir = Path(args.out_dir)
@@ -549,7 +568,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         results[model] = res
         test_sets[model] = te
 
-        # per-op mean loss weight (histogram-skew check)
+        # The mean loss weight of each op. It shows a skew of the histogram.
         op_w: Dict[str, float] = {}
         for op in smlp.ONE_HOTS[model]:
             ws = [loss_weight_for(res.loss_spec, s.y_log10)

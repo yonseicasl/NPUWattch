@@ -1,14 +1,19 @@
-"""HTML/JSON PPA report generation (manual §8, workstream R1).
+"""The HTML and JSON PPA report (manual §8).
 
-``build_context`` turns a §6 ``RunEnergy`` (+ the native description and run
-provenance) into one plain-data context dict; ``render_html`` pushes it through
-the Jinja2 template; ``write_report`` writes ``report.html`` and, from the very
-same context, ``report.json`` (§3.6) — HTML and JSON can never disagree.
+``build_context``
+    Makes one context dict of plain data from a §6 ``RunEnergy``, the
+    description, and the provenance of the run.
+``render_html``
+    Renders the Jinja2 template with the context.
+``write_report``
+    Writes ``report.html`` and ``report.json`` (§3.6) from the same context.
+    Thus the HTML and the JSON always agree.
 
-Everything numeric is computed here (shares, unit costs, f_max check); the
-template only formats. Charts are inline SVG strings from ``report.svg``,
-stored under the context's ``svg`` key, which is the one key stripped from
-``report.json`` (§3.6 lists data, not markup).
+This module calculates all the numbers: the shares, the unit costs, and the
+f_max check. The template only formats them. The charts are inline SVG strings
+from ``report.svg``. They are in the ``svg`` key of the context.
+``report.json`` does not contain the ``svg`` key, because §3.6 lists data and
+not markup.
 """
 
 from __future__ import annotations
@@ -30,11 +35,11 @@ from .svg import (
 
 __all__ = ["build_context", "render_html", "write_report"]
 
-_TOP_N = 8                     # donut / bar-list grouping (skill guidance)
+_TOP_N = 8                     # the donut and the bar list show this many items
 
 
 # ---------------------------------------------------------------------------
-# small helpers
+# Small helpers
 # ---------------------------------------------------------------------------
 
 def _fmt_or_na(value: float, pattern: str = "{:.3g}") -> str:
@@ -49,7 +54,8 @@ def _sha256(path: Path) -> Optional[str]:
 
 
 def _top_n(items: Sequence[Tuple[str, float]], n: int = _TOP_N):
-    """Largest-n (label, value) pairs plus an aggregated ("other", rest)."""
+    """Return the n largest (label, value) pairs. The sum of the remaining
+    pairs follows as one ("other", sum) pair."""
     ranked = sorted((i for i in items if i[1] > 0),
                     key=lambda kv: kv[1], reverse=True)
     head, tail = ranked[:n], ranked[n:]
@@ -59,31 +65,44 @@ def _top_n(items: Sequence[Tuple[str, float]], n: int = _TOP_N):
 
 
 def _model_of(primitive: str, chain: Any) -> str:
+    """Return the source of the values of a primitive:
+
+    - ``cal``: a trained estimator.
+    - ``const``: a constant from a table file.
+    - ``user``: the user component library.
+    - ``uncal``: a provider that is not in the lists of the provider chain.
+    """
+    if primitive in tuple(getattr(chain, "user_primitives", ()) or ()):
+        return "user"
     if primitive in tuple(getattr(chain, "calibrated_primitives", ()) or ()):
         return "cal"
     if primitive in tuple(getattr(chain, "constant_primitives", ()) or ()):
         return "const"
-    return "stub"
+    return "uncal"
 
 
 def _model_tag(models: Iterable[str]) -> str:
-    """The summary calibration tag, same semantics as the CLI's."""
+    """Return the calibration tag of the summary. The CLI uses the same
+    rules."""
     kinds = set(models)
     if kinds == {"cal"}:
         return "calibrated"
-    if kinds <= {"stub"}:
-        return "FIRST-ORDER (uncalibrated placeholder)"
+    if kinds <= {"uncal"}:
+        return "UNCALIBRATED"
     return "PARTIAL calibration"
 
 
 def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any],
                      charged_modes: Iterable[str] = ()) -> str:
-    """Per-instance E/cycle, priced at the stim modes this run actually
-    charged the component with — mode-agnostic by design (a FIFO streams, a
-    memory reads/writes, an hbm activates; no fixed mode list). ``idle``/
-    ``none`` carry no unit information and are skipped; a component with no
-    priceable charged mode falls back to ``random``. At most two values are
-    shown, alphabetically (memories keep the familiar read / write pair)."""
+    """Return the energy per cycle of one instance, as text.
+
+    The function uses the stim_modes that the run charged to the component.
+    There is no fixed list of modes: a FIFO streams, a memory reads and
+    writes, an hbm activates. The function ignores ``idle`` and ``none``,
+    because they give no unit information. If the provider has no value for
+    the charged modes, the function uses ``random``. The text shows a maximum
+    of two values in alphabetical order. Thus a memory shows read / write.
+    """
     def one(mode: str) -> Optional[float]:
         try:
             return provider.energy_per_cycle(primitive, {**feats, "stim_mode": mode})
@@ -98,11 +117,12 @@ def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any],
 
 
 # ---------------------------------------------------------------------------
-# context
+# Context
 # ---------------------------------------------------------------------------
 
 def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
-    """Human dtype of a MAC-family component (fp32/bf16/fp16/int8/mx…)."""
+    """Return the dtype name of a MAC component, for example fp32, bf16,
+    fp16, int8, or an MX format."""
     if cls == "fpmac":
         e, m = attrs.get("exponent_bits"), attrs.get("mantissa_bits")
         if (e, m) == (8, 23):
@@ -122,16 +142,18 @@ def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
 
 def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
                      total_pJ, flops):
-    """(dtype, fp32_equivalent) for the efficiency KPI.
+    """Return (dtype, fp32_equivalent) for the efficiency figure.
 
-    Convention (2026-08-11): re-price the fp MAC datapath at fp32 (e8m23)
-    with identical structure (node/clock/pipeline), per charged stim_mode,
-    using the same provider — everything non-MAC (SRAM/NoC/DRAM) stays
-    unchanged, so runs of different fp precisions compare against fp32
-    references apples-to-apples. int/mx datapaths are different primitives,
-    not a precision rescale → dtype is labeled but no equivalent is claimed.
-    Any failure (no provider, unknown mode) skips the annotation — a report
-    view must never fail the run.
+    Convention: the function calculates the cost of the fp MAC datapath again
+    at fp32 (e8m23). The node, the clock, and the pipeline stay the same. The
+    function does this for each charged stim_mode with the same provider. The
+    energy of all other components (SRAM, NoC, DRAM) does not change. Thus
+    you can compare runs of different fp precisions with fp32 references.
+
+    The int and mx datapaths are different primitives, not a different
+    precision. For them the function gives the dtype but no fp32 equivalent.
+    If a step fails (no provider, unknown mode), the function gives no fp32
+    equivalent. A report view must not stop the run.
     """
     macs = [c for c in components if c["cls"] in ("fpmac", "intmac", "mxfpmac")
             and c["dyn_energy_pJ"] > 0]
@@ -140,7 +162,7 @@ def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
     top = max(macs, key=lambda c: c["dyn_energy_pJ"])
     dtype = _dtype_label(top["cls"], attrs_by_name.get(top["name"], {}))
     if any(c["cls"] != "fpmac" for c in macs):
-        return dtype, None                      # int/mx: no fp32 rescale
+        return dtype, None                      # int/mx: no fp32 equivalent
     if provider is None:
         return dtype, None
     try:
@@ -148,7 +170,7 @@ def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
         for c in macs:
             attrs = attrs_by_name.get(c["name"], {})
             if (attrs.get("exponent_bits"), attrs.get("mantissa_bits")) == (8, 23):
-                continue                        # already fp32
+                continue                        # the component is fp32
             base = {**tech.features(), "clock_mhz": clock, **attrs}
             fp32 = {**base, "exponent_bits": 8, "mantissa_bits": 23,
                     "data_width": 32}
@@ -159,7 +181,7 @@ def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
                     e_fp32 = provider.energy_per_cycle(
                         "fpmac", {**fp32, "stim_mode": mode})
                 except Exception:
-                    continue                    # uncharacterized mode: r = 1
+                    continue                    # no model for the mode: ratio = 1
                 if e_native > 0:
                     delta += e * (e_fp32 / e_native - 1.0)
         pj_per_flop = (total_pJ + delta) / flops
@@ -182,14 +204,15 @@ def build_context(
     chain: Any = None,                          # provider_factory.ProviderChain
     hierarchy: Any = None,                      # report.tree.ArchTreeNode
     warnings: Sequence[str] = (),
-    notes: Sequence[str] = (),                  # declared exclusions (INFO tier)
+    notes: Sequence[str] = (),                  # documented conventions and exclusions
     activity_rows: Sequence[Mapping[str, Any]] = (),
     inputs: Sequence[Tuple[str, Optional[Path]]] = (),
-    vectorless: Optional[float] = None,         # activity fraction when defaulted
-    window_provenance: Sequence[Mapping[str, Any]] = (),  # harness per-kernel records
+    vectorless: Optional[float] = None,         # activity fraction of a vectorless run
+    window_provenance: Sequence[Mapping[str, Any]] = (),  # one harness record per kernel
     node_resolution: Any = None,                # energy.NodeResolution (or None)
 ) -> Dict[str, Any]:
-    """One plain-data dict driving both ``report.html`` and ``report.json``."""
+    """Make the one dict of plain data that is the source of ``report.html``
+    and ``report.json``."""
     from .tree import to_dict as tree_to_dict
 
     nw = description.get("npuwattch", {})
@@ -203,7 +226,7 @@ def build_context(
     comp0 = run.windows[0].components
     total_pJ = run.total_energy_pJ or 1.0
 
-    # -- per-component accumulation (identity per physical instance) ---------
+    # -- Totals for each component (one entry for each component name) -------
     activity_by_comp: Dict[str, float] = {}
     for r in activity_rows:
         name = str(r.get("component", ""))
@@ -221,18 +244,18 @@ def build_context(
         feats: Dict[str, Any] = dict(tech.features())
         feats.update(attrs_by_name.get(name, {}))
         if clock and not feats.get("clock_mhz"):
-            # price unit costs at the run clock, exactly as §6 charged them
-            # (an explicit TechContext clock still wins, mirroring aggregate;
-            # tech.features() emits clock_mhz: None when unset — overwrite it)
+            # Calculate the unit costs at the clock of the run, as §6 does.
+            # A clock in the TechContext has priority. tech.features() gives
+            # clock_mhz: None if no clock is set. Replace that value.
             feats["clock_mhz"] = clock
         components.append({
             "name": name,
             "cls": c0.primitive,
-            # dynamic energy per stim_mode (run total; Σ == dyn_energy_pJ) —
-            # the finest split the activity carries, §3.6 only (not rendered
-            # per component in the HTML).
+            # The dynamic energy of the run for each stim_mode. The sum is
+            # dyn_energy_pJ. Only the JSON (§3.6) shows this split for each
+            # component. The HTML does not.
             "dyn_by_mode": by_mode,
-            "model": _model_of(c0.primitive, chain),
+            "model": (model := _model_of(c0.primitive, chain)),
             "count": c0.instances,
             "dyn_energy_pJ": dyn,
             "dyn_str": fmt_si(dyn, "pJ") if dyn else "—",
@@ -244,8 +267,8 @@ def build_context(
             "unit_energy_str": (_unit_energy_str(provider, c0.primitive, feats,
                                                  by_mode)
                                 if provider is not None else "n/a"),
-            # unit costs are per single instance (§8.6); the *_mW/_um2 raw
-            # fields keep the whole-component totals (× count) for §3.6.
+            # The unit costs are for one instance (§8.6). The raw *_mW and
+            # *_um2 fields are the totals of the component (× count) for §3.6.
             "leak_power_mW": c0.leak_power_mW,
             "unit_leak_power_mW": c0.leak_power_mW / max(1, c0.instances),
             "leak_power_str": _fmt_or_na(c0.leak_power_mW / max(1, c0.instances)),
@@ -257,15 +280,15 @@ def build_context(
             "activity_events": activity_by_comp.get(name, 0.0),
             "activity_str": _fmt_or_na(activity_by_comp.get(name, 0.0)),
             "vectorless": vectorless is not None,
-            "user_defined": False,
+            "user_defined": model == "user",
         })
 
-    # -- windows + component × window matrix ---------------------------------
+    # -- Windows and the component × window matrix ---------------------------
     kinds = {p["window"]: p["kind"] for p in window_provenance}
     windows = [{
         "index": i,
-        "label": w.kernel_hash,
-        "kind": kinds.get(i),                   # mac|fused|non_mac (harness runs)
+        "label": w.label,
+        "kind": kinds.get(i),                   # mac|fused|non_mac (harness runs only)
         "cycles": w.exec_cycles,
         "dyn_pJ": w.dyn_energy_pJ, "dyn_str": fmt_si(w.dyn_energy_pJ, "pJ"),
         "leak_pJ": w.leak_energy_pJ, "leak_str": fmt_si(w.leak_energy_pJ, "pJ"),
@@ -273,7 +296,7 @@ def build_context(
         "avg_power_mW": w.avg_power_mW, "power_str": fmt_si(w.avg_power_mW, "mW"),
     } for i, w in enumerate(run.windows)]
 
-    # GEMM vs non-GEMM split (only meaningful when non-MAC kernels exist).
+    # The GEMM and non-GEMM split. It applies only if non-MAC kernels exist.
     kernel_split = None
     if any(k == "non_mac" for k in kinds.values()):
         non_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
@@ -287,10 +310,11 @@ def build_context(
             "non_gemm_windows": sum(1 for k in kinds.values() if k == "non_mac"),
         }
 
-    # -- DRAM device command breakdown (§8; author handoff 2026-08-10) -------
-    # The per-mode split of the hbm components: the authors' verification
-    # vocabulary (activation vs transfer) + NPUWattch's refresh term. A
-    # vectorless run prices hbm at `random` → no command modes → omitted.
+    # -- DRAM command breakdown (§8) -----------------------------------------
+    # The split of the hbm components for each mode: row activation, read
+    # transfer, write transfer, and the refresh term of NPUWattch. A
+    # vectorless run charges hbm at `random`. Such a run has no command
+    # modes, thus it has no breakdown.
     dram_comps = [c for c in components if c["cls"] == "hbm"]
     dram_breakdown = None
     if dram_comps:
@@ -316,9 +340,10 @@ def build_context(
                 "total_pJ": dram_total,
                 "total_str": fmt_si(dram_total, "pJ"),
                 "share_of_run_pct": round(100.0 * dram_total / total_pJ, 1),
-                # the charged per-command constants (built-in or the run's
-                # --energy-table override — the description attrs are the
-                # single source either way)
+                # The constants that the run charged for each command. They
+                # are from the DRAM energy table of the run: the default
+                # table or --energy-table. The attributes of the description
+                # are the only source in the two cases.
                 "constants": {
                     "act_pJ": attrs0.get("mem_act_energy_pJ"),
                     "access_pJ_per_bit": attrs0.get("mem_access_energy_per_bit_pJ"),
@@ -336,16 +361,17 @@ def build_context(
                   for w in run.windows],
     } for name in active]}
 
-    # -- totals / timing / banners ------------------------------------------
+    # -- Totals, timing, and banners -----------------------------------------
     total_cycles = sum(w.exec_cycles for w in run.windows)
     area_um2 = sum(c["area_um2"] for c in components)
 
-    # Compute-efficiency KPI (user request 2026-08-11): run energy per FLOP,
-    # with MAC = 2 FLOP. Op count = the charged events of the MAC-family
-    # datapath components (systolic PEs dominate; the vector datapath's
-    # fpmac-class ops ride along), idle events excluded. Deliberately
-    # includes DRAM/NoC/SRAM energy in the numerator — it is a CHIP-LEVEL
-    # figure, comparable to per-chip TFLOPS/TDP quotes, not a bare-MAC one.
+    # The compute-efficiency figure: the energy of the run per FLOP, where
+    # 1 MAC = 2 FLOP. The operation count is the charged events of the MAC
+    # datapath components, without the idle events. The systolic PEs give
+    # most of the count. The fpmac operations of the vector datapath are
+    # also in the count. The numerator includes the DRAM, NoC, and SRAM
+    # energy. Thus this is a CHIP-LEVEL figure, which you can compare with
+    # TFLOPS/TDP values of a chip. It is not a figure for the MAC only.
     _MAC_PRIMS = ("fpmac", "intmac", "mxfpmac")
     mac_ops = 0.0
     for r in activity_rows:
@@ -369,8 +395,9 @@ def build_context(
                 f"{run.total_energy_pJ / flops:.3g} pJ/FLOP",
             "tflops": flops / run.exec_time_s / 1e12,
             "tflops_str": f"{flops / run.exec_time_s / 1e12:.3g}",
-            # datapath precision + the fp32-normalized figure (None for
-            # int/mx datapaths or when the provider cannot re-price)
+            # The precision of the datapath and the fp32 equivalent. The
+            # equivalent is None for int/mx datapaths, or if the provider
+            # cannot calculate it.
             "dtype": dtype,
             "fp32_equivalent": fp32_eq,
         }
@@ -402,19 +429,26 @@ def build_context(
     if banner:
         banners.append(banner)
     models = [c["model"] for c in components]
-    if "stub" in models:
-        stubs = sorted({c["cls"] for c in components if c["model"] == "stub"})
+    if "user" in models:
+        users = sorted({c["cls"] for c in components if c["model"] == "user"})
         banners.append({"level": "warn",
-                        "text": "Placeholder (uncalibrated) unit costs for: "
-                                + ", ".join(stubs)
-                                + " — absolute numbers are first-order until "
-                                  "the trained models land."})
+                        "text": "User component library values for: "
+                                + ", ".join(users)
+                                + " — these are the user's numbers at their "
+                                  "reference technology, not model "
+                                  "predictions."})
+    if "uncal" in models:
+        uncal = sorted({c["cls"] for c in components if c["model"] == "uncal"})
+        banners.append({"level": "warn",
+                        "text": "Uncalibrated unit costs for: "
+                                + ", ".join(uncal) + "."})
 
-    # -- charts --------------------------------------------------------------
-    # NPU vs DRAM top-level split (user request 2026-08-11): the DRAM device
-    # dominates full-run totals and drowned the per-component donut, so hbm
-    # components get a dedicated two-way bar and are EXCLUDED from the
-    # energy donut/bar list, which then covers the on-chip (NPU) side only.
+    # -- Charts --------------------------------------------------------------
+    # The NPU and DRAM split. The DRAM device uses most of the energy of a
+    # full run, which makes the other components too small to read in the
+    # donut. Thus the hbm components have a separate bar with two segments.
+    # The energy donut and the bar list EXCLUDE them and show only the
+    # on-chip (NPU) components.
     dram_pJ = sum(c["energy_pJ"] for c in components if c["cls"] == "hbm")
     npu_pJ = run.total_energy_pJ - dram_pJ
     npu_dram_split = None
@@ -440,7 +474,7 @@ def build_context(
         "windows": windows_chart(windows) if len(windows) > 1 or vectorless is None else "",
     }
 
-    # -- provenance ----------------------------------------------------------
+    # -- Provenance ----------------------------------------------------------
     input_entries = [{"name": str(label), "sha": _sha256(p) if p else None}
                      for label, p in inputs]
     from npuwattch._version import __version__
@@ -456,9 +490,9 @@ def build_context(
             "corner": tech.corner,
             "voltage_offset_V": tech.voltage_offset_V,
             "temperature_C": tech.temperature_C,
-            # Continuous-node resolution (§6.2): how the requested node was
-            # served over the characterized anchors. "exact" runs omit the
-            # evaluated field — the node was a characterized one.
+            # The continuous node axis (§6.2): how the run got the values of
+            # the requested node from the characterized nodes. An "exact" run
+            # has no such fields, because its node is a characterized node.
             **({} if node_resolution is None or node_resolution.kind == "exact"
                else {"node_scaling": node_resolution.kind,
                      "node_evaluated_nm": node_resolution.eval_nm,
@@ -477,9 +511,10 @@ def build_context(
             "leak_pct": round(100.0 * run.leak_energy_pJ / total_pJ, 1),
             "avg_power_mW": run.avg_power_mW,
             "avg_power_str": fmt_si(run.avg_power_mW, "mW"),
-            # power over the MODELED area only — no IO/PHY/controllers/
-            # scalar core/whitespace in the denominator (they are out of
-            # scope), so this reads high vs whole-die TDP densities.
+            # The power divided by the MODELED area only. The denominator
+            # does not include the IO, the PHY, the controllers, the scalar
+            # core, or the empty area, because NPUWattch has no model for
+            # them. Thus this value is higher than a TDP density of a full die.
             "power_density_W_per_mm2": power_density,
             "power_density_str": (f"{power_density:.3g} W/mm²"
                                   if power_density else None),
@@ -500,10 +535,10 @@ def build_context(
         "dram_breakdown": dram_breakdown,
         "npu_dram_split": npu_dram_split,
         "efficiency": efficiency,
-        # window/kernel terminology: "window" is the core's harness-neutral
-        # time-interval term; PyTorchSim-harness
-        # runs (window_provenance present) address end users as "kernel"
-        # since there one kernel == one window by construction.
+        # The term that the report shows. "window" is the term of the core
+        # for one time interval, for all harnesses. A PyTorchSim run has
+        # window_provenance and one kernel is one window there. Thus the
+        # report of such a run uses "kernel".
         "window_term": "kernel" if window_provenance else "window",
         "matrix": matrix,
         "components": components,
@@ -511,32 +546,31 @@ def build_context(
         "svg": svg,
         "provenance": {
             "models": [],
-            "model_note": ("Calibrated-model manifest (checkpoint hashes) not "
-                           "yet wired. Calibrated clusters: sram + the logic "
-                           "v2 MLP quartets (fpadd/fpmul/fpmac/intadd/intmul/"
-                           "intmac/fpsfu/mxfpmac/fifo/regfile/simplemux, "
-                           "wired 2026-08-11); d2dlink and hbm are cited "
-                           "analytic constants; crossbar/fattree/foldedclos "
-                           "stay placeholders until the expanded NoC sweep "
-                           "retrains them."),
+            "model_note": ("Calibrated clusters: sram and the "
+                           "logic MLP primitives; d2dlink and hbm use cited "
+                           "table constants; a user component uses the "
+                           "values of the user component library."),
             "inputs": input_entries,
             "warnings": list(warnings),
             "notes": list(notes),
-            # Per-kernel provenance parsed from the run (harness mode): kind,
-            # dtype origin, headline activity counters. Always present in the
-            # JSON regardless of console verbosity.
+            # The provenance of each kernel of a harness run: the kind, the
+            # source of the dtype, and the primary activity counters. The
+            # JSON always has these records, at each console verbosity.
             "windows": [dict(p) for p in window_provenance],
         },
     }
 
 
 # ---------------------------------------------------------------------------
-# rendering + writing
+# Render and write
 # ---------------------------------------------------------------------------
 
 def render_html(context: Mapping[str, Any]) -> str:
-    """Render the report template with the context (autoescaped; the SVG
-    fields are injected via ``Markup`` since we generate them ourselves)."""
+    """Render the report template with the context.
+
+    Jinja2 escapes all values automatically. The SVG fields are ``Markup``
+    and are not escaped, because ``report.svg`` makes them.
+    """
     from jinja2 import Environment, FileSystemLoader, select_autoescape
     from markupsafe import Markup
 
@@ -552,8 +586,11 @@ def render_html(context: Mapping[str, Any]) -> str:
 
 def write_report(context: Mapping[str, Any], out_dir: Path,
                  *, basename: str = "report") -> Tuple[Path, Path]:
-    """Write ``<basename>.html`` and ``<basename>.json`` (same context, §3.6:
-    the JSON drops only the ``svg`` markup key). Returns the two paths."""
+    """Write ``<basename>.html`` and ``<basename>.json`` from the same context.
+
+    The JSON (§3.6) contains all keys of the context but the ``svg`` key.
+    Return the two paths.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     html_path = out_dir / f"{basename}.html"

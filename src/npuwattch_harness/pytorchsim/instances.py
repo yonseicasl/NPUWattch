@@ -1,34 +1,42 @@
-"""Per-instance activity split — never lump instances into one component.
+"""Division of the activity of a window between the physical instances.
 
-PyTorchSim's TOGSim log reports systolic activity per (core, systolic array)
-and several counters per core, but the projection binds chip-aggregate stats.
-Collapsing every PE grid into a single ``systolic.pe`` component would average
-that detail away, so the emitter names one component per physical instance
-(``core0.array1.pe``, ``core1.vmem``, …) and this module splits each window's
-bound actions across those instances, reporting at the finest grain the log
-supports.
+The TOGSim log gives the systolic activity of each systolic array and some
+counters of each core. But the projection binds stats that are totals for the
+chip. One ``systolic.pe`` component for all PE grids would hide the detail of
+the log. Thus the emitter names one component for each physical instance
+(``core0.array1.pe``, ``core1.vmem``, ...). This module divides the bound
+actions of each window between those instances.
 
-Split rules — exact where the log carries a per-instance counter, proportional
-attribution (noted in the emitted warnings) where it carries only kernel
-totals:
+A division is exact if the log has a counter for each instance. If the log has
+only a total for the kernel, the division is in proportion to a related
+counter, and the module gives a message. The rules are:
 
-* ``per: array`` elements (systolic ``pe`` / ``w_reg``) — split by each
-  array's share of active cycles. For actions driven by
-  ``systolic_active_cycles`` the share is computed from that very counter, so
-  the split is exact; gem5 kernel totals (``CustomMatMulwVpush`` weight loads)
-  are attributed proportionally.
-* ``per: core`` elements — DRAM→VMEM fill bytes by the per-core MOVIN
-  instruction share, VMEM→DRAM drain bytes by the MOVOUT share,
-  ``vector_active_cycles`` by its own per-core counter (exact),
-  ``dram_requests`` (DMA engine events) by the per-core DMA response counter
-  (exact), SFU op counts (``CustomV*``) by the vector active-cycle share;
-  everything else (``vpu_spad`` vector traffic) by the per-core systolic share.
-* ``per: chip`` elements (the NoC) are not split — the log only carries
-  aggregate flit counts, so per-router attribution would be invented detail.
+* Elements with ``per: array`` (the systolic ``pe`` and ``w_reg``): the share
+  of each array is its fraction of the active cycles.
 
-A window whose split counters are all zero falls back to a uniform split with
-a note; an instance whose share is zero simply gets no activity row (its
-leakage is still charged from the description, like any idle component).
+  * An action that ``systolic_active_cycles`` drives uses the same counter.
+    This division is exact.
+  * A gem5 total for the kernel (the ``CustomMatMulwVpush`` weight loads) is
+    in proportion to that share.
+
+* Elements with ``per: core``: the share comes from a counter of each core.
+
+  * ``dram_read_bytes`` (DRAM to VMEM): the MOVIN instruction counts.
+  * ``dram_write_bytes`` (VMEM to DRAM): the MOVOUT instruction counts.
+  * ``vector_active_cycles``: the same counter of each core (exact).
+  * ``dram_requests`` (the events of the DMA engine): the DMA response
+    counts (exact).
+  * SFU operation counts (``CustomV*``): the vector active cycles.
+  * All other stats (for example, the ``vpu_spad`` vector traffic): the
+    systolic active cycles.
+
+* Elements with ``per: chip`` (the NoC): no division. The log has only total
+  flit counts, thus there is no data for a division between the routers.
+
+If all the counters for a division are zero in a window, the module divides
+the activity equally and gives a message. An instance with a share of zero
+gets no activity row. The description still gives its leakage, as for each
+idle component.
 """
 
 from __future__ import annotations
@@ -36,12 +44,14 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
-from .activity import BoundAction
+from .activity import BoundAction, _num
 
 __all__ = ["expand_bounds"]
 
-#: per-core share source per driving stat; anything unlisted uses "systolic".
-#: The note (None = exact, no attribution assumption) is surfaced once per run.
+#: For each stat that drives an action: the counter that gives the share of
+#: each core, and a message. A stat that is not in this table uses "systolic".
+#: A message of None means that the division is exact. A run shows each
+#: message one time.
 _SFU_NOTE = "SFU ops attributed per core by vector active-cycle share"
 _CORE_RULES: Dict[str, Tuple[str, str]] = {
     "dram_read_bytes": ("movin",
@@ -49,11 +59,13 @@ _CORE_RULES: Dict[str, Tuple[str, str]] = {
     "dram_write_bytes": ("movout",
                          "VMEM→DRAM drain attributed per core by MOVOUT instruction share"),
     "vector_active_cycles": ("vector", None),
-    # DMA engine events: exact — the log's final DMA line per core carries that
-    # core's cumulative response (= request) count.
+    # Events of the DMA engine. The division is exact. The last DMA line of
+    # each core in the log gives the total response count of that core. One
+    # response is one request.
     "dram_requests": ("dma", None),
-    # SFU op counts are gem5 kernel totals; the SFU lives on the VPU side, so
-    # attribute by each core's vector active-cycle share (proportional, noted).
+    # The SFU operation counts are gem5 totals for the kernel. The SFU is a
+    # part of the VPU. Thus the division is in proportion to the vector
+    # active cycles of each core.
     "CustomVexp": ("vector", _SFU_NOTE),
     "CustomVexp2": ("vector", _SFU_NOTE),
     "CustomVerf": ("vector", _SFU_NOTE),
@@ -73,12 +85,12 @@ _CORE_STAT_KEY = {
 }
 
 
-def _num(x: float) -> float:
-    return int(x) if float(x).is_integer() else x
-
-
 class _WindowShares:
-    """Lazy share vectors for one window, computed from its per-core block."""
+    """The shares of the instances in one window.
+
+    The class calculates each share from the counters of each core in the
+    log, at the first time that the caller asks for it.
+    """
 
     def __init__(self, per_core: Mapping[int, Mapping[str, Any]],
                  num_cores: int, arrays_per_core: int) -> None:
@@ -133,13 +145,15 @@ def expand_bounds(
     num_cores: int,
     arrays_per_core: int,
 ) -> Tuple[List[BoundAction], List[str]]:
-    """Split a window's bound actions across physical instances.
+    """Divide the bound actions of a window between the physical instances.
 
-    Each (action, element) pair becomes one BoundAction per instance whose
-    share is nonzero, with the element renamed to its instance-qualified
-    component name (``core{c}.array{a}.{element}`` / ``core{c}.{element}``).
-    ``per: chip`` elements pass through unchanged. Returns the expanded list
-    plus attribution/fallback notes (the caller dedupes across windows).
+    Each pair of action and element gives one ``BoundAction`` for each
+    instance that has a share larger than zero. The element name becomes the
+    component name of the instance (``core{c}.array{a}.{element}`` or
+    ``core{c}.{element}``). An element with ``per: chip`` does not change.
+
+    Return the new list and the messages about the division. The caller
+    removes the messages that occur again in other windows.
     """
     C, A = max(1, num_cores), max(1, arrays_per_core)
     shares = _WindowShares(getattr(window, "per_core", None) or {}, C, A)
@@ -153,7 +167,7 @@ def expand_bounds(
                 continue
             if domain == "array":
                 smap = shares.array()
-                # a note only when attribution actually distributes something
+                # Give a message only if there is more than one array.
                 if ba.stat != "systolic_active_cycles" and C * A > 1:
                     notes.append(
                         f"{ba.stat}: kernel-total events attributed per array "
@@ -169,7 +183,7 @@ def expand_bounds(
             for qname, s in pieces:
                 cyc = ba.cycle_count * s
                 if not cyc:
-                    continue        # idle instance: leakage-only, no event row
+                    continue        # idle instance: only leakage, no activity row
                 out.append(replace(ba, cycle_count=_num(cyc),
                                    elements=[replace(rae, element=qname)]))
     return out, notes + shares.notes

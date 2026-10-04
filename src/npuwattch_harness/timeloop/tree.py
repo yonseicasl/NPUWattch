@@ -1,17 +1,17 @@
-"""Accelergy/Timeloop instance-hierarchy tree builder (the ``--tree`` view).
+"""Hierarchy tree of an Accelergy/Timeloop architecture (the ``--tree`` view).
 
-**Builders are harness-owned**: this format's hierarchy is *declared* in the
-Accelergy v0.4 YAML itself, and the Accelergy
-description path is slated to move under ``--harness timeloop`` — so its tree
-builder lives here already. It is the flattener's ``print_tree`` walk
-re-expressed as data: same node kinds (Component / Container / structural /
-Nothing), same instance arithmetic (accumulated mesh × component-list length),
-rendered by the shared ``npuwattch.report.tree`` renderers.
+Each harness makes its own tree. For this harness, the Accelergy v0.4 file
+declares the hierarchy. This module changes the hierarchy tree of the
+flattener into ``report.tree.ArchTreeNode`` data.
 
-When the Timeloop harness lands, its ingest attaches this tree to
-``EmittedArch.hierarchy`` exactly like the PyTorchSim harness does
-(``harness/pytorchsim/hierarchy.py``) — the CLI's ``--tree`` never knows which
-harness produced the tree.
+The node kinds are Component, Container, structural, and Nothing. The instance
+count of a component is the accumulated mesh x the length of the component
+list.
+
+:mod:`.ingest` attaches the tree to ``EmittedArch.hierarchy``. The PyTorchSim
+harness does the same (``npuwattch_harness/pytorchsim/hierarchy.py``). The shared
+``npuwattch.report.tree`` module prints the tree. Thus the ``--tree`` option
+of the CLI is independent of the harness.
 """
 
 from __future__ import annotations
@@ -22,10 +22,13 @@ __all__ = ["tree_from_accelergy"]
 
 
 def _storage_capacity(node) -> "str | None":
-    """``32 KB`` for a storage component, from the same translation the
-    ingest applies (Accelergy depth ÷ n_banks per bank) — so the declared
-    tree shows the capacity the estimator will be sized to."""
-    from ...report.tree import capacity_suffix
+    """Return the capacity text of a storage component, for example ``32 KB``.
+
+    The function uses the same translation as the ingest: the depth of each
+    bank is the Accelergy depth / n_banks. Thus the tree shows the capacity
+    that the estimator models.
+    """
+    from npuwattch.report.tree import capacity_suffix
     from .vocabulary import attributes_for, primitive_for
 
     try:
@@ -37,18 +40,18 @@ def _storage_capacity(node) -> "str | None":
         attrs = attributes_for(primitive, node.attributes or {},
                                component=node.name, warnings=warnings,
                                notes=[])
-    except Exception:                       # the tree must never break the run
+    except Exception:                       # a tree error must not stop the run
         return None
     if any("assuming" in w for w in warnings):
-        return None                         # width/depth guessed: no capacity claim
+        return None                         # assumed width or depth: show no capacity
     return capacity_suffix(attrs)
 
 
 def tree_from_accelergy(input_yaml: Path):
-    """Parse an Accelergy v0.4 description and convert its declared hierarchy
-    into a ``report.tree.ArchTreeNode``."""
-    from ...report.tree import ArchTreeNode
-    from ...yaml_flattener_accelergy_v4 import AccelergyV04Flattener
+    """Read an Accelergy v0.4 architecture file. Return its declared
+    hierarchy as a ``report.tree.ArchTreeNode``."""
+    from npuwattch.report.tree import ArchTreeNode
+    from .accelergy_flattener import AccelergyV04Flattener
 
     flattener = AccelergyV04Flattener()
     content = flattener.parse_yaml(str(input_yaml))
@@ -78,7 +81,7 @@ def tree_from_accelergy(input_yaml: Path):
         elif kind == "Nothing":
             out = ArchTreeNode(node.name, count=node.get_own_fanout(),
                                label="nothing")
-        else:                                   # Parallel / Hierarchical / Pipelined
+        else:                                   # Parallel, Hierarchical, or Pipelined
             out = ArchTreeNode(node.name)
         if not getattr(node, "enabled", True):
             out.label = (out.label + ", " if out.label else "") + "DISABLED"

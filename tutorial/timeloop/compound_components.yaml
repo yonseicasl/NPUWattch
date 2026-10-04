@@ -1,0 +1,58 @@
+# ============================================================================
+#  Compound components of the Timeloop tutorial designs
+# ============================================================================
+# A compound component is an Accelergy class that is a group of NPUWattch
+# primitives. Each primitive in a compound is an element. This file is an
+# INPUT of the run: NPUWattch reads `compound_components.yaml` from the
+# directory of the architecture file, or the file that you give with
+# --compound-components.
+#
+# How NPUWattch finds the model of an Accelergy class, in this order:
+#   1. A compound in this file with the name of the class (in lowercase).
+#   2. The vocabulary table of the Timeloop harness: one class -> one
+#      primitive (sram, regfile, intmac, ...).
+#   3. The user component library (user_components.yaml).
+# A class that is in none of these is not modeled, and the run gives a
+# warning.
+#
+# A component `x` of a compound class becomes one description component for
+# each element: `x.<element>`. Its instance count is the count of `x` times
+# the `count` of the element.
+#
+# Element config keys are NPUWattch attribute names (data_width,
+# mem_depth_per_bank, ...). A config value can be an expression of the
+# integer attributes of the Accelergy component. Write the attribute names in
+# lowercase, with "_" in the place of "-" (for example: width, depth,
+# datawidth).
+#
+# The file `projection.yaml` in the same directory connects the Timeloop
+# events (read, write, compute) to the elements. If you add or rename an
+# element here, change the projection also.
+#
+# A compound that no component of the design uses gives the message
+# "parsed, but not used".
+
+# counter: an up-counter. Accelergy has a `counter` class for the address
+# generators and the loop counters of a design. It is an adder and one
+# register. The Accelergy attribute `width` gives the bit width.
+counter:
+  default_mode: gated
+  elements:
+
+    increment:                        # the +1 adder
+      primitive: intadd
+      config:
+        data_width_a: width
+        data_width_b: width
+        data_width_out: width
+      count: 1
+
+    state:                            # the register that holds the count
+      primitive: regfile
+      config:
+        data_width: width
+        mem_depth_per_bank: 1
+        mem_banks: 1
+        mem_r_ports: 1
+        mem_w_ports: 1
+      count: 1

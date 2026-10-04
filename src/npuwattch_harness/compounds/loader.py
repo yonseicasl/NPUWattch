@@ -1,27 +1,32 @@
-"""Load + validate the compound / projection contract (JSON **or** YAML).
+"""Load and check compounds and projections (JSON or YAML).
 
-Three artifacts (docs/COMPOUND_SCHEMA.md), nothing tool-specific leaks into a
-compound:
+The schema is in docs/COMPOUND_SCHEMA.md. There are three file types:
 
-    primitive_modes.{json,yaml}    the per-primitive stim_mode vocabulary (= POWER_MODES)
-    compounds/<name>.{json,yaml}   a compound's ELEMENTS (tool-agnostic composition)
-    projections/<tool>.{json,yaml} native action -> {element: stim_mode} + count/scale
+    primitive_modes.{json,yaml}    the stim_mode names of each primitive (= POWER_MODES)
+    compounds/<name>.{json,yaml}   the elements of a compound
+    projections/<tool>.{json,yaml} simulator action -> {element: stim_mode}, count, scale
 
-This module implements the loaders, the static validation the schema §5
-requires, and per-kernel *resolution* of a compound + projection against a
-concrete ``MacConfig`` (placeholders/symbols -> concrete primitive, config,
-counts).
+A compound does not use simulator action names. Only a projection uses them.
 
-System vs harness-definition files are kept apart:
+This module does three tasks:
 
-- This package (``compounds/``) is the **interpretation system**: the loader,
-  validation and resolution engine, plus the stim_mode vocabulary **contract**
-  (``compounds/data/primitive_modes.json``) — tied to the characterized
-  ``POWER_MODES`` and the trained models, not meant to be edited.
-- Each **harness** ships its own **definition bundle** (the compounds it models +
-  its projection), authored in JSON or YAML and meant to be read/copied/edited:
-  e.g. ``harness/pytorchsim/definitions/{compounds,projections}/``. Users point
-  ``load_bundle`` / ``load_compounds`` / ``load_projection`` at their own files.
+- It loads the files.
+- It does the static checks of schema §5.
+- It resolves a compound and a projection for one kernel with a ``MacConfig``.
+  Resolution replaces the placeholders and the symbols with a primitive, a
+  config, and counts.
+
+The engine and the definition files are separate:
+
+- This package (``compounds/``) is the engine: the loader, the checks, and
+  the resolution. It also has the stim_mode table,
+  ``compounds/data/primitive_modes.json``. This table agrees with the
+  characterized ``POWER_MODES`` and the trained models. Do not edit it.
+- The definition files of a design are inputs of a run: its compound
+  components and its projection, in JSON or YAML. You can read, copy, and
+  edit these files. Examples are in ``tutorial/pytorchsim/`` and
+  ``tutorial/timeloop/``. ``npuwattch_harness.run_inputs`` finds and loads
+  the files of a run.
 """
 
 from __future__ import annotations
@@ -51,7 +56,6 @@ __all__ = [
     "load_compounds",
     "load_compounds_dir",
     "load_projection",
-    "load_bundle",
     "validate_projection",
     "resolve_compound",
     "resolve_action",
@@ -59,24 +63,25 @@ __all__ = [
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-# The primitives the systolic PE placeholder {mac_primitive} can resolve to.
+# The primitives that the placeholder {mac_primitive} of the systolic PE can resolve to.
 MAC_PRIMITIVES = ("intmac", "fpmac", "mxfpmac")
 
-# Symbols in count/scale/config expressions resolve per kernel from the MAC
-# scalars (lanes, bitwidth) plus the harness's integer run-config keys (bundles
-# are harness-owned, so their compounds may use that harness's vocabulary).
-# Load-time checking is therefore *syntactic* (identifier-shaped tokens); an
-# actually-unknown symbol still fails loudly at resolution.
+# Symbols in count, scale, and config expressions resolve for each kernel.
+# The sources are the MAC scalars (lanes, bitwidth) and the integer run-config
+# keys of the harness. A bundle belongs to one harness, thus its compounds can
+# use the config keys of that harness.
+# Thus the check at load time is only a syntax check: each token must have the
+# form of an identifier. An unknown symbol causes an error at resolution.
 _MAC_SYMBOLS = ("lanes", "bitwidth")
 _SYMBOL_RE = __import__("re").compile(r"[A-Za-z_]\w*$")
 
 
 class CompoundBundleError(ValueError):
-    """A compound/projection/vocabulary artifact is malformed or inconsistent."""
+    """A compound, projection, or stim_mode file is malformed or inconsistent."""
 
 
-# Bundle files may be JSON or YAML (YAML is a superset, so a .json file also
-# parses as YAML; we dispatch on extension and fall back for unknown suffixes).
+# Bundle files can be JSON or YAML. The file extension selects the parser.
+# For an unknown extension, the loader tries JSON first and then YAML.
 _STRUCTURED_SUFFIXES = (".json", ".yaml", ".yml")
 
 
@@ -105,7 +110,7 @@ def _read_structured(path: Path, what: str) -> object:
 
 
 def _strip_comments(d: Mapping) -> Dict:
-    """Drop ``_``-prefixed comment keys from a JSON object."""
+    """Remove the comment keys (keys that start with ``_``) from a mapping."""
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
@@ -117,18 +122,8 @@ def _is_placeholder(v: object) -> bool:
     return isinstance(v, str) and v.startswith("{") and v.endswith("}")
 
 
-def _is_scalar_expr(s: str) -> bool:
-    """True if every factor is a digit or an identifier-shaped symbol."""
-    for term in s.split("+"):
-        for factor in term.split("*"):
-            f = factor.strip()
-            if not (f.isdigit() or _SYMBOL_RE.match(f)):
-                return False
-    return True
-
-
 def _check_scalar_expr(expr: object, where: str) -> None:
-    """Syntactic check (no values): int, or +/*-joined symbols/int literals."""
+    """Check the syntax only: an int, or symbols and int literals joined by + and *."""
     if isinstance(expr, bool) or not isinstance(expr, (int, str)):
         raise CompoundBundleError(f"{where}: scalar must be int or expr string, got {expr!r}")
     if isinstance(expr, int):
@@ -166,15 +161,15 @@ def _resolve_scalar_expr(expr: Union[int, str], symbols: Mapping[str, int], wher
 
 
 # ---------------------------------------------------------------------------
-# primitive_modes.json — the stim_mode vocabulary
+# primitive_modes.json: the stim_mode table
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class PrimitiveModes:
-    """The characterized stim_mode vocabulary: primitive -> allowed modes.
+    """The characterized stim_mode names: primitive -> permitted modes.
 
-    This is the guard that a projection never asks for a power the dataset can't
-    measure — an estimator only predicts modes it was trained on.
+    This table makes sure that a projection uses only modes that the dataset
+    has. An estimator can predict only the modes of its training data.
     """
 
     modes: Mapping[str, List[str]]
@@ -191,7 +186,7 @@ class PrimitiveModes:
         return mode in self.modes.get(primitive, ())
 
     def require(self, primitive: str, mode: str) -> None:
-        """Raise unless ``(primitive, mode)`` is a characterized pair."""
+        """Raise an error if ``(primitive, mode)`` is not a characterized pair."""
         if primitive not in self.modes:
             raise CompoundBundleError(
                 f"primitive {primitive!r} not in vocabulary "
@@ -204,10 +199,13 @@ class PrimitiveModes:
             )
 
 
-def _validate_modes_obj(obj: object) -> Dict[str, List[str]]:
+def load_primitive_modes(path: Optional[Path] = None) -> PrimitiveModes:
+    """Load the stim_mode table (JSON or YAML). The default is the table of this package."""
+    p = Path(path) if path is not None else DATA_DIR / "primitive_modes.json"
+    obj = _read_structured(p, "primitive_modes")
     if not isinstance(obj, dict):
         raise CompoundBundleError("primitive_modes: top-level must be an object")
-    modes = obj.get("modes", obj)  # allow either {"modes": {...}} or a bare map
+    modes = obj.get("modes", obj)  # accept {"modes": {...}} or a bare map
     if not isinstance(modes, dict) or not modes:
         raise CompoundBundleError("primitive_modes: 'modes' must be a non-empty object")
     out: Dict[str, List[str]] = {}
@@ -229,36 +227,32 @@ def _validate_modes_obj(obj: object) -> Dict[str, List[str]]:
                 f"primitive_modes[{prim!r}] must include 'random' (the universal anchor)"
             )
         out[prim] = list(lst)
-    return out
-
-
-def load_primitive_modes(path: Optional[Path] = None) -> PrimitiveModes:
-    """Load the stim_mode vocabulary (JSON/YAML; defaults to the shipped bundle)."""
-    p = Path(path) if path is not None else DATA_DIR / "primitive_modes.json"
-    return PrimitiveModes(modes=_validate_modes_obj(_read_structured(p, "primitive_modes")))
+    return PrimitiveModes(modes=out)
 
 
 # ---------------------------------------------------------------------------
-# compounds/<name>.json — tool-agnostic composition
+# compounds/<name>.json: the elements of a compound
 # ---------------------------------------------------------------------------
 
-#: Instance-multiplier domains for CompoundElement.per: the emitter multiplies
-#: an element's count by the run's array / core count (or nothing for "chip").
+#: Values of CompoundElement.per. The emitter multiplies the count of an
+#: element by the number of arrays or cores of the run. "chip" has no multiplier.
 ELEMENT_PER = ("array", "core", "chip")
 
-#: Compound.default_mode: what an action charges elements it does not name.
-#: "idle" (classic, cycle-domain compounds) or "gated" — omitted elements are
-#: simply not charged (bank-/clock-gated memories; leakage covers them).
+#: Values of Compound.default_mode. It sets the charge for the elements that
+#: an action does not name.
+#: "idle": each such element is charged one idle (cycle-domain compounds).
+#: "gated": such elements are not charged. This is for bank-gated or
+#: clock-gated memories. The leakage term includes them.
 DEFAULT_MODES = ("idle", "gated")
 
 
 @dataclass(frozen=True)
 class CompoundElement:
     name: str
-    primitive: str                       # concrete or "{mac_primitive}"
-    config: object                       # "{mac_config}" | dict | concrete
+    primitive: str                       # a primitive name or "{mac_primitive}"
+    config: object                       # "{mac_config}", a dict, or a literal
     count: Union[int, str]               # e.g. "lanes*lanes"
-    per: str = "array"                   # instance multiplier domain
+    per: str = "array"                   # multiplier of the instance count
 
     @property
     def primitive_is_template(self) -> bool:
@@ -270,7 +264,7 @@ class Compound:
     name: str
     select_primitive_by: Optional[str]
     elements: Dict[str, CompoundElement]
-    default_mode: str = "idle"           # omitted-element charge: idle | gated
+    default_mode: str = "idle"           # charge for elements not named: idle | gated
 
 
 def _parse_compound(name: str, obj: Mapping) -> Compound:
@@ -319,7 +313,10 @@ def _parse_compound(name: str, obj: Mapping) -> Compound:
 
 
 def load_compounds(path: Path) -> Dict[str, Compound]:
-    """Load a compounds JSON file (one file may declare several compounds)."""
+    """Load one compounds file (JSON or YAML).
+
+    One file can declare more than one compound.
+    """
     obj = _read_structured(Path(path), "compounds file")
     if not isinstance(obj, dict):
         raise CompoundBundleError("compounds file: top-level must be an object")
@@ -334,16 +331,21 @@ def load_compounds(path: Path) -> Dict[str, Compound]:
 
 
 # ---------------------------------------------------------------------------
-# projections/<tool>.json — native action -> element stim_mode
+# projections/<tool>.json: simulator action -> stim_mode of each element
 # ---------------------------------------------------------------------------
 
-#: How a count_from stat converts into charge events for the target elements:
-#: "words" (raw count x scale), "bytes" (/ the element's word bytes), "vectors"
-#: (x lanes x operand bits / the element's word bits), "flits" (NoC flit count;
-#: per-element-kind conversion — buffer word accesses, valid-fraction-normalized
-#: crossbar cycles, or link crossings). bytes/vectors apply only to
-#: capacity-resolved memory elements; flits additionally to crossbar/d2dlink
-#: (the emitter knows word widths, port counts and the flit size — §3.9).
+#: How a count_from stat becomes charge events for the target elements:
+#:
+#: - "words": the raw count x scale.
+#: - "bytes": the count / the word bytes of the element.
+#: - "vectors": the count x lanes x operand bits / the word bits of the element.
+#: - "flits": a NoC flit count. The conversion depends on the element type:
+#:   buffer word accesses, crossbar cycles normalized by the valid fraction,
+#:   or link crossings.
+#:
+#: "bytes" and "vectors" apply only to capacity-resolved memory elements.
+#: "flits" applies to those elements and also to crossbar and d2dlink elements.
+#: The emitter knows the word widths, the port counts, and the flit size (§3.9).
 COUNT_UNITS = ("words", "bytes", "vectors", "flits")
 
 
@@ -366,20 +368,21 @@ class Projection:
     tool: str
     # compound name -> action name -> ActionMapping
     compounds: Dict[str, Dict[str, ActionMapping]]
-    #: stat name -> one-line justification. Coverage-warning WAIVERS (lint/CDC
-    #: waiver-file sense): the stat IS collected, and the author deliberately
-    #: does not charge it. The emitter's coverage check reports these as INFO
-    #: instead of WARNING — the WARNING tier then means "genuinely
-    #: uninterpreted, possibly forgotten".
+    #: stat name -> one-line reason. These are waivers of the coverage warning,
+    #: with the same meaning as in a lint or CDC waiver file. The reader
+    #: collects the stat, but the projection does not charge it. The coverage
+    #: check of the emitter shows these stats as notes (INFO), not as warnings.
+    #: A coverage warning then means that a stat has no mapping and is
+    #: possibly forgotten.
     waivers: Dict[str, str] = field(default_factory=dict)
-    #: Modeling-scope boundary declarations: hardware whose activity the
-    #: harness readers never even collect (so no stat exists to waive),
-    #: reported once per run as INFO.
+    #: Declarations of hardware that is outside the model scope. The harness
+    #: readers do not collect its activity, thus there is no stat to waive.
+    #: Each run shows these declarations one time as notes (INFO).
     out_of_scope: List[str] = field(default_factory=list)
-    #: Planned third-party tool integrations (external power-model API calls)
-    #: not implemented yet. Unlike ``out_of_scope`` these are TEMPORARY gaps,
-    #: so each entry is reported as a WARNING every run until the integration
-    #: lands — then the entry is deleted and replaced by real charging.
+    #: Planned integrations of third-party tools (calls to an external power
+    #: model) that are not implemented. These are temporary gaps, and
+    #: ``out_of_scope`` entries are permanent. Thus each entry gives a warning
+    #: in each run. Delete the entry when the integration is complete.
     third_party_pending: List[str] = field(default_factory=list)
 
 
@@ -436,8 +439,8 @@ def load_projection(path: Path) -> Projection:
             parsed[aname] = _parse_action(cname, aname, aspec)
         compounds[cname] = parsed
 
-    # Short-lived legacy spellings (2026-07-26, pre-rename): error with a hint,
-    # never a silent alias — same policy as the canonical attribute names.
+    # An old key name causes an error with a hint. The loader does not accept
+    # it as an alias. The NPUWattch attribute names use the same policy.
     for legacy, current in (("ignores", "waivers"), ("notes", "out_of_scope")):
         if legacy in obj:
             raise CompoundBundleError(
@@ -456,7 +459,7 @@ def load_projection(path: Path) -> Projection:
                 f"non-empty string (say WHY the stat is deliberately not charged)"
             )
         waivers[stat] = " ".join(justification.split())
-    # A stat both charged and waived is a contradiction — definition bug.
+    # A stat that is charged and also waived is an error in the definition file.
     for cname, actions in compounds.items():
         for aname, mapping in actions.items():
             if mapping.count_from.stat in waivers:
@@ -482,7 +485,7 @@ def load_projection(path: Path) -> Projection:
 
 
 # ---------------------------------------------------------------------------
-# static validation (schema §5) — no MacConfig needed
+# static checks (schema §5): a MacConfig is not necessary
 # ---------------------------------------------------------------------------
 
 def validate_projection(
@@ -490,13 +493,15 @@ def validate_projection(
     compounds: Mapping[str, Compound],
     primitive_modes: PrimitiveModes,
 ) -> None:
-    """Enforce schema §5 as far as is possible without a resolved primitive.
+    """Do the checks of schema §5 that are possible before resolution.
 
-    - every referenced compound exists;
-    - every projection element exists in the compound;
-    - for elements with a *concrete* primitive, ``(primitive, mode)`` is
-      characterized now; for the templated MAC PE, the mode must be valid for at
-      least one MAC primitive (a typo guard — the exact check runs at resolution).
+    - Each compound that the projection refers to must exist.
+    - Each element in the projection must exist in the compound.
+    - For an element with a fixed primitive, ``(primitive, mode)`` must be
+      characterized.
+    - For the templated MAC PE, the mode must be valid for at least one MAC
+      primitive. This check finds typing errors. The exact check occurs at
+      resolution.
     """
     for cname, actions in projection.compounds.items():
         if cname not in compounds:
@@ -524,7 +529,7 @@ def validate_projection(
 
 
 # ---------------------------------------------------------------------------
-# per-kernel resolution against a concrete MacConfig
+# resolution for one kernel with a MacConfig
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -532,8 +537,8 @@ class ResolvedElement:
     name: str
     primitive: str
     config: object
-    count: int                           # instance count (for area/leak)
-    per: str = "array"                   # instance multiplier domain
+    count: int                           # number of instances (for area and leakage)
+    per: str = "array"                   # multiplier of the instance count
 
 
 @dataclass(frozen=True)
@@ -546,13 +551,17 @@ class ResolvedActionElement:
 
 @dataclass(frozen=True)
 class ActionResolution:
-    """A native action resolved for one kernel: which stat drives it, the scale,
-    and each element's (primitive, config, stim_mode).
+    """One simulator action, resolved for one kernel.
 
-    Per-window energy = stat_value(stat) * scale
-                        * sum_element per_cycle_energy(primitive, config, stim_mode).
-    Element ``count`` (for area/leak) lives on the resolved compound, NOT here —
-    energy uses count_from, area/leak use element.count; the two never multiply.
+    It gives the stat that supplies the event count, the scale, and the
+    (primitive, config, stim_mode) of each element.
+
+    Energy of one window = stat_value(stat) * scale
+                           * sum_element per_cycle_energy(primitive, config, stim_mode).
+
+    The element ``count`` (for area and leakage) is in the resolved compound,
+    not in this object. Energy uses count_from. Area and leakage use
+    element.count. Do not multiply the two.
     """
 
     action: str
@@ -564,53 +573,67 @@ class ActionResolution:
 
 def _symbols_for(mac_config,
                  extra_symbols: Optional[Mapping[str, int]] = None) -> Dict[str, int]:
-    """Expression symbols: the MAC scalars, plus any harness-supplied extras
-    (integer run-config keys — a bundle is harness-owned, so its compounds may
-    reference that harness's config vocabulary). MAC symbols win on collision."""
+    """Return the expression symbols.
+
+    The symbols are the MAC scalars and the symbols that the harness supplies
+    (integer run-config keys). A bundle belongs to one harness, thus its
+    compounds can use the config keys of that harness. If two symbols have
+    the same name, the MAC symbol has priority.
+
+    ``mac_config`` can be ``None`` for a design that has no MAC configuration
+    (a Timeloop run). Then there are no MAC symbols.
+    """
     symbols = {k: int(v) for k, v in (extra_symbols or {}).items()
                if isinstance(v, int) and not isinstance(v, bool)}
-    symbols.update(
-        {"lanes": int(mac_config.lanes), "bitwidth": int(mac_config.operand_dtype.bits)}
-    )
+    if mac_config is not None:
+        symbols.update(
+            {"lanes": int(mac_config.lanes),
+             "bitwidth": int(mac_config.operand_dtype.bits)}
+        )
     return symbols
-
-
-def _resolve_config(cfg: object, mac_config, symbols: Mapping[str, int], where: str) -> object:
-    if cfg == "{mac_config}":
-        return dict(mac_config.primitive_config)
-    if _is_placeholder(cfg):
-        raise CompoundBundleError(f"{where}: unknown placeholder {cfg!r}")
-    if isinstance(cfg, dict):
-        resolved = {}
-        for k, v in cfg.items():
-            if isinstance(v, bool):
-                resolved[k] = v
-            elif isinstance(v, int):
-                resolved[k] = v
-            elif isinstance(v, str) and not _is_placeholder(v) and _is_scalar_expr(v):
-                # A bare identifier that is not a known symbol is a *literal*
-                # string config (e.g. an mxfpmac format name "fp8_e4m3");
-                # anything with operators must fully resolve or it errors.
-                bare = v.strip()
-                if ("+" not in v and "*" not in v
-                        and not bare.isdigit() and bare not in symbols):
-                    resolved[k] = v
-                else:
-                    resolved[k] = _resolve_scalar_expr(v, symbols, f"{where}.{k}")
-            else:
-                resolved[k] = v  # non-expression string / list / None
-        return resolved
-    return cfg
 
 
 def _resolve_element(
     compound_name: str, el: CompoundElement, mac_config,
     symbols: Mapping[str, int],
 ) -> ResolvedElement:
+    where = f"compound {compound_name}.{el.name}.config"
+    cfg = el.config
+    if mac_config is None and (el.primitive_is_template
+                               or cfg == "{mac_config}"):
+        raise CompoundBundleError(
+            f"compound {compound_name}.{el.name}: the templates "
+            f"{{mac_primitive}} and {{mac_config}} need a MAC configuration, "
+            f"which this run does not have")
     primitive = mac_config.primitive if el.primitive_is_template else el.primitive
-    config = _resolve_config(
-        el.config, mac_config, symbols, f"compound {compound_name}.{el.name}.config"
-    )
+    if cfg == "{mac_config}":
+        config: object = dict(mac_config.primitive_config)
+    elif _is_placeholder(cfg):
+        raise CompoundBundleError(f"{where}: unknown placeholder {cfg!r}")
+    elif isinstance(cfg, dict):
+        config = {}
+        for k, v in cfg.items():
+            if isinstance(v, bool):
+                config[k] = v
+            elif isinstance(v, int):
+                config[k] = v
+            elif (isinstance(v, str) and not _is_placeholder(v)
+                  and all(f.strip().isdigit() or _SYMBOL_RE.match(f.strip())
+                          for term in v.split("+") for f in term.split("*"))):
+                # An identifier that is not a known symbol is a literal string
+                # value (for example, an mxfpmac format name "fp8_e4m3").
+                # An expression with operators must resolve fully. If not, it
+                # causes an error.
+                bare = v.strip()
+                if ("+" not in v and "*" not in v
+                        and not bare.isdigit() and bare not in symbols):
+                    config[k] = v
+                else:
+                    config[k] = _resolve_scalar_expr(v, symbols, f"{where}.{k}")
+            else:
+                config[k] = v  # a string that is not an expression, a list, or None
+    else:
+        config = cfg
     count = _resolve_scalar_expr(
         el.count, symbols, f"compound {compound_name}.{el.name}.count"
     )
@@ -622,7 +645,10 @@ def resolve_compound(
     compound: Compound, mac_config,
     extra_symbols: Optional[Mapping[str, int]] = None,
 ) -> Dict[str, ResolvedElement]:
-    """Resolve placeholders/symbols to a concrete element table for one kernel."""
+    """Resolve the placeholders and the symbols of a compound for one kernel.
+
+    Return the table of resolved elements.
+    """
     symbols = _symbols_for(mac_config, extra_symbols)
     return {
         ename: _resolve_element(compound.name, el, mac_config, symbols)
@@ -638,15 +664,21 @@ def resolve_action(
     primitive_modes: PrimitiveModes,
     extra_symbols: Optional[Mapping[str, int]] = None,
 ) -> ActionResolution:
-    """Resolve one native action for a kernel, enforcing the vocabulary at the
-    *resolved* primitive.
+    """Resolve one simulator action for one kernel.
 
-    Elements omitted from the action's ``elements`` map follow the compound's
-    ``default_mode``: ``idle`` charges them one idle each (schema §5, complete
-    accounting for cycle-domain compounds); ``gated`` excludes them entirely
-    (clock-gated memories — their leakage is charged over time, never per
-    event). A mode the resolved primitive can't do (e.g. ``mxfpmac`` +
-    ``hold_b``) raises — honest, rather than silently mischarging.
+    The function checks each stim_mode against the resolved primitive.
+
+    If the ``elements`` map of the action does not name an element, the
+    ``default_mode`` of the compound applies:
+
+    - ``idle``: the element is charged one idle. This gives complete
+      accounting for cycle-domain compounds (schema §5).
+    - ``gated``: the element is not charged. This is for clock-gated
+      memories. Their leakage is charged for the time, not for each event.
+
+    If the resolved primitive does not have the mode (for example ``mxfpmac``
+    with ``hold_b``), the function raises an error. It does not charge an
+    incorrect mode.
     """
     actions = projection.compounds.get(compound.name)
     if actions is None or action not in actions:
@@ -665,7 +697,7 @@ def resolve_action(
         mode = mapping.elements.get(ename)
         if mode is None:
             if compound.default_mode == "gated":
-                continue        # gated: neither charged nor resolved
+                continue        # gated: not charged and not resolved
             mode = "idle"
         re = _resolve_element(compound.name, el, mac_config, symbols)
         primitive_modes.require(re.primitive, mode)
@@ -681,22 +713,25 @@ def resolve_action(
 
 
 # ---------------------------------------------------------------------------
-# bundle loading (a harness-definition directory)
+# bundle loading (the definitions directory of a harness)
 # ---------------------------------------------------------------------------
 #
-# A "bundle" is a directory a harness (or a user) authors:
+# A bundle is a directory that a harness or a user writes:
 #
-#     <root>/compounds/<name>.{json,yaml}       the compounds this harness models
-#     <root>/projections/<tool>.{json,yaml}     native action -> stim_mode maps
-#     <root>/primitive_modes.{json,yaml}        (optional) override the contract
+#     <root>/compounds/<name>.{json,yaml}       the compounds of this harness
+#     <root>/projections/<tool>.{json,yaml}     simulator action -> stim_mode maps
+#     <root>/primitive_modes.{json,yaml}        (optional) replaces the stim_mode table
 #
-# The stim_mode vocabulary (``primitive_modes``) is the SYSTEM contract shipped
-# with the interpreter under ``compounds/data/``; a bundle overrides it only if it
-# ships its own file (i.e. it characterized new modes).
+# The default stim_mode table (``primitive_modes``) is in ``compounds/data/``
+# of this package. A bundle replaces it only if the bundle has its own file.
+# That is necessary only if the bundle author characterized new modes.
 
 def _structured_files(directory: Path) -> List[Path]:
-    """All ``*.json``/``*.yaml``/``*.yml`` files in a directory, sorted, deduped
-    by stem (a ``.json`` and ``.yaml`` of the same name is an authoring error)."""
+    """Return the ``*.json``, ``*.yaml``, and ``*.yml`` files of a directory, sorted.
+
+    Two files with the same stem (for example a ``.json`` and a ``.yaml``)
+    cause an error.
+    """
     directory = Path(directory)
     if not directory.is_dir():
         return []
@@ -715,51 +750,23 @@ def _structured_files(directory: Path) -> List[Path]:
 
 
 def load_compounds_dir(directory: Path) -> Dict[str, Compound]:
-    """Load every compounds file (JSON/YAML) in a directory."""
+    """Load all compounds files (JSON or YAML) in a directory."""
     out: Dict[str, Compound] = {}
     for p in _structured_files(directory):
         out.update(load_compounds(p))
     return out
 
 
-def _resolve_named(directory: Path, name: str) -> Optional[Path]:
-    for suf in _STRUCTURED_SUFFIXES:
-        cand = Path(directory) / f"{name}{suf}"
-        if cand.is_file():
-            return cand
-    return None
-
-
-def load_bundle(root: Path) -> "Bundle":
-    """Load a harness-definition directory into a validated ``Bundle``.
-
-    Reads ``<root>/compounds/`` + ``<root>/projections/``; ``primitive_modes``
-    comes from ``<root>`` if the bundle ships one, else the system contract. The
-    returned bundle is checked (``Bundle.validate``) before it is handed back.
-    """
-    root = Path(root)
-    compounds = load_compounds_dir(root / "compounds")
-    projections = {
-        p.stem: load_projection(p) for p in _structured_files(root / "projections")
-    }
-    pm_path = _resolve_named(root, "primitive_modes")
-    modes = load_primitive_modes(pm_path) if pm_path else load_primitive_modes()
-    bundle = Bundle(compounds=compounds, projections=projections,
-                    primitive_modes=modes)
-    bundle.validate()
-    return bundle
-
-
 @dataclass(frozen=True)
 class Bundle:
-    """A harness's definitions: its compounds + projections + the mode vocabulary."""
+    """The definitions of one harness: its compounds, its projections, and the stim_mode table."""
 
     compounds: Dict[str, Compound]
     projections: Dict[str, Projection]
     primitive_modes: PrimitiveModes
 
     def validate(self) -> None:
-        """Statically validate every projection against the compounds + vocabulary."""
+        """Check each projection against the compounds and the stim_mode table."""
         for proj in self.projections.values():
             validate_projection(proj, self.compounds, self.primitive_modes)
 

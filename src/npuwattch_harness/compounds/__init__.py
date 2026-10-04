@@ -1,4 +1,4 @@
-"""Compound-component + action-projection contract (loaders + validation)."""
+"""Compounds and projections: the loaders, the checks, and the resolution."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from .loader import (
     Projection,
     ResolvedActionElement,
     ResolvedElement,
-    load_bundle,
     load_compounds,
     load_compounds_dir,
     load_primitive_modes,
@@ -40,7 +39,6 @@ __all__ = [
     "Projection",
     "ResolvedActionElement",
     "ResolvedElement",
-    "load_bundle",
     "load_compounds",
     "load_compounds_dir",
     "load_primitive_modes",

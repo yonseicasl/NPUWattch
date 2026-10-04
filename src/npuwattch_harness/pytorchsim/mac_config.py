@@ -1,39 +1,38 @@
-"""Infer a systolic-array MAC's NPUWattch primitive config from PyTorchSim artifacts.
+"""Infer the MAC configuration of a systolic array from PyTorchSim artifacts.
 
-This is workstream B, item #2 of the integration plan. PyTorchSim changes the
-hardware configuration at runtime, so the MAC's datatype parameters are *not* in
-a static description — they must be read out of each compiled kernel's
-**codegen artifacts** (not the activity trace):
+PyTorchSim can change the hardware configuration at runtime. Thus a static
+description does not give the datatype parameters of the MAC. This module reads
+them from the **codegen artifacts** of each compiled kernel:
 
     outputs/<hash>/meta.txt      torch dtype + shape of every kernel arg
     outputs/<hash>/*.mlir        func.func @kernel signature + `linalg.matmul`
 
-The activity trace (``m5out/stats.txt``, TOGSim log) is a *separate* input that
-drives per-window activity counts for the projection; it says nothing about the
-MAC's bit-widths. See ``docs/COMPOUND_SCHEMA.md`` §2.1.
+The activity trace (``m5out/stats.txt`` and the TOGSim log) is a *different*
+input. It supplies the activity counts of each window for the projection. It
+does not give the bit widths of the MAC. See ``docs/COMPOUND_SCHEMA.md`` §2.1.
 
-What is derivable per kernel (verified against the five local-run samples):
+The parameters that the module gets for each kernel:
 
 ============ ============================================================
 MAC param    source (primary -> cross-check)
 ============ ============================================================
 operand      ``linalg.matmul ins`` element type -> meta.txt inputs
-             -> func.func signature (used to catch a failed int lowering)
+             -> func.func signature (to find a failed int lowering)
 accumulator  ``linalg.matmul outs`` element type -> meta.txt output buffer
-lanes        config (``vpu_num_lanes`` / ``systolicArrayWidth``) — passed in
-pipeline     NOT derivable (array is opLat=1); NPUWattch assumption, default 2
+lanes        run configuration (``vpu_num_lanes`` / ``systolicArrayWidth``)
+pipeline     not in the artifacts (the array has opLat=1); assumed, default 2
 ============ ============================================================
 
-The only assumed datatype parameter is ``pipeline_stages``; everything else is
-read from the kernel. When the ``outputs/`` artifacts are absent (a
-description-only run) the accumulator width falls back to a rule.
+``pipeline_stages`` is the only assumed datatype parameter. The module reads
+all other parameters from the kernel. If the ``outputs/`` artifacts are absent,
+the accumulator width comes from a fallback rule.
 
-Known drift handled explicitly: the Dec-2025 PyTorchSim image cannot lower an
-int matmul, so an ``int8`` GEMM emits a kernel whose func signature is ``i8``
-but whose ``linalg.matmul`` is ``f32`` (a scalar-emulation fallback) and whose
-``meta.txt`` is missing. That disagreement is detected, the tensor (int) dtype
-wins for primitive selection, and the result is flagged low-confidence /
-uncalibrated rather than silently reported as an f32 MAC.
+Limitation: some PyTorchSim builds cannot lower an integer matmul. An ``int8``
+GEMM then gives a kernel with an ``i8`` func signature, an ``f32``
+``linalg.matmul`` (a scalar emulation), and no ``meta.txt``. The module finds
+this disagreement and selects the primitive from the tensor (int) dtype. It
+sets the confidence to low and gives a warning that the energy is not
+calibrated.
 """
 
 from __future__ import annotations
@@ -43,6 +42,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from .definitions import VOCABULARY
 
 __all__ = [
     "DType",
@@ -61,67 +62,42 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 class MacInferenceError(ValueError):
-    """The artifacts are present but a MAC config cannot be inferred from them."""
+    """The artifacts are present, but they do not give a MAC configuration."""
 
 
 class NotAMatmulKernel(MacInferenceError):
-    """The kernel contains no ``linalg.matmul`` — not a MAC kernel (skip it)."""
+    """The kernel has no ``linalg.matmul``. It is not a MAC kernel, thus skip it."""
 
 
 @dataclass(frozen=True)
 class DType:
-    """A scalar numeric type, normalized across MLIR and torch spellings."""
+    """A scalar numeric type. MLIR and torch spellings map to one canonical name."""
 
     kind: str                       # "float" | "int"
     bits: int                       # total width in bits
     canonical: str                  # "f32", "bf16", "i8", ...
     exp_bits: Optional[int] = None  # float only
     mantissa_bits: Optional[int] = None
-    signed: bool = True             # int only (floats: True/ignored)
+    signed: bool = True             # int only (ignored for floats)
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.canonical
 
 
-# Canonical float formats: canonical -> (bits, exp_bits, mantissa_bits).
-_FLOAT_FORMATS: Dict[str, Tuple[int, int, int]] = {
-    "f64": (64, 11, 52),
-    "f32": (32, 8, 23),
-    "f16": (16, 5, 10),
-    "bf16": (16, 8, 7),
-    "f8e4m3": (8, 4, 3),
-    "f8e5m2": (8, 5, 2),
-}
-
-# Spelling -> canonical, covering MLIR element types and torch dtype names.
-_DTYPE_ALIASES: Dict[str, str] = {
-    # floats — MLIR
-    "f64": "f64", "f32": "f32", "f16": "f16", "bf16": "bf16",
-    "f8e4m3fn": "f8e4m3", "f8e4m3": "f8e4m3", "f8e5m2": "f8e5m2",
-    # floats — torch
-    "torch.float64": "f64", "torch.double": "f64",
-    "torch.float32": "f32", "torch.float": "f32",
-    "torch.float16": "f16", "torch.half": "f16",
-    "torch.bfloat16": "bf16",
-    # ints — MLIR (signless) and torch. Width parsed generically below for i<N>.
-    "torch.int64": "i64", "torch.long": "i64",
-    "torch.int32": "i32", "torch.int": "i32",
-    "torch.int16": "i16", "torch.short": "i16",
-    "torch.int8": "i8", "torch.uint8": "u8", "torch.bool": "i1",
-}
-
-
 def parse_dtype(token: str) -> DType:
-    """Normalize an MLIR element type or torch dtype spelling into a ``DType``."""
+    """Convert an MLIR element type or a torch dtype spelling into a ``DType``.
+
+    The vocabulary table supplies the dtype spellings and the float formats.
+    """
     raw = token.strip()
     key = raw.lower()
-    canonical = _DTYPE_ALIASES.get(key, key)
+    canonical = VOCABULARY.dtypes.get(key, key)
 
-    if canonical in _FLOAT_FORMATS:
-        bits, exp, mant = _FLOAT_FORMATS[canonical]
+    if canonical in VOCABULARY.float_formats:
+        bits, exp, mant = VOCABULARY.float_formats[canonical]
         return DType("float", bits, canonical, exp_bits=exp, mantissa_bits=mant)
 
-    # Generic integer: MLIR ``i8``/``i32`` (signless), torch ``iN``/``uN``.
+    # Integer: MLIR ``i8``/``i32`` (no sign), or torch ``iN``/``uN``.
     m = re.fullmatch(r"([iu])(\d+)", canonical)
     if m:
         signed = m.group(1) == "i"
@@ -132,21 +108,20 @@ def parse_dtype(token: str) -> DType:
 
 
 # ---------------------------------------------------------------------------
-# MacConfig — the inference result
+# MacConfig: the result of the inference
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class MacConfig:
-    """Inferred MAC primitive + the exact RTL params it takes.
+    """The MAC primitive of one kernel and its attributes.
 
-    ``primitive_config`` holds only the parameters the chosen primitive's RTL
-    generator accepts (see ``dataset_gen/logic/rtl_gen/SUMMARY.md``):
+    ``primitive_config`` uses NPUWattch attribute names (``npuwattch.naming``):
 
-    - ``fpmac``  -> ``exp_bits``, ``mantissa_bits``, ``pipeline_stages``
-      (accumulation format is internal to the RTL; ``accum_dtype`` is
-      informational only).
-    - ``intmac`` -> ``a_width``, ``b_width``, ``out_width``, ``acc_width``,
-      ``pipeline_stages``.
+    - ``fpmac``: ``number_format``, ``data_width``, ``exponent_bits``,
+      ``mantissa_bits``, ``pipeline_stages``. The accumulation format is
+      internal to the RTL, thus ``accum_dtype`` is only information.
+    - ``intmac``: ``number_format``, ``data_width_a``, ``data_width_b``,
+      ``data_width_out``, ``data_width_acc``, ``pipeline_stages``.
     """
 
     primitive: str                         # "fpmac" | "intmac"
@@ -162,13 +137,13 @@ class MacConfig:
 
 
 def fallback_fp32_mac_config(lanes: int, *, pipeline_stages: int = 2) -> "MacConfig":
-    """The zero-evidence fallback: an fp32 (e8m23) datapath, confidence 'low'.
+    """Return the fallback without evidence: an fp32 (e8m23) datapath, confidence 'low'.
 
-    Used when a run contains NO MAC kernel at all, so there is no kernel to
-    borrow a representative dtype from — the non-MAC windows still need one to
-    resolve the templated vfu/spads elements. fp32 is the SFU fallback
-    convention (§_SFU_FALLBACK_EXP_MANT) applied to the datapath; callers must
-    surface a WARNING (an assumption unbacked by any run evidence).
+    Use it if a run has NO MAC kernel. Then no kernel can supply a dtype, but
+    the non-MAC windows need one to resolve the templated vfu and spads
+    elements. The fp32 format is also the fallback of the SFU
+    (§_SFU_FALLBACK_EXP_MANT). The caller must give a WARNING, because no run
+    evidence supports this assumption.
     """
     operand = parse_dtype("f32")
     primitive, cfg = _select_primitive(operand, operand, lanes, pipeline_stages,
@@ -200,13 +175,13 @@ _META_LINE = re.compile(
 @dataclass(frozen=True)
 class MetaEntry:
     name: str
-    attr: int                  # 1 = input/param, 2 = computed/output buffer
+    attr: int                  # 1 = input or parameter, 2 = computed or output buffer
     dtype: DType
     shape: Tuple[int, ...]
 
 
 def parse_meta(text: str) -> List[MetaEntry]:
-    """Parse a ``meta.txt`` into typed entries. Unparseable lines are skipped."""
+    """Parse a ``meta.txt`` into typed entries. Skip the lines that do not parse."""
     entries: List[MetaEntry] = []
     for line in text.splitlines():
         line = line.strip()
@@ -234,40 +209,37 @@ def parse_meta(text: str) -> List[MetaEntry]:
 # MLIR parsing
 # ---------------------------------------------------------------------------
 
-# element type + dims inside a memref, e.g. "128x256xf32, 1" or "16384xi8".
+# The dimensions and the element type in a memref, for example
+# "128x256xf32, 1" or "16384xi8".
 _MEMREF = re.compile(r"memref<([^>]*)>")
 _FUNC_KERNEL = re.compile(r"func\.func\s+@kernel\s*\(([^)]*)\)")
-# ins(...) and outs(...) may sit on separate lines -> DOTALL.
+# ins(...) and outs(...) can be on different lines, thus DOTALL is necessary.
 _MATMUL = re.compile(
     r"linalg\.matmul\s+ins\((?P<ins>[^)]*)\)\s*outs\((?P<outs>[^)]*)\)",
     re.DOTALL,
 )
 
 
-def _memref_shape_and_elem(inner: str) -> Tuple[Tuple[int, ...], DType]:
-    """``"128x256xf32, 1"`` -> ((128, 256), DType(f32))."""
-    body = inner.split(",", 1)[0].strip()        # drop memory space / layout
-    parts = body.split("x")
-    elem = parts[-1].strip()
-    dims: Tuple[int, ...] = tuple(
-        int(p) for p in parts[:-1] if p.strip().isdigit()
-    )
-    return dims, parse_dtype(elem)
-
-
 def _memrefs(fragment: str) -> List[Tuple[Tuple[int, ...], DType]]:
-    return [_memref_shape_and_elem(m) for m in _MEMREF.findall(fragment)]
+    """Return the shape and element type of each ``memref<...>`` in the text."""
+    out: List[Tuple[Tuple[int, ...], DType]] = []
+    for inner in _MEMREF.findall(fragment):
+        body = inner.split(",", 1)[0].strip()        # remove the memory space and layout
+        parts = body.split("x")
+        dims = tuple(int(p) for p in parts[:-1] if p.strip().isdigit())
+        out.append((dims, parse_dtype(parts[-1].strip())))
+    return out
 
 
 @dataclass(frozen=True)
 class MlirMatmul:
-    func_operand_types: List[DType]                  # every memref elem in signature
+    func_operand_types: List[DType]                  # each memref element type in the signature
     ins: List[Tuple[Tuple[int, ...], DType]]         # matmul input operands
-    outs: Tuple[Tuple[int, ...], DType]              # matmul output/accumulator
+    outs: Tuple[Tuple[int, ...], DType]              # matmul output (accumulator)
 
 
 def parse_mlir(text: str) -> MlirMatmul:
-    """Extract the func signature operand types and the ``linalg.matmul`` operands."""
+    """Get the operand types of the func signature and the ``linalg.matmul`` operands."""
     mm = _MATMUL.search(text)
     if not mm:
         raise NotAMatmulKernel("no `linalg.matmul` found in MLIR")
@@ -292,17 +264,15 @@ def parse_mlir(text: str) -> MlirMatmul:
 # ---------------------------------------------------------------------------
 
 def _fallback_int_acc_width(operand_bits: int, lanes: int) -> int:
-    """acc_width = 2*bitwidth + ceil(log2(lanes)) (COMPOUND_SCHEMA §2.1 fallback)."""
+    """Fallback: data_width_acc = 2*bitwidth + ceil(log2(lanes)) (COMPOUND_SCHEMA §2.1)."""
     lanes = max(1, lanes)
     return 2 * operand_bits + math.ceil(math.log2(lanes)) if lanes > 1 else 2 * operand_bits
 
 
-#: Shallowest fpmac the RTL generator builds. Its ``pipeline_stages`` is the
-#: total latency, split between an embedded fpmul and fpadd that need two
-#: stages each, so 4 is the floor -- and ps=4 (mul 2 + add 2) is structurally
-#: the same datapath the pre-2026-08-05 generator called ps=2, when the extra
-#: stages were output delay banks rather than register cuts. intmac keeps the
-#: 2-5 convention, so the clamp is fpmac-only.
+#: Minimum ``pipeline_stages`` of the fpmac that the RTL generator makes.
+#: ``pipeline_stages`` is the total latency. The fpmac contains an fpmul and an
+#: fpadd, and each needs two stages, thus the minimum is 4 (mul 2 + add 2).
+#: The intmac range is 2 to 5, thus only the fpmac has this clamp.
 _FPMAC_MIN_STAGES = 4
 
 
@@ -316,7 +286,9 @@ def _select_primitive(
     if operand.kind == "float":
         assert operand.exp_bits is not None and operand.mantissa_bits is not None
         return "fpmac", {
-            "exp_bits": operand.exp_bits,
+            "number_format": "fp",
+            "data_width": 1 + operand.exp_bits + operand.mantissa_bits,
+            "exponent_bits": operand.exp_bits,
             "mantissa_bits": operand.mantissa_bits,
             "pipeline_stages": max(pipeline_stages, _FPMAC_MIN_STAGES),
         }
@@ -326,10 +298,11 @@ def _select_primitive(
         else:
             acc_width = _fallback_int_acc_width(operand.bits, lanes)
         return "intmac", {
-            "a_width": operand.bits,
-            "b_width": operand.bits,
-            "out_width": acc_width,
-            "acc_width": acc_width,
+            "number_format": "int",
+            "data_width_a": operand.bits,
+            "data_width_b": operand.bits,
+            "data_width_out": acc_width,
+            "data_width_acc": acc_width,
             "pipeline_stages": pipeline_stages,
         }
     raise MacInferenceError(f"no MAC primitive for operand kind {operand.kind!r}")
@@ -342,10 +315,11 @@ def infer_mac_config(
     meta_text: Optional[str] = None,
     pipeline_stages: int = 2,
 ) -> MacConfig:
-    """Infer a ``MacConfig`` from one kernel's MLIR (+ optional meta.txt).
+    """Infer a ``MacConfig`` from the MLIR of one kernel and, optionally, its meta.txt.
 
-    ``lanes`` is the systolic array width (``vpu_num_lanes`` / ``systolicArrayWidth``),
-    an architecture-level parameter that comes from the config, not the kernel.
+    ``lanes`` is the width of the systolic array (``vpu_num_lanes`` /
+    ``systolicArrayWidth``). It is an architecture parameter from the run
+    configuration, not from the kernel.
     """
     if lanes < 1:
         raise MacInferenceError(f"lanes must be >= 1, got {lanes}")
@@ -367,8 +341,8 @@ def infer_mac_config(
     func_int_types = [dt for dt in mlir.func_operand_types if dt.kind == "int"]
     lowering_ok = True
     if matmul_operand.kind == "float" and func_int_types:
-        # Dec-2025 image: int matmul was not lowered; it fell back to scalar f32.
-        # The kernel's tensor dtype (func signature) is the real intent.
+        # The build did not lower the int matmul and used scalar f32 instead.
+        # The tensor dtype of the kernel (func signature) is the correct operand type.
         operand = min(func_int_types, key=lambda d: d.bits)
         lowering_ok = False
         warnings.append(
@@ -381,7 +355,7 @@ def infer_mac_config(
         operand = matmul_operand
         provenance["operand_dtype"] = "mlir:linalg.matmul ins"
 
-    # meta.txt cross-check for the operand dtype (inputs = attr 1).
+    # Compare the operand dtype with the meta.txt inputs (attr 1).
     meta_inputs = [e for e in meta if e.attr == 1]
     if meta_inputs:
         meta_in_canon = {e.dtype.canonical for e in meta_inputs}
@@ -397,7 +371,7 @@ def infer_mac_config(
         accum = mlir.outs[1]
         provenance["accum_dtype"] = "mlir:linalg.matmul outs"
     else:
-        # matmul outs is the same bogus f32; derive by rule.
+        # The matmul outs type is also the incorrect f32. Use the fallback rule.
         acc_bits = _fallback_int_acc_width(operand.bits, lanes)
         accum = DType("int", acc_bits, f"i{acc_bits}", signed=True)
         provenance["accum_dtype"] = "fallback rule 2*bits+ceil(log2(lanes))"
@@ -409,7 +383,7 @@ def infer_mac_config(
     provenance["lanes"] = "caller (config vpu_num_lanes / systolicArrayWidth)"
     provenance["pipeline_stages"] = "assumed (opLat=1 array; not derivable)"
 
-    # --- gemm tile shape (for activity calibration / reporting) ----------
+    # --- gemm tile shape (for activity calibration and the report) -------
     gemm_shape: Optional[Tuple[int, int, int]] = None
     a_shape, _ = mlir.ins[0]
     b_shape, _ = mlir.ins[1]
@@ -435,14 +409,14 @@ def infer_mac_config(
 
 
 def _find_kernel_mlir(kernel_dir: Path) -> Path:
-    """The kernel MLIR is ``c<hash>.mlir`` (not ``*_llvm.mlir`` / ``*_sample*.mlir``)."""
+    """Return the kernel MLIR ``c<hash>.mlir``, not ``*_llvm.mlir`` or ``*_sample*.mlir``."""
     candidates = [
         p for p in sorted(kernel_dir.glob("*.mlir"))
         if not p.stem.endswith(("_llvm", "_sample", "_sample_llvm"))
     ]
     if not candidates:
         raise MacInferenceError(f"no kernel .mlir in {kernel_dir}")
-    # Prefer the one that actually contains a linalg.matmul; >1 such is ambiguous.
+    # Use the file that has a linalg.matmul. More than one such file is an error.
     matmul = [
         p for p in candidates
         if "linalg.matmul" in p.read_text(encoding="utf-8", errors="ignore")
@@ -463,7 +437,7 @@ def infer_mac_config_from_dir(
     *,
     pipeline_stages: int = 2,
 ) -> MacConfig:
-    """Infer from an ``outputs/<hash>/`` directory (reads meta.txt + kernel MLIR)."""
+    """Infer from an ``outputs/<hash>/`` directory. Read meta.txt and the kernel MLIR."""
     kernel_dir = Path(kernel_dir)
     mlir_path = _find_kernel_mlir(kernel_dir)
     meta_path = kernel_dir / "meta.txt"
@@ -479,7 +453,7 @@ def infer_mac_config_from_dir(
 
 
 # ---------------------------------------------------------------------------
-# meta.txt-only fallback (author delivery bundles ship no kernel MLIR)
+# Fallback with meta.txt only (some run bundles have no kernel MLIR)
 # ---------------------------------------------------------------------------
 
 def infer_mac_config_from_meta(
@@ -488,20 +462,25 @@ def infer_mac_config_from_meta(
     *,
     pipeline_stages: int = 2,
 ) -> MacConfig:
-    """Infer a ``MacConfig`` from ``meta.txt`` alone — the MLIR-less fallback.
+    """Infer a ``MacConfig`` from ``meta.txt`` only. This is the fallback without MLIR.
 
-    Author delivery bundles (``gem5_outputs/<hash>/``) carry only meta.txt +
-    gem5 stats; without ``linalg.matmul`` this path cannot *prove* the kernel is
-    a matmul, so the **caller must gate on TOGSim activity** (systolic cycles /
-    GEMM ops > 0) before calling. What meta.txt supports and what is assumed:
+    Some run bundles (``gem5_outputs/<hash>/``) have only meta.txt and the gem5
+    stats. Without ``linalg.matmul``, this function cannot *prove* that the
+    kernel is a matmul. Thus the **caller must first make sure that the TOGSim
+    activity is not zero** (systolic cycles or GEMM ops > 0).
 
-    - operand dtype ← the 2-D ``attr=1`` (input) entries' torch dtype; 1-D
-      entries (biases) don't vote. Mixed dtypes pick the narrowest, with a
-      warning (same rule as the partial-int-lowering MLIR path).
-    - accumulator ← **assumed**: fp operands accumulate in f32 (f64 stays f64);
-      int uses the ``2·bits + ceil(log2(lanes))`` fallback rule.
-    - gemm_shape ← best-effort from two 2-D inputs sharing a K dim (either
-      orientation); ``None`` when ambiguous. Informational only.
+    What meta.txt supplies and what the function assumes:
+
+    - operand dtype: the torch dtype of the 2-D ``attr=1`` (input) entries.
+      The function ignores 1-D entries (biases). If the dtypes are different,
+      it uses the narrowest and gives a warning. The MLIR path uses the same
+      rule for a partial int lowering.
+    - accumulator: **assumed**. Floating-point operands accumulate in f32, and
+      f64 stays f64. Integer operands use the ``2·bits + ceil(log2(lanes))``
+      fallback rule.
+    - gemm_shape: an estimate from two 2-D inputs that share a K dimension, in
+      one of the two orientations. It is ``None`` if the shape is ambiguous.
+      It is only information.
 
     ``confidence`` is always ``"low"``.
     """
@@ -538,10 +517,10 @@ def infer_mac_config_from_meta(
         operand = next(iter(by_canonical.values()))
     provenance["operand_dtype"] = "meta.txt inputs (attr=1); no kernel MLIR"
 
-    # Accumulator is invisible in meta.txt — assume, and say so.
+    # meta.txt does not give the accumulator. Assume it and record the assumption.
     if operand.kind == "float":
         acc_canonical = "f64" if operand.bits > 32 else "f32"
-        bits, exp, mant = _FLOAT_FORMATS[acc_canonical]
+        bits, exp, mant = VOCABULARY.float_formats[acc_canonical]
         accum = DType("float", bits, acc_canonical, exp_bits=exp, mantissa_bits=mant)
         provenance["accum_dtype"] = f"assumed {acc_canonical} (meta.txt-only)"
     else:
@@ -555,13 +534,13 @@ def infer_mac_config_from_meta(
     provenance["lanes"] = "caller (config vpu_num_lanes / systolicArrayWidth)"
     provenance["pipeline_stages"] = "assumed (opLat=1 array; not derivable)"
 
-    # Best-effort (M, K, N): exactly two 2-D inputs sharing an inner dim.
+    # Estimate (M, K, N) from exactly two 2-D inputs that share an inner dimension.
     gemm_shape: Optional[Tuple[int, int, int]] = None
     if len(inputs_2d) == 2:
         (m0, k0), (b0, b1) = inputs_2d[0].shape, inputs_2d[1].shape
         if k0 == b0:
             gemm_shape = (m0, k0, b1)
-        elif k0 == b1:                       # weights stored transposed
+        elif k0 == b1:                       # the weights are transposed
             gemm_shape = (m0, k0, b0)
 
     warnings.append(

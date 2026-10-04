@@ -1,44 +1,65 @@
-"""Timeloop stats reader — ``timeloop-{model,mapper}.stats.txt`` → §3.3 activity.
+"""Timeloop stats reader: ``timeloop-{model,mapper}.stats.txt`` -> activity rows.
 
-This is the activity half of the Timeloop harness (workstream A). The
-architecture half (:mod:`.ingest`) turns the Accelergy YAML into a native §3.1
-description; this module turns the stats file Timeloop writes for a mapping
-into the native activity rows that drive the same §6 core every other input
-drives. With ``--stats`` a Timeloop run is a **vectored** estimate; without it
-the harness still synthesizes the labeled VECTORLESS default.
+Timeloop writes one stats file for each mapping. This module reads the stats
+and makes the activity rows (manual §3.3). :mod:`.ingest` makes the
+description (manual §3.1) from the Accelergy file. The same energy core
+(manual §6) uses the two results.
 
-**Count conventions** (each one is a place for a silent N× bug — see the
-harness skill's `references/formats.md`):
+With ``--stats``, the activity of the run comes from the stats. Without
+``--stats``, the run is a vectorless run and has the label VECTORLESS.
 
-* Timeloop's per-dataspace ``Scalar reads/fills/updates (per-instance)`` are
-  multiplied by that dataspace's ``Utilized instances (max)`` — the same
-  multiplier Timeloop's own ``Energy (total)`` uses. Idle instances stay in the
-  description (leakage/area) and get no events. ``(total)`` lines are used
-  directly when a stats variant prints them.
-* A *scalar* access moves one word of ``Word bits``; the physical array access
-  our SRAM/regfile/HBM models price moves ``Word bits × Block size`` (the
-  description's ``data_width``, from the same Accelergy convention). Scalar
-  counts are therefore divided by the level's declared ``Block size`` —
-  exactly the amortization behind Timeloop's own per-scalar vs per-vector
-  access energies.
-* Event → stim_mode: ``reads`` → ``read``, ``fills + updates`` → ``write``
-  (a fill is a write into the level); ``Computes (total)`` → one ``op`` per
-  MAC in the **hold_b** weight-stationary mode — the mapping
-  ``definitions/projections/timeloop.yaml`` declares, shared with PyTorchSim.
-  A primitive without the wanted mode falls back (fifo → ``stream``,
-  otherwise ``random``) with a note.
+Count conventions
+-----------------
+An error in one of these conventions multiplies the energy by a constant
+factor, and no message shows the error.
 
-**Level → component binding.** Stats level names are the architecture's leaf
-names; the ingested description uses full dotted names. A level binds to the
-unique component whose dotted name ends with it. Renames and deliberate drops
-go through the optional map YAML (``levels:``/``ignore:``); an unmatched or
-ambiguous level is a WARNING naming the fix, never a crash, and every ignored
-level is listed so nobody silently loses DRAM energy.
+* **Utilized instances.** For each dataspace, Timeloop prints ``Scalar
+  reads/fills/updates (per-instance)``. The reader multiplies each value by
+  the ``Utilized instances (max)`` of that dataspace. Timeloop uses the same
+  multiplier for its ``Energy (total)``. Idle instances stay in the
+  description for leakage and area, and they get no events. If the stats file
+  has ``(total)`` lines, the reader uses these values directly.
+* **Block size.** One scalar access moves one word of ``Word bits``. One
+  physical access of the array moves ``Word bits x Block size`` bits. This is
+  the ``data_width`` of the description, and the SRAM, regfile, and HBM models
+  give the energy of one physical access. Thus the reader divides the scalar
+  counts by the declared ``Block size`` of the level. Timeloop does the same
+  division between its per-vector and per-scalar access energies.
+* **Event and stim_mode.**
 
-Multi-layer runs (a directory of per-layer stats files, sorted by name):
-``mode="windows"`` (default) emits one §3.3 window per layer with cumulative
-cycle offsets — the report plots per-layer energy over time; ``mode="aggregate"``
-sums counts into one window.
+  - ``reads`` -> ``read``
+  - ``fills + updates`` -> ``write``. A fill is a write into the level.
+  - ``Computes (total)`` -> one ``op`` for each MAC, in the ``hold_b``
+    stim_mode (weight-stationary). The PyTorchSim harness uses the same
+    stim_mode.
+  - For a compound component, the projection of the run gives the elements
+    and the stim_mode of each event.
+
+  If a primitive does not have the necessary stim_mode, the reader uses
+  ``stream`` for a fifo and ``random`` for all other primitives. The run
+  gives a note.
+
+Level -> component
+------------------
+A level name in the stats is a leaf name of the architecture. A component name
+in the description is a full dotted name. The reader connects a level to the
+one component whose dotted name ends with the level name.
+
+The optional map file (``--stats-map``) has two keys. ``levels:`` renames a
+level or connects it to more than one component. ``ignore:`` removes a level
+intentionally. A level that has no match, or more than one match, gives a
+warning that tells the user the correction. It does not stop the run. A note
+lists each ignored level, thus the user always knows about energy that is not
+in the run (for example, DRAM energy).
+
+More than one layer
+-------------------
+The input can be a directory that has one stats file for each layer. The
+reader sorts the files by name.
+
+* ``mode="windows"`` (default): one window for each layer. The cycle offsets
+  are cumulative, thus the report shows the energy of each layer against time.
+* ``mode="aggregate"``: one window that contains the sum of all counts.
 """
 
 from __future__ import annotations
@@ -48,7 +69,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ...naming import primitive_of
+from npuwattch.naming import primitive_of
+from npuwattch.user_components import user_components_of
 
 __all__ = [
     "LevelStats",
@@ -59,19 +81,21 @@ __all__ = [
     "read_stats_input",
 ]
 
-#: File pattern a stats directory is scanned for (sorted by name = layer order).
+#: File pattern for a stats directory. The name order is the layer order.
 STATS_GLOB = "*.stats.txt"
 
 # --------------------------------------------------------------------------
-# parsing
+# parser
 # --------------------------------------------------------------------------
 
-#: A level header: ``=== mac ===``. Also matched by the Operational Intensity
-#: section's headers, so collection stops at the first post-level section.
+#: ``_LIST_SUFFIX_RE``: the range suffix of an Accelergy list component, for
+#: example ``[0..3]``. ``_LEVEL_RE``: a level header, for example
+#: ``=== mac ===``. The headers of the Operational Intensity section have the
+#: same form. Thus the parser stops at the first section after the levels.
 _LIST_SUFFIX_RE = re.compile(r"\[[^\]]*\]$")
 _LEVEL_RE = re.compile(r"^===\s+(.+?)\s+===\s*$")
-#: Sections after the per-level blocks (any of them ends level collection —
-#: exact set varies by Timeloop version).
+#: The sections that come after the level blocks. Each one is the end of the
+#: levels. The set of sections is different between Timeloop versions.
 _END_SECTIONS = ("Networks", "Operational Intensity Stats", "Summary Stats")
 
 _INSTANCES_RE = re.compile(r"^\s*Instances\s*:\s*(\d+)")
@@ -81,27 +105,31 @@ _CYCLES_RE = re.compile(r"^\s*Cycles\s*:\s*(\d+)")
 _UTILIZED_RE = re.compile(r"^\s*Utilized instances(?:\s*\(max\))?\s*:\s*(\d+)")
 _COMPUTES_RE = re.compile(
     r"^\s*(?:Actual\s+)?Computes\s*\((total|per-instance)\)\s*:\s*(\d+)")
-_SCALAR_RE = re.compile(       # 'Scalar reads' today, 'Actual scalar reads'
-    r"^\s*(?:Actual\s+)?Scalar\s+(reads|fills|updates)\s*"     # in older
-    r"\((per-instance|total)\)\s*:\s*(\d+)", re.IGNORECASE)    # Timeloops
+_SCALAR_RE = re.compile(       # Old Timeloop versions add
+    r"^\s*(?:Actual\s+)?Scalar\s+(reads|fills|updates)\s*"     # 'Actual'
+    r"\((per-instance|total)\)\s*:\s*(\d+)", re.IGNORECASE)    # in front.
 _SUMMARY_CYCLES_RE = re.compile(r"^\s*Cycles\s*:\s*(\d+)\s*$")
 
 
 @dataclass
 class LevelStats:
-    """One ``=== name ===`` level block, with instance-scaled scalar totals."""
+    """One ``=== name ===`` level block.
+
+    The scalar totals include the instance multiplier.
+    """
 
     name: str
-    instances: Optional[int] = None      # declared (SPECS), for cross-checks
+    instances: Optional[int] = None      # declared count (SPECS), for a check
     block_size: int = 1
     word_bits: Optional[int] = None
     cycles: Optional[int] = None
-    computes: Optional[int] = None       # arithmetic level: total compute count
-    reads: int = 0                       # scalar totals, summed over dataspaces
+    computes: Optional[int] = None       # compute level: total compute count
+    reads: int = 0                       # scalar totals, the sum of all dataspaces
     fills: int = 0
     updates: int = 0
-    #: multiplier for the NEXT per-instance lines (the current dataspace's
-    #: ``Utilized instances (max)``; falls back to the declared instances).
+    #: The multiplier for the subsequent per-instance lines. It is the
+    #: ``Utilized instances (max)`` of the current dataspace. If the dataspace
+    #: has no such line, the parser uses the declared instances.
     _utilized: Optional[int] = field(default=None, repr=False)
 
     @property
@@ -115,7 +143,7 @@ class LevelStats:
 
 @dataclass(frozen=True)
 class TimeloopStats:
-    """One parsed stats file — one candidate §3.3 window."""
+    """One parsed stats file. It can become one window (manual §3.3)."""
 
     path: Path
     cycles: int
@@ -123,7 +151,7 @@ class TimeloopStats:
 
     @property
     def label(self) -> str:
-        """Window label: the file name without ``.stats.txt``."""
+        """The window label: the file name without ``.stats.txt``."""
         name = self.path.name
         for suffix in (".stats.txt", ".txt"):
             if name.endswith(suffix):
@@ -132,13 +160,16 @@ class TimeloopStats:
 
 
 def parse_stats_file(path: Path) -> TimeloopStats:
-    """Parse one ``timeloop-*.stats.txt`` into per-level scalar totals.
+    """Parse one ``timeloop-*.stats.txt`` file into scalar totals for each level.
 
-    Anchors on the level-name lines, not the ``===`` framing (the framing
-    varies across Timeloop versions). Run length comes from the Summary Stats
-    ``Cycles`` line; when a stats variant lacks it, the max per-level cycle
-    count is used (per-level cycles are utilization detail, not the run
-    length — but their max bounds it from below honestly).
+    The parser finds each level by its name line (``=== name ===``). It does
+    not use the other ``===`` frame lines, because they are different between
+    Timeloop versions.
+
+    The run length is the ``Cycles`` line of the Summary Stats section. If the
+    file has no such line, the run length is the largest cycle count of the
+    levels. The cycle count of a level shows utilization, not the run length.
+    But the largest one is a lower limit of the run length.
     """
     levels: List[LevelStats] = []
     current: Optional[LevelStats] = None
@@ -222,10 +253,11 @@ def parse_stats_file(path: Path) -> TimeloopStats:
 
 
 def read_stats_input(path: Path) -> List[TimeloopStats]:
-    """``--stats`` value → parsed stats, one entry per file.
+    """Read the ``--stats`` path. Return one parsed entry for each file.
 
-    A file parses alone; a directory is scanned for ``*.stats.txt`` sorted by
-    name (= layer order, per the NeuroSpector-style per-layer workflow).
+    If the path is a file, the result has one entry. If the path is a
+    directory, the function reads all ``*.stats.txt`` files in name order.
+    The name order is the layer order.
     """
     p = Path(path)
     if p.is_file():
@@ -240,20 +272,20 @@ def read_stats_input(path: Path) -> List[TimeloopStats]:
 
 
 # --------------------------------------------------------------------------
-# level → component binding
+# level -> component
 # --------------------------------------------------------------------------
 
 _EVENTS = ("read", "write", "op")
 _ANY = "*"
-_MULT = "multiplicity"      # reserved binding key: {component: events/access}
+_MULT = "multiplicity"      # reserved key: {component: events for each access}
 
 
 def _targets(level: str, where: str, tgt: Any) -> Tuple[List[str], Dict[str, int]]:
-    """One target spec → (names, {name: events per access}).
+    """One target entry -> (names, {name: events for each access}).
 
-    A target is a component name, or ``{name: N}`` when one access of the
-    level is N events of that component (an 8-lane unit fed one 8-element
-    block per access).
+    A target is a component name or ``{name: N}``. Use ``{name: N}`` if one
+    access of the level is N events of that component. For example, a unit
+    that has 8 lanes gets one block of 8 elements for each access.
     """
     items = tgt if isinstance(tgt, (list, tuple)) else [tgt]
     names: List[str] = []
@@ -280,18 +312,23 @@ def _targets(level: str, where: str, tgt: Any) -> Tuple[List[str], Dict[str, int
 
 
 def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
-    """One ``levels:`` entry → ``{event: [component, ...]}``.
+    """One ``levels:`` entry -> ``{event: [component, ...]}``.
 
-    Accepted forms (2026-09-13 fan-out):
-      ``component``                         all events to one component
-      ``[c1, c2]``                          all events to every listed one
-      ``{read: [c1, c2], write: c1}``       per event (``read``/``write``/``op``)
-    A level's read events can thus also charge the read-data mux / crossbar
-    that sits between its banks and the consumer — the logic the RTL has,
-    declared as its own component, with no hardware invented by the tool.
-    Any target may be ``{name: N}``: each access of the level is N events of
-    that component (e.g. an 8-lane post-processing unit fed 8-element blocks);
-    those multiplicities are kept under the reserved key ``_MULT``.
+    Accepted forms:
+      ``component``                         all events go to one component
+      ``[c1, c2]``                          all events go to each listed one
+      ``{read: [c1, c2], write: c1}``       one list for each event
+                                            (``read``, ``write``, ``op``)
+
+    Thus the read events of a level can also give activity to a read-data mux
+    or a crossbar. This logic is between the banks of the level and the
+    consumer. The user declares it as a component of the description, and
+    NPUWattch adds no hardware.
+
+    A target can be ``{name: N}``. Then each access of the level is N events
+    of that component. For example, a post-processing unit that has 8 lanes
+    gets blocks of 8 elements. The reserved key ``_MULT`` contains these
+    multipliers.
     """
     per_event = isinstance(value, Mapping) and not (
         len(value) == 1 and isinstance(next(iter(value.values())), int))
@@ -321,12 +358,20 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
 
 
 def load_stats_map(path: Path) -> Tuple[Dict[str, Dict[str, List[str]]], set]:
-    """Read the optional map YAML: ``levels: {level: binding}`` plus
-    ``ignore: [level, ...]`` deliberate drops.
+    """Read the optional map file of ``--stats-map``.
 
-    A binding is a component name (rename), a list of names (fan-out: every
-    listed component gets the level's events) or a per-event mapping — see
-    :func:`_normalize_binding`.
+    The file has two keys:
+
+    * ``levels: {level: binding}`` connects a level to components.
+    * ``ignore: [level, ...]`` removes levels intentionally.
+
+    A binding has one of three forms:
+
+    * a component name: the level gets a new name,
+    * a list of names: each listed component gets the events of the level,
+    * a mapping with one list for each event.
+
+    Refer to :func:`_normalize_binding`.
     """
     import yaml
 
@@ -349,17 +394,22 @@ def load_stats_map(path: Path) -> Tuple[Dict[str, Dict[str, List[str]]], set]:
 
 
 def _match_component(level: str, names: Sequence[str]) -> Tuple[Optional[str], List[str]]:
-    """Bind a stats level name to a description component name.
+    """Find the component of the description for a level name.
 
-    Exact dotted-name match first, then unique leaf-suffix match
-    (``...PE.mac`` ends with ``.mac``); case-insensitive retry for each.
-    Returns ``(match, candidates)`` — no match and >1 candidates are the
-    caller's warnings.
+    The order is:
+
+    1. An exact match of the full dotted name.
+    2. A leaf name match that is unique: ``...PE.mac`` ends with ``.mac``.
+    3. The same leaf name match, but case-insensitive.
+
+    Return ``(match, candidates)``. ``match`` is ``None`` if there is no
+    candidate or more than one candidate. The caller gives the warning.
     """
     if level in names:
         return level, [level]
-    # An Accelergy list component keeps its range in the ingested name
-    # (``wbuf_rd_mux[0..3]``); stats levels and map targets use the base.
+    # The name of an Accelergy list component includes its range, for
+    # example ``wbuf_rd_mux[0..3]``. Stats levels and map targets use the
+    # name without the range.
     base = {n: _LIST_SUFFIX_RE.sub("", n) for n in names}
     for fold in (False, True):
         lv = level.lower() if fold else level
@@ -373,15 +423,18 @@ def _match_component(level: str, names: Sequence[str]) -> Tuple[Optional[str], L
 
 def _mode_for(primitive: str, wanted: str,
               modes_by_prim: Mapping[str, List[str]]) -> str:
-    """The stim_mode to charge, degrading to what the primitive was
-    characterized with (fifo streams; everything has ``random``)."""
+    """Return the stim_mode to use for the primitive.
+
+    If the primitive has no characterized energy for ``wanted``, use the
+    nearest available stim_mode. All primitives have ``random``.
+    """
     modes = modes_by_prim.get(primitive, ["random"])
     if wanted in modes:
         return wanted
     if wanted in ("read", "write") and "stream" in modes:
-        return "stream"                    # fifo: push/pop ≈ the stream mode
+        return "stream"                    # fifo: push and pop use ``stream``
     if wanted == "hold_b" and "hold_scale" in modes:
-        return "hold_scale"                # mxfpmac's weight-stationary mode
+        return "hold_scale"                # weight-stationary mode of mxfpmac
     return "random"
 
 
@@ -391,16 +444,26 @@ def activity_from_stats(
     *,
     mode: str = "windows",
     map_path: Optional[Path] = None,
+    compound_bindings: Optional[Mapping[str, Mapping[str, Sequence[
+        Tuple[str, str, int]]]]] = None,
 ) -> Tuple[List[Dict[str, Any]], int, List[str], List[str], List[str]]:
-    """Timeloop stats + ingested description → native §3.3 rows.
+    """Timeloop stats + description -> activity rows (manual §3.3).
 
-    Returns ``(rows, total_cycles, window_labels, warnings, notes)``.
-    ``mode="windows"`` emits one window per stats file (cumulative cycle
-    offsets); ``mode="aggregate"`` sums everything into one window.
-    A ``--stats-map`` ``levels:`` entry may bind one level to several
-    components, per event (``{read: [wbuf, wbuf_rd_mux]}``): that is how the
-    read-data mux between a banked buffer and its consumer is charged with
-    the buffer's own access count (§4.2 banked buffers).
+    Return ``(rows, total_cycles, window_labels, warnings, notes)``.
+
+    * ``mode="windows"``: one window for each stats file, with cumulative
+      cycle offsets.
+    * ``mode="aggregate"``: one window that contains the sum of all counts.
+
+    A ``levels:`` entry of ``--stats-map`` can connect one level to more than
+    one component for each event, for example ``{read: [wbuf, wbuf_rd_mux]}``.
+    Then the read-data mux between a banked buffer and its consumer gets the
+    access count of the buffer (manual §4.2, banked buffers).
+
+    ``compound_bindings`` is for the components that are compound components:
+    ``component -> event -> [(element component, stim_mode, scale)]``. A
+    level or a map target can name such a component. Its events then go to
+    its elements, as the projection of the run declares.
     """
     if mode not in ("windows", "aggregate"):
         raise ValueError(f"stats mode must be 'windows' or 'aggregate', got {mode!r}")
@@ -408,14 +471,17 @@ def activity_from_stats(
     stats_list = read_stats_input(stats_path)
     level_map, ignore = load_stats_map(map_path) if map_path else ({}, set())
 
+    compound_bindings = compound_bindings or {}
+    compound_names = list(compound_bindings)
     comps = (description.get("npuwattch") or {}).get("components", [])
     names = [str(c["name"]) for c in comps]
     by_name = {str(c["name"]): c for c in comps}
-    # Map targets bind like level names: exact dotted name or unique leaf
-    # suffix (``wbuf_rd_mux`` ← ``system_top_level.wbuf_rd_mux``).
+    # Map targets use the same match rules as level names: the exact dotted
+    # name, or a leaf name that is unique. For example, ``wbuf_rd_mux``
+    # matches ``system_top_level.wbuf_rd_mux``.
     missing_targets: List[str] = []
     resolved_map: Dict[str, Dict[str, List[str]]] = {}
-    level_mult: Dict[str, Dict[str, int]] = {}   # level → {component: events/access}
+    level_mult: Dict[str, Dict[str, int]] = {}   # level -> {component: events for each access}
     for level, binding in level_map.items():
         rb: Dict[str, List[str]] = {}
         resolved: Dict[str, str] = {}
@@ -424,7 +490,9 @@ def activity_from_stats(
                 continue
             rt = []
             for t in targets:
-                match, _ = _match_component(t, names)
+                match, _ = _match_component(t, compound_names)
+                if match is None:
+                    match, _ = _match_component(t, names)
                 if match is None:
                     missing_targets.append(t)
                 else:
@@ -444,19 +512,23 @@ def activity_from_stats(
 
     try:
         from ..compounds import load_primitive_modes
-        modes_by_prim = load_primitive_modes().modes
-    except Exception:                       # advisory, as in the vectorless path
+        modes_by_prim = dict(load_primitive_modes().modes)
+    except Exception:                       # optional, same as a vectorless run
         modes_by_prim = {}
+    # The modes of a user component are the actions that the user gives.
+    for user_name, user_component in user_components_of(description).items():
+        modes_by_prim[user_name] = list(user_component.actions)
 
     warnings: List[str] = []
     notes: List[str] = []
     unmatched: List[str] = []
     ignored_with_activity: List[str] = []
-    mode_fallbacks: Dict[str, str] = {}     # component → charged mode (≠ wanted)
-    fanout: Dict[str, Dict[str, List[str]]] = {}   # level → per-event targets
+    mode_fallbacks: Dict[str, str] = {}     # component -> used stim_mode (not the wanted one)
+    fanout: Dict[str, Dict[str, List[str]]] = {}   # level -> targets for each event
     covered: set = set()
 
-    # windows[i] = {(component, event, mode): count}; parallel cycles list.
+    # windows[i] = {(component, event, mode): count}.
+    # cycles_per_window[i] is the cycle count of the same window.
     windows: List[Dict[Tuple[str, str, str], float]] = []
     cycles_per_window: List[int] = []
     labels: List[str] = []
@@ -465,13 +537,15 @@ def activity_from_stats(
         counts: Dict[Tuple[str, str, str], float] = {}
         for lv in st.levels:
             if not lv.has_activity:
-                continue                     # spatial/dummy levels carry nothing
+                continue                     # a spatial or dummy level has no activity
             if lv.name in ignore:
                 ignored_with_activity.append(lv.name)
                 continue
             binding = level_map.get(lv.name)
             if binding is None:
-                target, cands = _match_component(lv.name, names)
+                target, cands = _match_component(lv.name, compound_names)
+                if target is None:
+                    target, cands = _match_component(lv.name, names)
                 if target is None:
                     if len(cands) > 1:
                         warnings.append(
@@ -484,14 +558,21 @@ def activity_from_stats(
                 binding = {_ANY: [target]}
             all_targets = sorted({t for ts in binding.values() for t in ts})
             mult = level_mult.get(lv.name, {})
-            # The instance cross-check applies to the component the level IS
-            # (its rename, or the target its name matches); extra fan-out
-            # targets (a mux, a post-processing unit) are other hardware.
+            # Compare the instance counts only for the component that is the
+            # level itself. That is the renamed target or the target whose
+            # name matches the level. The other targets (a mux, a
+            # post-processing unit) are different hardware.
             own = ({all_targets[0]} if len(all_targets) == 1 else
                    {t for t in all_targets
                     if _match_component(lv.name, [t])[0] is not None})
             prim_of: Dict[str, str] = {}
             for target in all_targets:
+                if target in compound_bindings:
+                    # A compound component: its elements get the events.
+                    covered.update(
+                        element for bound in compound_bindings[target].values()
+                        for element, _, _ in bound)
+                    continue
                 comp = by_name[target]
                 prim_of[target] = primitive_of(str(comp.get("class", "")))
                 declared = int(comp.get("count", 1))
@@ -509,6 +590,13 @@ def activity_from_stats(
                 if count <= 0:
                     return
                 for target in binding.get(event, binding.get(_ANY, [])):
+                    if target in compound_bindings:
+                        for element, stim, scale in compound_bindings[
+                                target].get(event, ()):
+                            key = (element, event, stim)
+                            counts[key] = (counts.get(key, 0.0) + count * scale
+                                           * mult.get(target, 1))
+                        continue
                     primitive = prim_of[target]
                     charged = _mode_for(primitive, wanted_mode, modes_by_prim)
                     if charged != wanted_mode:
@@ -549,13 +637,13 @@ def activity_from_stats(
         offset = end + 1
     total_cycles = offset
 
-    # -- provenance -------------------------------------------------------
+    # -- notes and warnings about the source of the activity --------------
     n_layers = len(stats_list)
     notes.append(
         f"Timeloop stats: {n_layers} file(s), {total_cycles} cycles, "
         f"{len(covered)}/{len(names)} description component(s) charged "
-        f"({mode} mode); compute charged in the weight-stationary mode the "
-        f"timeloop projection declares (Computes -> hold_b)")
+        f"({mode} mode); compute charged in the weight-stationary mode "
+        f"(Computes -> hold_b)")
     if unmatched:
         warnings.append(
             f"stats level(s) with no matching description component: "
@@ -589,5 +677,5 @@ def activity_from_stats(
         notes.append(
             f"{target}: charged in the '{charged}' stim mode — the wanted "
             f"mode is not characterized for this primitive")
-    warnings = list(dict.fromkeys(warnings))  # per-file repeats say it once
+    warnings = list(dict.fromkeys(warnings))  # remove duplicate warnings
     return rows, total_cycles, labels, warnings, notes

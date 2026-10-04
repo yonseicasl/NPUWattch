@@ -1,27 +1,29 @@
-"""PyTorchSim's instance-hierarchy tree builder (the ``--tree`` view).
+"""Builder of the instance tree of a PyTorchSim run (the ``--tree`` view).
 
-**Builders are harness-owned**: a tree builder is a per-source adapter — its
-job depends entirely on what hierarchy information the source format
-carries, so it lives with that format's owner. PyTorchSim's outputs declare
-no hierarchy at all (flat stats + config scalars), so this builder
-*reconstructs* the structure the emitter interpreted the run as.
+Each harness has its own tree builder, because the hierarchy data is
+different in each source format. The outputs of PyTorchSim do not declare a
+hierarchy. They contain only stats and configuration values. Thus this
+builder makes the tree from the structure that the emitter used for the run.
 
-Per the "never lump" per-instance split, the emitter names one component
-per physical instance, and the tree **enumerates** those instances so every
-leaf matches one row of the energy summary by name:
+The emitter names one component for each physical instance. The tree lists
+the same instances. Thus the name of each leaf is the name of one row of the
+energy summary:
 
     chip → core0 → array0 → pe / w_reg
                  → array1 → …
-                 → vmem (+ tail) / vpu_spad          (per-core elements)
+                 → vmem (+ tail) / vpu_spad          (elements of each core)
          → core1 → …
-         → noc → icnt_xbar / icnt_buf / icnt_d2d     (per-chip compounds)
+         → noc → icnt_xbar / icnt_buf / icnt_d2d     (compounds of the chip)
 
-What is shared (``npuwattch.report.tree``, core) is only the tool-neutral part:
-the ``ArchTreeNode`` structure and the two renderers (``render_text`` for the
-CLI, ``to_dict`` for the R1 HTML report). ``tree_from_native`` stays core
-(native §3.1 is the core's own format) and the Accelergy builder lives with the
-Timeloop harness (``harness/timeloop/tree.py``), whose input format declares
-its hierarchy.
+``npuwattch.report.tree`` contains the parts that all harnesses use:
+
+* ``ArchTreeNode``: the tree structure.
+* ``render_text``: the text view for the CLI.
+* ``to_dict``: the data for the HTML report.
+* ``tree_from_native``: the builder for the native description (§3.1).
+
+The builder for an Accelergy description is in the Timeloop harness
+(``npuwattch_harness/timeloop/tree.py``). That input format declares its hierarchy.
 """
 
 from __future__ import annotations
@@ -39,12 +41,15 @@ def build_hierarchy(
     num_cores: int,
     arrays_per_core: int,
 ):
-    """The enumerated instance structure behind the per-instance description.
-    ``resolved0`` is the MAC compound's resolved elements; ``aux_resolved``
-    maps each aux compound name to its resolved elements. Returns a
-    ``report.tree.ArchTreeNode`` for ``EmittedArch.hierarchy``.
+    """Build the tree of the physical instances of the description.
+
+    ``resolved0`` contains the resolved elements of the MAC compound.
+    ``aux_resolved`` contains the resolved elements of each other compound,
+    with the compound name as the key.
+
+    Return a ``report.tree.ArchTreeNode`` for ``EmittedArch.hierarchy``.
     """
-    from ...report.tree import ArchTreeNode, component_label
+    from npuwattch.report.tree import ArchTreeNode, component_label
 
     comps = {c["name"]: c for c in description["npuwattch"]["components"]}
 
@@ -56,7 +61,7 @@ def build_hierarchy(
                                   comp.get("attributes") or {}),
         )
         tail = comps.get(f"{comp_name}.tail")
-        if tail is not None:                     # capacity remainder macro-set
+        if tail is not None:          # the macros for the remaining capacity
             node.add(ArchTreeNode(
                 "tail",
                 label=component_label(tail.get("class", "sram"),
@@ -84,8 +89,9 @@ def build_hierarchy(
                 if domain(rel) == "core" and int(rel.count) > 0:
                     core.add(leaf(ename, rel, f"core{c}.{ename}"))
 
-    # per-chip elements: the MAC compound's directly under the root, each aux
-    # compound's grouped under a node named after the compound (e.g. "noc").
+    # Elements of the chip. The elements of the MAC compound go directly below
+    # the root. The elements of each other compound go below a node that has
+    # the name of the compound (for example, "noc").
     for ename, rel in resolved0.items():
         if domain(rel) == "chip" and int(rel.count) > 0:
             root.add(leaf(ename, rel, ename))

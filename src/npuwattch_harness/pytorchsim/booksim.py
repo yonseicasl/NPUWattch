@@ -1,37 +1,40 @@
 """BookSim2 NoC topology → NPUWattch NoC symbols + flit traffic stats.
 
-PyTorchSim delegates its interconnect wholesale to BookSim2 (``icnt_type:
-booksim2``): the ``.icnt`` config names a topology, cores' injection ports and
-DRAM channels are the network endpoints, and the log reports only one
-network-wide stats block (averages — no per-router counters). Interpreting that
-one monolithic object as physical components is this reader's job:
+PyTorchSim uses BookSim2 for its full interconnect (``icnt_type: booksim2``).
+The ``.icnt`` config names a topology. The network endpoints are the injection
+ports of the cores and the DRAM channels. The log gives only one stats block
+for the full network: averages, and no counters for each router. This reader
+divides that network into physical components:
 
-* ``fly`` with ``n = 1`` — a single-stage butterfly, i.e. **one k×k crossbar**.
-  The log's embedded ``[config]`` echo carries everything (k, flit_size, buffer
-  depths), so no extra input is needed.
-* ``anynet`` — the ``.net`` graph file (only its *path* is echoed) enumerates
-  routers explicitly. Routers with attached ``node`` endpoints are real
-  switches; routers with **no** nodes and exactly two router links are
-  pass-through hops — the **die-to-die channels** themselves (the author
-  chiplet config: 2 chiplet routers + 8 latency-5 channels between them).
+* ``fly`` with ``n = 1``: a single-stage butterfly, which is **one k×k
+  crossbar**. The ``[config]`` block in the log gives k, flit_size, and the
+  buffer depths. No other input is necessary.
+* ``anynet``: the ``.net`` graph file lists the routers. The log gives only
+  the *path* of this file. A router with attached ``node`` endpoints is a real
+  switch. A router with **no** nodes and exactly two router links is a
+  pass-through hop, which is a **die-to-die channel**. Example: a chiplet
+  configuration with 2 chiplet routers and 8 channels of latency 5 between
+  them.
 
-Traffic: every BookSim packet in these runs is a single flit of ``flit_size``
-bytes (= ``dram_req_size_byte``), and each DRAM request contributes one request
-and one response packet — so total flits = ``2 × (dram_reads + dram_writes)``,
-verified exactly against the log's injected-rate × nodes × cycles on the author
-samples; the log's own "Injected packet length average" is re-checked at runtime
-and scales the flit totals (warned) if a build ever reports ≠ 1 flit/packet.
-Multi-router traversal splits (anynet) are **exact** when the log carries the
-per-core ``NUMA local/remote`` request counters (remote requests cross a
-die-to-die channel and a second switch); logs without them fall back to the
-**uniform-traffic assumption** (warned): with R real routers, ``(R−1)/R`` of
-flits cross a die-to-die channel and traverse two routers.
+Traffic: the model assumes that each BookSim packet is one flit of
+``flit_size`` bytes (= ``dram_req_size_byte``). Each DRAM request gives one
+request packet and one response packet. Thus total flits =
+``2 × (dram_reads + dram_writes)``. The reader compares the assumption with the
+"Injected packet length average" of the log. If the average is not
+1 flit/packet, the reader scales the flit totals and gives a warning.
 
-The output feeds the generic compound mechanism: ``symbols`` become integer
-run-config expression symbols (``icnt_ports``/``icnt_routers``/``icnt_channels``
-plus the raw ``booksim_*`` config ints), ``stats`` become window activity stats
-(``icnt_xbar_flits``/``icnt_d2d_flits``) that the pytorchsim projection's
-``noc`` actions consume.
+For a network with more than one router (anynet), the traversal split is
+**exact** if the log has the ``NUMA local/remote`` request counters of each
+core. A remote request goes through a die-to-die channel and a second switch.
+Without these counters, the reader uses the **uniform-traffic assumption** and
+gives a warning: with R real routers, ``(R−1)/R`` of the flits go through a
+die-to-die channel and two routers.
+
+The output goes to the compound mechanism. ``symbols`` become integer symbols
+for the expressions of the run configuration: ``icnt_ports``, ``icnt_routers``,
+``icnt_channels``, and the ``booksim_*`` config integers. ``stats`` become the
+window activity stats ``icnt_xbar_flits`` and ``icnt_d2d_flits``. The ``noc``
+actions of the pytorchsim projection use them.
 """
 
 from __future__ import annotations
@@ -42,14 +45,14 @@ from typing import Dict, List, Optional, Tuple
 
 __all__ = ["NetGraph", "NetRouter", "NocDerivation", "parse_net_file", "derive_noc"]
 
-#: Topologies this harness can decompose. Everything else (mesh, torus,
-#: multi-stage fly, …) is rejected with a warning — never silently mis-modeled.
+#: The topologies that this harness can divide into components. The harness
+#: rejects all other topologies (mesh, torus, multi-stage fly) with a warning.
 _SUPPORTED = "fly (n = 1) and anynet"
 
 
 @dataclass(frozen=True)
 class NetRouter:
-    """One ``router`` entry of a BookSim anynet ``.net`` file (lines merged)."""
+    """One ``router`` entry of a BookSim anynet ``.net`` file, with its lines merged."""
 
     nodes: Tuple[int, ...] = ()                      # attached endpoint ids
     links: Tuple[Tuple[int, Optional[int]], ...] = ()  # (peer router, latency)
@@ -64,18 +67,18 @@ class NetGraph:
     routers: Dict[int, NetRouter]
 
     def real_routers(self) -> Dict[int, NetRouter]:
-        """Routers with attached endpoints — the actual switches."""
+        """Routers with attached endpoints. These are the real switches."""
         return {i: r for i, r in self.routers.items() if r.nodes}
 
     def channels(self) -> Dict[int, NetRouter]:
-        """Node-less two-link pass-through routers — die-to-die channels."""
+        """Pass-through routers with no nodes and two links. These are the die-to-die channels."""
         return {i: r for i, r in self.routers.items()
                 if not r.nodes and len(r.links) == 2}
 
 
 @dataclass(frozen=True)
 class NocDerivation:
-    """What the NoC contributes to a window: expression symbols + activity."""
+    """The NoC data of a window: expression symbols and activity stats."""
 
     symbols: Dict[str, int] = field(default_factory=dict)
     stats: Dict[str, float] = field(default_factory=dict)
@@ -83,13 +86,15 @@ class NocDerivation:
 
 
 class NetFileError(ValueError):
-    """The anynet ``.net`` file is missing or malformed."""
+    """The anynet ``.net`` file is absent or has an incorrect format."""
 
 
 def parse_net_file(text: str) -> NetGraph:
-    """Parse BookSim's anynet grammar: each line ``router <id>`` followed by any
-    mix of ``node <id>`` and ``router <id> [<latency>]`` tokens; multiple lines
-    for the same router id merge."""
+    """Parse the anynet grammar of BookSim.
+
+    Each line is ``router <id>``, then a mix of ``node <id>`` and
+    ``router <id> [<latency>]`` tokens. Lines with the same router id merge.
+    """
     nodes: Dict[int, List[int]] = {}
     links: Dict[int, List[Tuple[int, Optional[int]]]] = {}
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -130,9 +135,13 @@ def parse_net_file(text: str) -> NetGraph:
 
 
 def _find_net_file(icnt: Dict[str, object], booksim_dir: Path) -> Path:
-    """The ``.net`` file for an anynet config: the echoed ``network_file`` path is
-    the author's absolute path, so match by basename inside ``booksim_dir``; a
-    lone ``*.net`` in the directory is accepted as a fallback."""
+    """Find the ``.net`` file of an anynet config.
+
+    The ``network_file`` path in the log is an absolute path from a different
+    machine. Thus the function uses only the file name and looks in
+    ``booksim_dir``. As a fallback, the function accepts a directory that has
+    exactly one ``*.net`` file.
+    """
     name = Path(str(icnt.get("network_file", ""))).name
     if name:
         cand = booksim_dir / name
@@ -153,14 +162,14 @@ def _find_net_file(icnt: Dict[str, object], booksim_dir: Path) -> Path:
 
 
 def _flit_totals(act) -> Tuple[Optional[float], List[str]]:
-    """Total network flits for a window: 2 × (DRAM reads + writes) × flits/packet.
+    """Total network flits of a window: 2 × (DRAM reads + writes) × flits/packet.
 
-    Each memory request crosses the network twice (request + response). Packets
-    are single flits of ``flit_size`` = ``dram_req_size_byte`` bytes in every
-    sample seen so far; the log's own BookSim stats echo ("Injected packet
-    length average") is the runtime check — when it reports a different average
-    (a future build/config with multi-flit packets), flit totals scale by it
-    with a warning instead of silently undercounting."""
+    Each memory request goes through the network two times (request and
+    response). The model assumes that a packet is one flit of ``flit_size`` =
+    ``dram_req_size_byte`` bytes. The "Injected packet length average" in the
+    log is the check of this assumption. If the log gives a different average,
+    the function scales the flit totals by it and gives a warning.
+    """
     if act.dram_reads is None or act.dram_writes is None:
         return None, [
             "log has no DRAM request totals; NoC structure is emitted but its "
@@ -179,12 +188,15 @@ def _flit_totals(act) -> Tuple[Optional[float], List[str]]:
 
 
 def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
-    """Derive the NoC symbols + stats for one parsed TOGSim log.
+    """Derive the NoC symbols and stats for one parsed TOGSim log.
 
-    Returns empty symbols (→ the ``noc`` compound's elements resolve to nothing
-    and are skipped) with a single explanatory warning whenever the NoC cannot
-    be modeled: no embedded BookSim config, an unsupported topology, or an
-    ``anynet`` run without the ``.net`` file.
+    If the function cannot model the NoC, it returns empty symbols and one
+    warning that gives the cause. The elements of the ``noc`` compound then
+    resolve to nothing, and the harness skips them. The possible causes are:
+
+    * the log has no BookSim config,
+    * the topology is not supported,
+    * an ``anynet`` run has no ``.net`` file.
     """
     icnt = act.icnt_config
     if not icnt:
@@ -253,11 +265,11 @@ def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
         ports = radices[-1]
         routers = len(real) + len(stray)
         channels = len(chans)
-        # Intra- vs inter-die traffic split. EXACT when the log carries the
-        # per-core NUMA request counters (local requests stay on-die, remote
-        # requests cross a die-to-die channel and a second switch — each
-        # request's two packets behave alike). Logs without the NUMA line
-        # (pre-NUMA builds) fall back to the uniform-traffic assumption.
+        # Split of the traffic into intra-die and inter-die. The split is
+        # EXACT if the log has the NUMA request counters of each core. Local
+        # requests stay on the die. Remote requests go through a die-to-die
+        # channel and a second switch. The two packets of a request use the
+        # same path. Without the NUMA line, use the uniform-traffic assumption.
         numa_local = getattr(act, "numa_local", None)
         numa_remote = getattr(act, "numa_remote", None)
         if (routers > 1 and numa_local is not None and numa_remote is not None

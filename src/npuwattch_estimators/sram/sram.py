@@ -1,57 +1,72 @@
-"""SRAM macro estimator — calibrated: measured-table + trained-MLP backed.
+"""SRAM macro estimator. Measured tables and trained MLPs give its costs.
 
-Answers CACTI-style queries (node, depth, width, banks, PVT, activity) with
-energy / leakage / area / timing for an SRAM macro composed from the
-SPICE-measured tiles in ``dataset_gen/sram/datasets/``:
+The estimator answers a CACTI-style query: node, depth, width, banks, PVT, and
+activity. It gives the energy, leakage, area, and timing of an SRAM macro.
+The macro is a composition of the SPICE-measured tiles in
+``dataset_gen/sram/datasets/``:
 
-- ``sram_array.csv``   — the TILE dataset: 6T bitcell tiles (rows x cols) with
-  their read/write energies,
-  leakage, delays, GDS areas.
-- ``sram_decoder.csv`` — the pitch-matched registered row decoder for each
-  tile, including the wordline RC it drives (the array TB uses an ideal WL
-  source, so WL charging energy is booked exactly once, here).
+- ``sram_array.csv`` is the tile dataset. Each row is a 6T bitcell tile
+  (rows x cols) with its read and write energies, leakage, delays, and GDS
+  area.
+- ``sram_decoder.csv`` has the pitch-matched registered row decoder of each
+  tile. The decoder data includes the wordline RC that the decoder drives.
+  The array testbench uses an ideal wordline source. Thus the wordline charge
+  energy is counted one time only, in the decoder data.
 
-Model, by construction of the dataset (no column mux, no WL stitching):
-a macro = banks x (n_vert x n_horz) grid of measured tiles, each tile with its
-own row decoder (x ``n_ports``).  One vertical tile group is selected per access;
-all horizontal tiles fire together.  The array has no clock, so a non-accessed
-array is leakage-only; a non-firing but clocked decoder burns ``dec_idle`` per
-cycle (charged by default, zeroed by ``tile_clock_gating``).
+Model (the dataset has no column mux and no wordline stitching):
 
-Dataset energies are 10 ns-window integrals that INCLUDE their own window's
-leakage; the loader subtracts ``leak_power_mW * window_ns`` once so every
-number downstream is pure dynamic — the S6 aggregator books leakage
-separately via ``leak_power``.
+- A macro is banks x (n_vert x n_horz) measured tiles.
+- Each tile has its own row decoder for each port (x ``n_ports``).
+- One access selects one vertical tile group. All horizontal tiles of the
+  group fire together.
+- The array has no clock. Thus an array without an access has leakage only.
+- A decoder that has a clock but does not fire uses ``dec_idle`` energy each
+  cycle. This energy is charged by default. ``tile_clock_gating`` sets it to
+  zero.
 
-Delay composition (same 50%-VDD wordline threshold on both sheets):
+Dataset energies are integrals across a 10 ns window. Each integral includes
+the leakage of its window. The loader subtracts
+``leak_power_mW * window_ns`` one time. Thus all subsequent values are
+dynamic energy only. The energy aggregation (manual §6) adds the leakage
+separately from ``leak_power``.
+
+Delay composition (the two sheets use the same 50%-VDD wordline threshold):
 
     t_read  = dec_wlen_wl_ns + rd_delay_ns
     t_write = max(dec_wlen_wl_ns, wr_bl_ns) + wr_cell_ns
 
-Vocabulary (fixed 2026-09-13, aligned with CACTI 5+/6 and memory compilers):
-``tile`` = one measured bitcell array with its own row decoder (CACTI:
-sub-array — one access at a time); ``tile group`` = the ``n_horz`` tiles that
-fire together for one word, ``n_vert`` groups per bank, one selected per
-access (a compiler's internal "bank"/segment); ``macro`` = a template
-instance (``sram_64k``/``sram_256k``: decoder + column mux + I/O, what a
-compiler emits and PnR places); ``bank`` = ``mem_banks`` — an independently
-addressable unit with its own decoders that may be accessed concurrently with
-the other banks (CACTI: "each bank can be concurrently accessed and has its own
-address and data bus"); ``port`` = a physical port of the bank's array
-(1RW / 1R1W / 2RW), never the number of concurrent accesses.
+Vocabulary (it agrees with CACTI 5+/6 and with memory compilers):
 
-Units follow the repo convention: pJ / mW / um2 / ns.  ``depth`` is words
-PER BANK (total bits = n_banks * depth * bw, matching the class-mapper
-vocabulary).  This module is stdlib-only and self-contained so
-``EstimatorHost`` can execute it via ``runpy`` in any environment.
+- ``tile``: one measured bitcell array with its own row decoder. CACTI name:
+  sub-array. A tile has one access at a time.
+- ``tile group``: the ``n_horz`` tiles that fire together for one word. A
+  bank has ``n_vert`` groups, and one access selects one group. A memory
+  compiler calls this an internal "bank" or segment.
+- ``macro``: one instance of a template (``sram_64k`` or ``sram_256k``). It
+  has a decoder, a column mux, and I/O. A memory compiler gives a macro and
+  PnR places it.
+- ``bank``: ``mem_banks``. A bank is a unit with its own address and its own
+  decoders. Accesses to different banks can occur concurrently. CACTI: "each
+  bank can be concurrently accessed and has its own address and data bus".
+- ``port``: a physical port of the array of a bank (1RW / 1R1W / 2RW). It is
+  never the number of concurrent accesses.
 
-The per-tile cost lookup sits behind the ``TilePointSource`` seam with two
-implementations selected by the ``source`` feature: ``TableTilePointSource``
-(exact grid lookup + separable PVT k-scaling) and the trained MLP quartets
-(``sram_mlp.py`` + ``<metric>__v1.*`` checkpoints in this directory, trained
-by ``train_sram.py``; metrics in ``eval_report.json``).  ``source="auto"``
-(default) uses the MLPs when the checkpoints are present and torch imports,
-else the table — always with a warning naming the fallback reason.
+Units are those of the repo: pJ / mW / um2 / ns. ``depth`` is words PER BANK.
+Total bits = n_banks * depth * bw, as in the vocabulary of the class mapper.
+This module uses only the standard library and no other module of the repo.
+Thus ``EstimatorHost`` can execute it with ``runpy`` in all environments.
+
+The ``TilePointSource`` interface gives the cost of one tile. The ``source``
+feature selects one of two implementations:
+
+- ``TableTilePointSource``: exact grid lookup and separable PVT k-scaling.
+- The trained MLP quartets: ``sram_mlp.py`` and the ``<metric>__v1.*``
+  checkpoints in this directory. ``train_sram.py`` trains them and writes
+  their metrics to ``eval_report.json``.
+
+``source="auto"`` (the default) uses the MLPs if the checkpoints are present
+and torch imports. If not, it uses the table and gives a warning with the
+cause.
 """
 
 from __future__ import annotations
@@ -67,8 +82,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 # --------------------------------------------------------------------------
-# ESTIMATOR_SPEC — must stay a pure literal (EstimatorHost ast.literal_eval's
-# it without importing this module).
+# ESTIMATOR_SPEC. Keep it a pure literal: EstimatorHost reads it with
+# ast.literal_eval and does not import this module.
 # --------------------------------------------------------------------------
 
 ESTIMATOR_SPEC = {
@@ -139,14 +154,14 @@ ESTIMATOR_SPEC = {
 _ARRAY_CSV = "sram_array.csv"
 _DECODER_CSV = "sram_decoder.csv"
 _DATASET_ENV = "NPUWATTCH_SRAM_DATA"
-_MEAS_WINDOW_NS = 10.0           # array TB op-window length (fixed by the flow)
-_REF_SHAPES = ((16, 8), (64, 16), (256, 32))   # PVT-swept reference shapes
+_MEAS_WINDOW_NS = 10.0           # length of one operation window of the array TB
+_REF_SHAPES = ((16, 8), (64, 16), (256, 32))   # reference shapes with a PVT sweep
 _STIM_MODES = ("read", "write", "idle", "random")
 _OBJECTIVES = ("energy", "area", "delay")
-_PVT_SPREAD_WARN = 1.15          # ref-shape disagreement worth flagging
-_TILE_GLUE_WARN = 4              # tiles/bank above which glue is non-negligible
-_UTIL_WARN = 0.5                 # physical-bit utilization worth flagging
-_DYN_EPS_PJ = 1e-9               # tolerated float dust in leak subtraction
+_PVT_SPREAD_WARN = 1.15          # warn above this spread between reference shapes
+_TILE_GLUE_WARN = 4              # warn above this number of tiles in a bank (glue logic)
+_UTIL_WARN = 0.5                 # warn below this utilization of physical bits
+_DYN_EPS_PJ = 1e-9               # float error tolerance of the leakage subtraction
 
 
 # --------------------------------------------------------------------------
@@ -155,12 +170,12 @@ _DYN_EPS_PJ = 1e-9               # tolerated float dust in leak subtraction
 
 @dataclass(frozen=True)
 class ArrayPoint:
-    """One sram_array.csv row; *_dyn energies have window leakage subtracted."""
+    """One row of sram_array.csv. The *_dyn energies do not include the window leakage."""
 
     rows: int
     cols: int
     wr_same_dyn_pJ: float
-    wr_toggle_dyn_pJ: float      # all `cols` bits flip (toggle_rate = 1.0 row)
+    wr_toggle_dyn_pJ: float      # all `cols` bits flip (the toggle_rate = 1.0 row)
     rd_1to1_dyn_pJ: float
     rd_1to0_dyn_pJ: float
     leak_power_mW: float
@@ -169,7 +184,7 @@ class ArrayPoint:
     wr_cell_ns: float
     array_area_um2: float
     decoder_area_um2: float
-    # provenance / aux measures (not used by the model, surfaced in reports)
+    # Provenance and auxiliary measurements. The model does not use them. The reports show them.
     wr1_init_energy_pJ: float
     wr0_fill_energy_pJ: float
     rd_bl_dev_ns: float
@@ -179,13 +194,13 @@ class ArrayPoint:
 
 @dataclass(frozen=True)
 class DecoderPoint:
-    """One sram_decoder.csv row; *_dyn energies have window leakage subtracted."""
+    """One row of sram_decoder.csv. The *_dyn energies do not include the window leakage."""
 
     rows: int
     cols: int
-    act_dyn_pJ: float            # WL fires, same address
-    flip_dyn_pJ: float           # WL fires, all address bits toggle
-    idle_dyn_pJ: float           # en=0, clk toggles, no WL
+    act_dyn_pJ: float            # the WL fires, same address
+    flip_dyn_pJ: float           # the WL fires, all address bits toggle
+    idle_dyn_pJ: float           # en=0, the clock toggles, no WL fires
     leak_power_mW: float
     wlen_wl_ns: float
     dec_area_um2: float
@@ -200,15 +215,19 @@ class SramDataset:
     pvt_array: Dict[Tuple[str, int, int, float, float], ArrayPoint]
     pvt_dec: Dict[Tuple[str, int, int, float, float], DecoderPoint]
     nominal_vdd_by_node: Dict[str, float]
-    shapes_by_node: Dict[str, Tuple[Tuple[int, int], ...]]   # nominal array∩dec
-    validation_tr05: List[Dict[str, str]]                    # raw rows, tests only
+    shapes_by_node: Dict[str, Tuple[Tuple[int, int], ...]]   # nominal shapes in both sheets
+    validation_tr05: List[Dict[str, str]]                    # raw rows, for tests only
 
 
 _DATASET_CACHE: Dict[str, SramDataset] = {}
 
 
 def _resolve_dataset_dir(features: Optional[Mapping[str, Any]] = None) -> Path:
-    """features['dataset_dir'] > $NPUWATTCH_SRAM_DATA > walk up from __file__."""
+    """Find the dataset directory.
+
+    Priority: features['dataset_dir'], then $NPUWATTCH_SRAM_DATA, then a
+    search in the parent directories of this file.
+    """
     explicit = (features or {}).get("dataset_dir") or os.environ.get(_DATASET_ENV)
     if explicit:
         cand = Path(explicit)
@@ -234,8 +253,11 @@ def _fnum(row: Mapping[str, str], key: str, ctx: str) -> float:
 
 
 def _fnum_or(row: Mapping[str, str], key: str, default: float) -> float:
-    """Lenient parse for convenience-join columns that may be empty (e.g. the
-    array sheet's decoder_area_um2 when the decoder partner run failed)."""
+    """Parse a joined column that can be empty, and return ``default`` if it is.
+
+    Example: ``decoder_area_um2`` of the array sheet is empty if the related
+    decoder run failed.
+    """
     try:
         return float(row[key])
     except (KeyError, TypeError, ValueError):
@@ -243,7 +265,7 @@ def _fnum_or(row: Mapping[str, str], key: str, default: float) -> float:
 
 
 def _dyn(raw_pJ: float, leak_mW: float, window_ns: float, ctx: str) -> float:
-    """Pure dynamic energy: raw window integral minus its own leakage share."""
+    """Return the dynamic energy: the raw window integral minus the leakage of the window."""
     dyn = raw_pJ - leak_mW * window_ns          # mW * ns == pJ
     if dyn < -_DYN_EPS_PJ:
         raise ValueError(
@@ -254,7 +276,7 @@ def _dyn(raw_pJ: float, leak_mW: float, window_ns: float, ctx: str) -> float:
 
 
 def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
-    """Parse + validate both sheets once; cached per resolved directory."""
+    """Parse and check the two sheets. The result is cached for each directory."""
     ddir = Path(dataset_dir) if dataset_dir else _resolve_dataset_dir()
     cache_key = str(ddir.resolve())
     hit = _DATASET_CACHE.get(cache_key)
@@ -272,7 +294,7 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
         for i, row in enumerate(csv.DictReader(fh), start=2):
             ctx = f"{_ARRAY_CSV}:{i}"
             if row.get("transistor") != "hp" or row.get("corner") != "TT":
-                continue                        # future FF/SS/lp data: ignored here
+                continue                        # the model uses only hp, TT rows
             if int(float(row.get("pex", "1"))) != 1:
                 continue
             node = row["node"]
@@ -300,9 +322,10 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
                 wr_bl_ns=_fnum(row, "wr_bl_ns", ctx),
                 wr_cell_ns=_fnum(row, "wr_cell_ns", ctx),
                 array_area_um2=_fnum(row, "total_area_um2", ctx),
-                # convenience join from the decoder sheet; empty when the
-                # decoder partner failed — the model reads decoder area from
-                # the decoder sheet itself, so this is informational only.
+                # This column is a join from the decoder sheet. It is empty if
+                # the related decoder run failed. The model reads the decoder
+                # area from the decoder sheet, thus this value is for
+                # information only.
                 decoder_area_um2=_fnum_or(row, "decoder_area_um2", 0.0),
                 wr1_init_energy_pJ=_fnum(row, "wr1_init_energy_pJ", ctx),
                 wr0_fill_energy_pJ=_fnum(row, "wr0_fill_energy_pJ", ctx),
@@ -392,7 +415,7 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
 
 @dataclass(frozen=True)
 class SramConfig:
-    """Normalized query. ``depth_words`` is words PER BANK."""
+    """The normalized query. ``depth_words`` is words PER BANK."""
 
     node: str
     width_bits: int
@@ -411,11 +434,12 @@ class SramConfig:
     allow_ragged_edge: bool = True
     clock_mhz: Optional[float] = None
     source: str = "auto"                 # auto | table | mlp
-    model_dir: Optional[str] = None      # checkpoint dir override
-    #: Macro template name. When set, the instance is a bank *hierarchy*:
-    #: ``banks`` banks of ``depth_words / template.depth_words`` macros each
-    #: (each macro = one instance of the template), composed by
-    #: ``_bank_hierarchy_costs`` from a single-macro query.
+    model_dir: Optional[str] = None      # replaces the default checkpoint directory
+    #: The name of the macro template. If it is set, the instance is a bank
+    #: *hierarchy*: ``banks`` banks, each with
+    #: ``depth_words / template.depth_words`` macros. Each macro is one
+    #: instance of the template. ``_bank_hierarchy_costs`` calculates the
+    #: costs from the query of one macro.
     template: Optional[str] = None
 
 
@@ -451,27 +475,34 @@ def _fraction(features: Mapping[str, Any], name: str, default: float) -> float:
 
 
 # --------------------------------------------------------------------------
-# SRAM macro templates (capacity-only specs)
+# SRAM macro templates (for components that give only a capacity)
 # --------------------------------------------------------------------------
 #
-# Real macros rarely run the bitline past 256 cells; taller capacities use a
-# column mux instead. When a component gives only a capacity (e.g. a
-# simulator's "scratchpad = 16 MB"), NPUWattch auto-applies these two templates
-# (with a warning) rather than solving a free geometry.
+# The bitline of a real macro is rarely longer than 256 cells. A larger
+# capacity uses a column mux. If a component gives only a capacity (for
+# example, "scratchpad = 16 MB" from a simulator), NPUWattch applies these two
+# templates and gives a warning. It does not solve an unconstrained geometry.
 #
-# Solver mapping: a template pins the tile shape to 256×32 (a measured grid
-# point on every node), so the mux groups appear as vertical tile groups —
-# depth/rows(256) groups of io_bits-wide reads. On an access one group is
-# dynamic and the other (mux-1) groups contribute bitcell leakage + idle
-# decoder energy, which reproduces the col-mux leakage exactly with configs
-# the existing SRAM datasets/MLPs support. Approximation (warned): a real
-# muxed macro fires ONE wordline across all physical columns and precharges
-# every bitline; the tile model gives each group its own short wordline, so
-# shared-WL/BL dynamic energy is underestimated. The column mux itself
-# (pass gates, SA sharing) is not modeled.
+# How the solver uses a template:
+# - A template sets the tile shape to 256×32, a measured grid point of each
+#   node.
+# - Thus the mux groups become vertical tile groups: depth/rows(256) groups,
+#   each with a read width of io_bits.
+# - On an access, one group has dynamic energy. The other (mux-1) groups add
+#   bitcell leakage and idle decoder energy.
+# - This gives the exact column-mux leakage with configurations that the SRAM
+#   datasets and MLPs support.
+#
+# Approximation (the estimator gives a warning):
+# - A real macro with a column mux fires ONE wordline across all physical
+#   columns and precharges all bitlines.
+# - The tile model gives each group its own short wordline. Thus the dynamic
+#   energy of the shared wordline and bitlines is too low.
+# - The model does not include the column mux (pass gates, shared sense
+#   amplifiers).
 
 SRAM_TEMPLATES: Dict[str, Dict[str, int]] = {
-    # name: wordlines × col-mux × IO bits  (capacity = rows · io_bits · mux)
+    # name: wordlines × column mux × IO bits  (capacity = rows · io_bits · mux)
     "sram_64k": {"rows": 256, "col_mux": 4, "io_bits": 64,
                  "depth_words": 1024, "bits": 65536,
                  "tile_rows": 256, "tile_cols": 32},
@@ -483,10 +514,11 @@ _TEMPLATE_SMALL, _TEMPLATE_LARGE = "sram_64k", "sram_256k"
 
 
 def _bank_parts(template: str, n_macros: int) -> List[Dict[str, Any]]:
-    """Group a template's macros into banks of <= 16, largest banks first.
+    """Divide the macros of a template into banks of 16 macros or fewer.
 
-    Full 16-macro banks form one part; a ragged tail becomes its own
-    single-bank part (its access charges only the tail's real siblings).
+    The full banks of 16 macros are one part and come first. The remaining
+    macros are a second part with one bank. An access to that bank charges
+    only the macros that the bank has.
     """
     t = SRAM_TEMPLATES[template]
     parts = []
@@ -503,15 +535,21 @@ def _bank_parts(template: str, n_macros: int) -> List[Dict[str, Any]]:
 
 
 def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Cover an arbitrary capacity with the two macro templates.
+    """Make a set of template macros that holds a given capacity.
 
-    Macro count: fill with large (256k) macros; cover the remainder with
-    small (64k) ones unless that would take a whole large macro's worth (then
-    round up to one more large). Macros are then grouped into banks of at
-    most 16 (``_bank_parts``). Returns ``(parts, warnings)`` where each part is
-    a dict of **canonical component attributes** (`mem_template`, `data_width`,
-    `mem_depth_per_bank` = macros-per-bank x template depth, `mem_banks`)
-    ready for a §3.1 description.
+    Macro count:
+
+    - Use as many large (256k) macros as the capacity fills.
+    - Use small (64k) macros for the remainder.
+    - If the small macros have the capacity of one large macro or more, use
+      one more large macro and no small macros.
+
+    ``_bank_parts`` then divides the macros into banks of 16 macros maximum.
+
+    Return ``(parts, warnings)``. Each part is a dict of component attributes
+    with their NPUWattch names, for a description (manual §3.1):
+    `mem_template`, `data_width`, `mem_depth_per_bank` (macros per bank x
+    template depth), and `mem_banks`.
     """
     if capacity_bits <= 0:
         raise ValueError(f"capacity must be positive, got {capacity_bits} bits")
@@ -548,16 +586,18 @@ def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str
     return parts, warnings
 
 
-#: Max template macros per bank in a template hierarchy.
+#: The maximum number of template macros in one bank of a template hierarchy.
 MAX_MACROS_PER_BANK = 16
 
 
 def _apply_template(features: Mapping[str, Any],
                     warnings: List[str]) -> Mapping[str, Any]:
-    """Expand/validate ``mem_template`` in a features dict (no-op without one).
+    """Apply and check ``mem_template`` in a features dict.
 
-    ``mem_depth_per_bank`` encodes the bank's macro count: it must be
-    ``S x template.depth_words`` with 1 <= S <= 16 (omitted -> one macro).
+    If there is no template, return the features without a change.
+    ``mem_depth_per_bank`` gives the number of macros in a bank. It must be
+    ``S x template.depth_words`` with 1 <= S <= 16. If it is absent, the bank
+    has one macro.
     """
     name = features.get("mem_template")
     if not name:
@@ -606,7 +646,7 @@ def _apply_template(features: Mapping[str, Any],
 def normalize_config(
     features: Mapping[str, Any], ds: SramDataset
 ) -> Tuple[SramConfig, List[str]]:
-    """Validate/canonicalize a features dict against the loaded dataset."""
+    """Check a features dict against the dataset and make the normalized query."""
     warnings: List[str] = []
     features = _apply_template(features, warnings)
 
@@ -640,7 +680,7 @@ def normalize_config(
     banks = _pos_int(banks_raw if banks_raw is not None else 1, "mem_banks")
 
     # Physical array ports = dedicated read + dedicated write + shared RW.
-    # A bare macro with none of the three declared is the common 1RW case.
+    # If a macro gives none of the three, it has one RW port (the usual case).
     r_p = int(features.get("mem_r_ports") or 0)
     w_p = int(features.get("mem_w_ports") or 0)
     rw_p = int(features.get("mem_rw_ports") or 0)
@@ -707,12 +747,12 @@ def normalize_config(
 
 
 # --------------------------------------------------------------------------
-# PVT scaling (separable multiplicative model from the reference shapes)
+# PVT scaling (a separable multiplicative model from the reference shapes)
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class PvtScale:
-    """Multiplicative k-factors vs (TT, nominal V, 25C), per metric class."""
+    """Multiplicative k-factors relative to (TT, nominal V, 25C), one for each metric class."""
 
     k_rd_dyn: float = 1.0
     k_wr_dyn: float = 1.0
@@ -721,7 +761,7 @@ class PvtScale:
     k_leak_dec: float = 1.0
     k_t_read: float = 1.0
     k_t_write: float = 1.0
-    spread: Tuple[Tuple[str, float], ...] = ()   # per metric: max/min across refs
+    spread: Tuple[Tuple[str, float], ...] = ()   # for each metric: max/min across the reference shapes
     warnings: Tuple[str, ...] = ()
 
 
@@ -739,12 +779,15 @@ _PVT_METRICS: Dict[str, Any] = {
     "t_write": (True, True,
                 lambda a, d: max(d.wlen_wl_ns, a.wr_bl_ns) + a.wr_cell_ns),
 }
-_LOG_T_METRICS = ("leak_array", "leak_dec")     # exponential in temperature
+_LOG_T_METRICS = ("leak_array", "leak_dec")     # exponential functions of temperature
 
 
 def _anchor_k(ds: SramDataset, node: str, metric: str,
               dv: float, temp: float) -> Tuple[Optional[float], float]:
-    """(geomean k, max/min spread) across available refs at one measured anchor."""
+    """Return (geometric mean of k, max/min spread) at one measured PVT point.
+
+    The calculation uses the reference shapes that have data at this point.
+    """
     needs_a, needs_d, fn = _PVT_METRICS[metric]
     ratios: List[float] = []
     for (r, c) in _REF_SHAPES:
@@ -768,7 +811,7 @@ def _anchor_k(ds: SramDataset, node: str, metric: str,
 
 
 def _interp_dv(anchors: Dict[float, float], dv: float) -> float:
-    """Piecewise-linear interpolation over the measured offset grid."""
+    """Do a piecewise-linear interpolation on the grid of measured voltage offsets."""
     if dv in anchors:
         return anchors[dv]
     xs = sorted(anchors)
@@ -781,11 +824,12 @@ def _interp_dv(anchors: Dict[float, float], dv: float) -> float:
 
 
 def pvt_domain(ds: SramDataset, node: str):
-    """Measured PVT domain for a node (from the decoder sheet's ref-shape rows).
+    """Return the measured PVT domain of a node.
 
-    Returns (dvs_by_temp, all_dvs, t_lo, t_hi). Shared by the table k-scaling
-    and the MLP source so both clamp to the identical per-node domain (e.g.
-    20nm's rejected +0.15 V rows are simply absent -> bound is +0.10 there).
+    The domain comes from the reference-shape rows of the decoder sheet.
+    Return (dvs_by_temp, all_dvs, t_lo, t_hi). The table k-scaling and the
+    MLP source use this function. Thus the two clamp to the same domain for
+    each node. Example: 20nm has no +0.15 V rows, thus its limit is +0.10 V.
     """
     dvs_by_temp: Dict[float, set] = {}
     for (n, r, c, adv, at) in ds.pvt_dec:
@@ -799,7 +843,7 @@ def pvt_domain(ds: SramDataset, node: str):
 
 def clamp_pvt(ds: SramDataset, node: str, dv: float,
               temp: float) -> Tuple[float, float, List[str]]:
-    """Clamp (dv, temp) into the measured domain; returns (q_dv, q_temp, warns)."""
+    """Clamp (dv, temp) to the measured domain. Return (q_dv, q_temp, warnings)."""
     _, all_dvs, t_lo, t_hi = pvt_domain(ds, node)
     warnings: List[str] = []
     q_dv, q_temp = dv, temp
@@ -819,7 +863,7 @@ def clamp_pvt(ds: SramDataset, node: str, dv: float,
 
 
 def pvt_scale(ds: SramDataset, node: str, dv: float, temp: float) -> PvtScale:
-    """k-factors at (dv, temp); identity at the nominal point."""
+    """Return the k-factors at (dv, temp). All factors are 1 at the nominal point."""
     if dv == 0.0 and temp == 25.0:
         return PvtScale()
 
@@ -834,7 +878,7 @@ def pvt_scale(ds: SramDataset, node: str, dv: float, temp: float) -> PvtScale:
         for at in (t_lo, t_hi):
             anchors: Dict[float, float] = {}
             if at == 25.0:
-                anchors[0.0] = 1.0              # the nominal point itself
+                anchors[0.0] = 1.0              # the nominal point
             for adv in sorted(dvs_by_temp.get(at, ())):
                 k, spread = _anchor_k(ds, node, metric, adv, at)
                 if k is not None:
@@ -875,12 +919,15 @@ def pvt_scale(ds: SramDataset, node: str, dv: float, temp: float) -> PvtScale:
 
 
 # --------------------------------------------------------------------------
-# TilePointSource seam — the MLP models drop in behind this call.
+# TilePointSource interface. The table and the MLP models implement it.
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class TileCosts:
-    """Per-tile costs at the queried PVT (dynamics pure, leakage as power)."""
+    """The costs of one tile at the PVT of the query.
+
+    The dynamic energies do not include leakage. The leakage is a power.
+    """
 
     rows: int
     cols: int
@@ -900,7 +947,7 @@ class TileCosts:
 
 
 class TableTilePointSource:
-    """Exact grid lookup + separable PVT scaling (this task's source)."""
+    """The table source: exact grid lookup and separable PVT scaling."""
 
     def __init__(self, ds: SramDataset):
         self._ds = ds
@@ -927,10 +974,11 @@ class TableTilePointSource:
 
 
 # --------------------------------------------------------------------------
-# Tile-source resolution (table vs trained MLPs)
+# Selection of the tile source (table or trained MLPs)
 # --------------------------------------------------------------------------
-# sram_mlp.py (torch side) is loaded lazily BY FILE PATH so this module stays
-# stdlib-only and runpy-safe; the plugin remains standalone in this directory.
+# sram_mlp.py uses torch. This module loads it BY FILE PATH and only if it is
+# necessary. Thus this module uses only the standard library, runpy can
+# execute it, and the estimator stays self-contained in this directory.
 
 _MLP_MOD_CACHE: Dict[str, Any] = {}
 
@@ -951,12 +999,14 @@ def _load_mlp_module() -> Tuple[Any, Optional[str]]:
 
 
 def _resolve_source(cfg: "SramConfig", ds: SramDataset):
-    """Pick the tile-cost source per cfg.source.
+    """Select the source of the tile costs from cfg.source.
 
-    Returns (src, source_used, model_meta, warnings). 'auto' prefers the
-    trained MLPs when the checkpoint quartets are present and torch imports;
-    otherwise falls back to the table with a warning naming the reason.
-    Explicit 'mlp' raises instead of falling back.
+    Return (src, source_used, model_meta, warnings).
+
+    - 'auto' uses the trained MLPs if the checkpoint quartets are present and
+      torch imports. If not, it uses the table and gives a warning with the
+      cause.
+    - 'mlp' raises an error if the MLPs are not available.
     """
     if cfg.source == "table":
         return TableTilePointSource(ds), "table", None, []
@@ -987,9 +1037,9 @@ def _resolve_source(cfg: "SramConfig", ds: SramDataset):
 class SramStructure:
     tile_rows: int
     tile_cols: int
-    edge_cols: Optional[int]     # ragged last horizontal tile (None = uniform)
-    n_vert: int                  # vertical tile groups (one selected per access)
-    n_horz: int                  # horizontal tiles incl. the edge tile
+    edge_cols: Optional[int]     # columns of a narrower last horizontal tile (None = all tiles equal)
+    n_vert: int                  # vertical tile groups (one access selects one group)
+    n_horz: int                  # horizontal tiles, the edge tile included
     banks: int
     ports: int
     tiles_per_bank: int
@@ -1001,47 +1051,49 @@ class SramStructure:
 
 @dataclass(frozen=True)
 class SramUnitCosts:
-    """Whole-instance unit costs (all banks, all ports composed in)."""
+    """The unit costs of the full instance, with all banks and all ports."""
 
-    e_read_pJ: float             # one access + every other enabled decoder idling
+    e_read_pJ: float             # one access, plus the idle energy of all other enabled decoders
     e_write_pJ: float
-    e_idle_pJ: float             # per cycle, enabled but not accessed
+    e_idle_pJ: float             # for each cycle with the instance enabled and no access
     leak_power_mW: float
     area_um2: float
     t_read_ns: float
     t_write_ns: float
     f_max_MHz: float
-    # breakdown (per single access / per bank-cycle, before bank multiplication)
+    # Breakdown: for one access or one bank-cycle, before the multiplication by the banks.
     rd_array_pJ: float
     wr_array_pJ: float
     dec_access_pJ: float
-    idle_overhead_pJ: float      # the (N_dec - fired) * dec_idle term per access
-    bank_idle_pJ: float          # per cycle, one bank
+    idle_overhead_pJ: float      # the (N_dec - fired) * dec_idle term of one access
+    bank_idle_pJ: float          # for each cycle, one bank
     leak_array_mW: float
     leak_dec_mW: float
     structure: SramStructure
     pvt: PvtScale
     warnings: Tuple[str, ...] = ()
-    source: str = "table"                        # tile-cost source used
-    model_meta: Optional[Dict[str, Any]] = None  # MLP bundle summary (mlp only)
-    # Per-cycle idle accounting (2026-09-13). ``e_read_pJ`` above is the
-    # whole-instance cost of ONE access in a cycle where nothing else fires:
-    # the accessed group's array + decoder energy plus every other clocked
-    # decoder group idling. When the aggregator knows the window's cycle
-    # count it books the idle part once per cycle instead of once per access
-    # (N parallel bank accesses in one cycle then cost N x e_access + the
-    # (n_dec_groups - N) groups that really idled):
+    source: str = "table"                        # the source of the tile costs
+    model_meta: Optional[Dict[str, Any]] = None  # summary of the MLP bundle (mlp source only)
+    # Idle accounting for each cycle.
+    # ``e_read_pJ`` above is the cost of the full instance for ONE access in
+    # a cycle with no other access. It is the array and decoder energy of the
+    # accessed group, plus the idle energy of all other clocked decoder
+    # groups.
+    # If the energy aggregation knows the cycle count of the window, it
+    # charges the idle part one time for each cycle, not for each access.
+    # Then N parallel bank accesses in one cycle cost N x e_access, plus the
+    # idle energy of the (n_dec_groups - N) groups that did not fire.
     #   e_read_pJ == e_access_read_pJ + (n_dec_groups - 1) * dec_idle_group_pJ
     #   e_idle_pJ == n_dec_groups * dec_idle_group_pJ
-    e_access_read_pJ: float = 0.0    # accessed group only (array + decoder)
+    e_access_read_pJ: float = 0.0    # the accessed group only (array + decoder)
     e_access_write_pJ: float = 0.0
-    dec_idle_group_pJ: float = 0.0   # one clocked, non-fired decoder group / cycle
+    dec_idle_group_pJ: float = 0.0   # one clocked decoder group that does not fire, for one cycle
     n_dec_groups: int = 0            # clocked decoder groups (one bank active)
 
 
 def _horz_tiling(cfg: SramConfig, shapes: Sequence[Tuple[int, int]],
                  r: int, c: int) -> Optional[List[Tuple[int, int]]]:
-    """[(cols, used_bits), ...] horizontal tiles for primary shape (r, c)."""
+    """Return the horizontal tiles [(cols, used_bits), ...] for the tile shape (r, c)."""
     width = cfg.width_bits
     ragged = cfg.allow_ragged_edge and cfg.tile_cols is None
     if not ragged:
@@ -1054,14 +1106,14 @@ def _horz_tiling(cfg: SramConfig, shapes: Sequence[Tuple[int, int]],
     if rem:
         edge_opts = sorted(c2 for (r2, c2) in shapes if r2 == r and c2 >= rem)
         if not edge_opts:
-            return None                       # no measured edge tile fits
+            return None                       # no measured tile can be the edge tile
         tiles.append((edge_opts[0], rem))
     return tiles
 
 
 def _compose(cfg: SramConfig, src: TableTilePointSource, k: PvtScale,
              r: int, horz: List[Tuple[int, int]]) -> SramUnitCosts:
-    """Cost a candidate structure (see module docstring for the model)."""
+    """Calculate the costs of one candidate structure. The module docstring gives the model."""
     n_vert = math.ceil(cfg.depth_words / r)
     p0 = cfg.read_zero_fraction
     a = cfg.addr_toggle_rate
@@ -1083,9 +1135,9 @@ def _compose(cfg: SramConfig, src: TableTilePointSource, k: PvtScale,
         t_read = max(t_read, t.t_read_ns)
         t_write = max(t_write, t.t_write_ns)
 
-    # decoders in the instance = banks * n_vert * n_horz * P; one access fires
-    # the n_horz decoders of one port's selected group, the rest idle (unless
-    # per-tile clock gating is assumed).
+    # Decoders in the instance = banks * n_vert * n_horz * P. One access fires
+    # the n_horz decoders of the selected group of one port. The other
+    # decoders are idle. With tile clock gating, they use no idle energy.
     if cfg.tile_clock_gating:
         idle_overhead = 0.0
         bank_idle = 0.0
@@ -1157,26 +1209,29 @@ def _rank_key(cfg: SramConfig, c: SramUnitCosts) -> Tuple:
 
 def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
                           extra_warnings: Sequence[str] = ()) -> SramUnitCosts:
-    """Compose a template instance from ONE measured macro.
+    """Calculate the costs of a template instance from ONE measured macro.
 
     A template instance is a hierarchy::
 
         instance -> cfg.banks banks -> S macros each -> col-mux tile groups
                     (S = depth_words / template.depth_words, <= 16)
 
-    where "macro" = one instance of the template (a compiler macro: decoder,
-    column mux, I/O) — the largest thing the datasets can
-    cost directly. The recursive call below prices that macro (banks=1,
-    template cleared); everything above it is arithmetic on the result.
+    A "macro" is one instance of the template: a memory compiler macro with a
+    decoder, a column mux, and I/O. It is the largest block for which the
+    datasets give a cost directly. The recursive call below calculates the
+    cost of that macro (banks=1, no template). The levels above the macro are
+    arithmetic on the result.
 
-    Access semantics (user-defined 2026-07-21, bank-level clock gating):
+    Access model (clock gating at the bank level):
 
-    * the accessed macro pays a full read/write (its internal col-mux group
-      composition included — that is the recursive call's own idle_overhead);
-    * its S-1 siblings in the SAME bank are clocked but not accessed — one
-      macro-idle each, folded into the per-access energy;
-    * every other bank is clock-gated: leakage only, charged by the
-      ``leak_power`` term over time, never per access.
+    * The accessed macro has the cost of a full read or write. This cost
+      includes its internal column-mux groups, which is the idle_overhead of
+      the recursive call.
+    * The other S-1 macros of the SAME bank have a clock but no access. Each
+      adds one macro idle energy to the energy of the access.
+    * All other banks are clock-gated. They have leakage only. The
+      ``leak_power`` term charges it as a function of time, never for each
+      access.
     """
     t = SRAM_TEMPLATES[cfg.template]
     s_per_bank = cfg.depth_words // t["depth_words"]
@@ -1201,7 +1256,7 @@ def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
         macro,
         e_read_pJ=macro.e_read_pJ + sibling_idle,
         e_write_pJ=macro.e_write_pJ + sibling_idle,
-        e_idle_pJ=s_per_bank * macro.e_idle_pJ,   # one bank held active
+        e_idle_pJ=s_per_bank * macro.e_idle_pJ,   # one bank is active
         idle_overhead_pJ=macro.idle_overhead_pJ + sibling_idle,
         bank_idle_pJ=s_per_bank * macro.e_idle_pJ,
         leak_power_mW=n_macros * macro.leak_power_mW,
@@ -1209,13 +1264,13 @@ def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
         leak_dec_mW=n_macros * macro.leak_dec_mW,
         area_um2=n_macros * macro.area_um2,
         structure=structure,
-        # per-cycle idle terms: the active bank's S macros are the clocked set
+        # Idle terms for each cycle: the S macros of the active bank have a clock.
         e_access_read_pJ=macro.e_access_read_pJ,
         e_access_write_pJ=macro.e_access_write_pJ,
         dec_idle_group_pJ=macro.dec_idle_group_pJ,
         n_dec_groups=s_per_bank * macro.n_dec_groups,
-        # timing stays the single-macro path; bank select/routing is part of
-        # the approximation warning emitted by _apply_template.
+        # The timing is that of one macro. The warning from _apply_template
+        # tells the user that bank select and routing are not in the model.
     )
 
 
@@ -1224,9 +1279,10 @@ def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
     if cfg.template:
         return _bank_hierarchy_costs(cfg, ds, extra_warnings)
     shapes = ds.shapes_by_node[cfg.node]
-    # k (separable table scaling) is ALWAYS computed: the MLP source ignores
-    # its factors but the report keeps it as a diagnostic, and it carries the
-    # domain-clamp / ref-spread warnings for both sources.
+    # Always calculate k (the separable table scaling). The MLP source does
+    # not use its factors, but the report shows k as a diagnostic. k also
+    # gives the warnings about the domain clamp and the reference-shape
+    # spread for the two sources.
     k = pvt_scale(ds, cfg.node, cfg.voltage_offset_v, cfg.temperature_c)
     src, source_used, model_meta, src_warns = _resolve_source(cfg, ds)
 
@@ -1248,7 +1304,7 @@ def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
         if not horz:
             continue
         sig = (r, tuple(horz))
-        if sig in seen:                      # wide-c candidates can collapse
+        if sig in seen:                      # wide candidates can give the same tiles
             continue
         seen.add(sig)
         costs = _compose(cfg, src, k, r, horz)
@@ -1282,14 +1338,14 @@ def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
 
 
 def unit_costs(features: Mapping[str, Any]) -> SramUnitCosts:
-    """Public one-call query: features dict -> whole-instance unit costs."""
+    """Return the unit costs of the full instance for a features dict."""
     ds = load_dataset(_resolve_dataset_dir(features))
     cfg, warns = normalize_config(features, ds)
     return _unit_costs_for_cfg(cfg, ds, warns)
 
 
 def energy_for_stim_mode(costs: SramUnitCosts, stim_mode: str) -> float:
-    """Map a stim_mode to whole-instance dynamic energy per cycle/event [pJ]."""
+    """Return the dynamic energy [pJ] of the full instance for one cycle or event of a stim_mode."""
     if stim_mode == "read":
         return costs.e_read_pJ
     if stim_mode == "write":
@@ -1302,7 +1358,7 @@ def energy_for_stim_mode(costs: SramUnitCosts, stim_mode: str) -> float:
 
 
 # --------------------------------------------------------------------------
-# EstimatorHost entrypoints (return None on error, per host contract)
+# EstimatorHost entrypoints. The host contract: return None if there is an error.
 # --------------------------------------------------------------------------
 
 def _entry(features: Optional[Mapping[str, Any]]):
@@ -1312,18 +1368,18 @@ def _entry(features: Optional[Mapping[str, Any]]):
 
 
 def get_energy(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[float]:
-    """Dynamic energy [pJ] for features['stim_mode'|'op'] (default: read)."""
+    """Return the dynamic energy [pJ] for features['stim_mode'|'op'] (default: read)."""
     try:
         costs = _entry(features)
         mode = (features.get("stim_mode") or features.get("op") or "read")
         return energy_for_stim_mode(costs, str(mode))
-    except Exception as e:  # host contract: never raise
+    except Exception as e:  # host contract: do not raise
         print(f"[ERROR] sram: {e}")
         return None
 
 
 def get_area(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[float]:
-    """Total macro area [um2] (all banks, arrays + decoders)."""
+    """Return the total macro area [um2] (all banks, arrays + decoders)."""
     try:
         return _entry(features).area_um2
     except Exception as e:
@@ -1332,7 +1388,7 @@ def get_area(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Opt
 
 
 def get_timing(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[float]:
-    """Read access time [ns] (decoder wlen->WL + array WL->OUT)."""
+    """Return the read access time [ns] (decoder wlen->WL + array WL->OUT)."""
     try:
         return _entry(features).t_read_ns
     except Exception as e:
@@ -1341,7 +1397,7 @@ def get_timing(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> O
 
 
 def get_leakage(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[float]:
-    """Static leakage power [mW] (all banks, arrays + decoders)."""
+    """Return the static leakage power [mW] (all banks, arrays + decoders)."""
     try:
         return _entry(features).leak_power_mW
     except Exception as e:
@@ -1350,7 +1406,7 @@ def get_leakage(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> 
 
 
 def get_unit_costs(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[dict]:
-    """Whole SramUnitCosts as a plain dict."""
+    """Return the full SramUnitCosts as a plain dict."""
     try:
         return asdict(_entry(features))
     except Exception as e:
@@ -1359,7 +1415,10 @@ def get_unit_costs(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) 
 
 
 def get_report(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Optional[dict]:
-    """Unit costs + structure + provenance (raw dataset rows used) + warnings."""
+    """Return the unit costs, the structure, the provenance, and the warnings.
+
+    The provenance identifies the raw dataset rows that the result uses.
+    """
     try:
         ds = load_dataset(_resolve_dataset_dir(features))
         cfg, warns = normalize_config(features, ds)
@@ -1400,15 +1459,17 @@ def get_report(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> O
 
 
 # --------------------------------------------------------------------------
-# UnitCostProvider factory (structural match for npuwattch.energy's Protocol)
+# UnitCostProvider factory (the provider has the structure of the Protocol in npuwattch.energy)
 # --------------------------------------------------------------------------
 
 class _SramUnitCostProvider:
-    """Routes primitive == 'sram' to this estimator; the rest to a fallback.
+    """A provider that answers queries for the primitive 'sram'.
 
-    Implements the ``UnitCostProvider`` protocol structurally (calibrated flag
-    + four methods) without importing npuwattch, so this file stays runpy-safe.
-    Costs are memoized per normalized config (SramConfig is frozen/hashable).
+    It sends queries for all other primitives to a fallback provider. It has
+    the structure of the ``UnitCostProvider`` protocol: the calibrated flag
+    and four methods. It does not import npuwattch, thus runpy can execute
+    this file. It caches the costs for each normalized query (SramConfig is
+    frozen and hashable).
     """
 
     def __init__(self, defaults: Optional[Mapping[str, Any]] = None,
@@ -1463,9 +1524,12 @@ class _SramUnitCostProvider:
 
     def idle_terms(self, primitive: str,
                    features: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
-        """``(e_idle_per_cycle_pJ, idle_displaced_per_access_pJ)`` for the
-        aggregator's per-cycle idle accounting, or None when the primitive has
-        no clocked-idle term (clock-gated tiles, or not an sram)."""
+        """Return ``(e_idle_per_cycle_pJ, idle_displaced_per_access_pJ)``.
+
+        The energy aggregation uses these values for the idle accounting of
+        each cycle. Return None if the primitive has no clocked idle term:
+        the tiles are clock-gated, or the primitive is not an sram.
+        """
         if primitive != "sram":
             fb = getattr(self._fallback, "idle_terms", None)
             return fb(primitive, features) if fb is not None else None
@@ -1476,8 +1540,11 @@ class _SramUnitCostProvider:
 
     def envelope_warnings(self, primitive: str,
                           features: Mapping[str, Any]) -> List[str]:
-        """Optional protocol hook, forwarded for the primitives this provider
-        does not serve (the logic estimator's range checks sit behind it)."""
+        """Return the envelope warnings (an optional method of the protocol).
+
+        For primitives other than 'sram', the fallback provider gives them.
+        The logic estimator does its range checks in this method.
+        """
         if primitive == "sram":
             return []
         fb = getattr(self._fallback, "envelope_warnings", None)
@@ -1487,12 +1554,14 @@ class _SramUnitCostProvider:
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,
                             dataset_dir: Optional[str] = None,
                             fallback: Any = None) -> _SramUnitCostProvider:
-    """Build a UnitCostProvider for 'sram' primitives.
+    """Make a UnitCostProvider for the primitive 'sram'.
 
-    ``defaults`` are merged UNDER each call's features (activity policy etc.);
-    ``fallback`` (any UnitCostProvider) handles non-sram primitives — without
-    one, non-sram queries raise. ``calibrated`` is True in strict (no-fallback)
-    mode, else inherited from the fallback (conservative).
+    - ``defaults`` are default features (for example, the activity policy).
+      The features of each call have priority over them.
+    - ``fallback`` is a UnitCostProvider that answers queries for other
+      primitives. Without a fallback, such a query raises an error.
+    - ``calibrated`` is True if there is no fallback. If there is a fallback,
+      ``calibrated`` has the value of the fallback.
     """
     return _SramUnitCostProvider(defaults=defaults, dataset_dir=dataset_dir,
                                  fallback=fallback)

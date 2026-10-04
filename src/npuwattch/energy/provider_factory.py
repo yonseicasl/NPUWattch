@@ -1,19 +1,20 @@
-"""Compose the §6 unit-cost provider from whatever calibrated estimators exist.
+"""Make the unit-cost provider of a run (manual §6) from the estimators.
 
-An estimator plugin opts into the §6 path by declaring a ``unit_cost_provider``
-entrypoint in its ``ESTIMATOR_SPEC`` (see ``src/estimators/sram``). The factory
-asks each such estimator for a provider and **chains** them: every provider serves
-its own primitive and delegates the rest to the previous link, with
-``StubUnitCostProvider`` (placeholder, ``calibrated=False``) at the bottom.
+An estimator plugin declares a ``unit_cost_provider`` entrypoint in its
+``ESTIMATOR_SPEC`` (see ``src/npuwattch_estimators/sram``). The factory asks
+each such estimator for a provider and makes a chain. Each provider answers
+for its own primitives and sends the other queries to the next provider:
 
-That means calibration arrives incrementally and per primitive — today only
-``sram`` is calibrated; the logic primitives (``fpmac``/``intmac``/``regfile``…)
-keep returning placeholder costs until workstream D trains their models, at which
-point their estimators declare the same entrypoint and drop into this chain with
-no change to the aggregator.
+1. The calibrated estimators (``logic``, ``sram``).
+2. The user-defined component estimator (``custom``), for the components of
+   the user component library.
+3. The constant providers (``hbm``, ``d2dlink``). Their values come from
+   table files.
+4. ``NoModelProvider``, which raises an error. NPUWattch gives no value for a
+   block that it has no model for.
 
-``ProviderChain.calibrated_primitives`` records which primitives are real, so the
-CLI/report can label results honestly instead of a single all-or-nothing flag.
+``ProviderChain`` records which primitives each group answers. The CLI and the
+report use this to label each result: calibrated, user, or constant.
 """
 
 from __future__ import annotations
@@ -21,25 +22,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
-from .unit_cost import D2DLinkCostProvider, HBMCostProvider, StubUnitCostProvider
+from .unit_cost import D2DLinkCostProvider, HBMCostProvider, NoModelProvider
 
 __all__ = ["ProviderChain", "build_provider"]
 
 
 @dataclass(frozen=True)
 class ProviderChain:
-    """A composed provider plus which primitives it answers with real models."""
+    """The provider of a run, and the primitives that each group answers."""
 
     provider: Any
     calibrated_primitives: Tuple[str, ...] = ()
-    #: Primitives answered by an analytic constant (d2dlink) — neither
-    #: calibrated nor placeholder; labeled distinctly so reports stay honest.
+    #: Primitives that a constant provider answers from a table file (hbm,
+    #: d2dlink). They are not calibrated models and have their own label.
     constant_primitives: Tuple[str, ...] = ()
+    #: Components of the user component library. Their values come from the
+    #: user, through the user-defined component estimator.
+    user_primitives: Tuple[str, ...] = ()
     notes: Tuple[str, ...] = ()
-    #: Characterized technology nodes every calibrated estimator in the chain
-    #: serves (intersection of the ESTIMATOR_SPEC ``nodes`` declarations) —
-    #: the anchor set ``node_scaling`` interpolates the continuous node axis
-    #: over. Empty when no calibrated estimator declares its nodes.
+    #: The characterized technology nodes that all calibrated estimators of
+    #: the chain have. This is the intersection of the ``nodes`` lists of
+    #: their ESTIMATOR_SPEC. ``node_scaling`` uses these nodes as anchors.
+    #: The tuple is empty if no calibrated estimator declares its nodes.
     characterized_nodes: Tuple[str, ...] = ()
 
     def is_calibrated(self, primitive: str) -> bool:
@@ -52,12 +56,19 @@ def build_provider(
     host: Any = None,
     defaults: Optional[Mapping[str, Any]] = None,
     verbose: int = 0,
+    user_components: Optional[Mapping[str, Any]] = None,
 ) -> ProviderChain:
-    """Build the provider chain: calibrated estimators over a placeholder base.
+    """Make the provider chain.
 
-    ``fallback`` defaults to ``StubUnitCostProvider()``. Estimators that fail to
-    produce a provider are skipped (recorded in ``notes``) rather than breaking
-    the chain — a broken plugin must not take the whole run down.
+    ``fallback`` is the last link. The default is ``NoModelProvider()``, which
+    raises an error for a primitive that no estimator answers.
+
+    ``user_components`` is the user component library of the run
+    (name -> ``UserComponent``). An estimator that declares
+    ``accepts_user_components`` gets it.
+
+    An estimator that cannot make a provider is not in the chain. ``notes``
+    records the reason. One incorrect plugin must not stop the run.
     """
     if host is None:
         from ..npuwattch_estimator_host import EstimatorHost
@@ -65,11 +76,15 @@ def build_provider(
         host = EstimatorHost(verbose=verbose)
         host.scan_estimators()
 
-    provider = fallback if fallback is not None else StubUnitCostProvider()
-    # The analytic constants (d2dlink, hbm) sit just above the placeholder
-    # base, so calibrated estimator links always win for their own primitive.
-    provider = D2DLinkCostProvider(fallback=provider)
-    provider = HBMCostProvider(fallback=provider)
+    provider = fallback if fallback is not None else NoModelProvider()
+    # The constant providers are immediately before the last link. Thus an
+    # estimator has priority for its own primitives.
+    constant: List[str] = []
+    for constant_provider in (D2DLinkCostProvider, HBMCostProvider):
+        provider = constant_provider(fallback=provider)
+        constant.extend(constant_provider.primitives)
+    user_components = dict(user_components or {})
+    # The estimators that use the library are next, in the sorted order below.
     calibrated: List[str] = []
     notes: List[str] = []
     node_sets: List[Tuple[str, ...]] = []
@@ -79,18 +94,26 @@ def build_provider(
         entrypoints = spec.get("entrypoints") or {}
         if "unit_cost_provider" not in entrypoints:
             continue
+        uses_library = bool(spec.get("accepts_user_components"))
+        if uses_library and not user_components:
+            continue
+        extra = {"user_components": user_components} if uses_library else {}
         try:
             built, error = host.execute_entrypoint(
-                name, "unit_cost_provider", defaults=defaults, fallback=provider
+                name, "unit_cost_provider", defaults=defaults,
+                fallback=provider, **extra
             )
-        except Exception as e:                      # a plugin must not kill the run
+        except Exception as e:                      # a plugin must not stop the run
             built, error = None, str(e)
         if error or built is None:
             notes.append(f"estimator {name!r}: unit_cost_provider unavailable ({error})")
             continue
         provider = built
-        # One module may serve several primitives (the logic estimator's MLP
-        # quartets) — a `primitives` list wins over the single `primitive`.
+        if uses_library:
+            continue                    # its primitives are the library names
+        # One estimator can answer for two or more primitives (the logic
+        # estimator has four MLPs for each primitive). A `primitives` list
+        # has priority over the single `primitive`.
         prims = spec.get("primitives")
         if prims:
             calibrated.extend(str(p) for p in prims)
@@ -99,8 +122,8 @@ def build_provider(
         if spec.get("nodes"):
             node_sets.append(tuple(str(n) for n in spec["nodes"]))
 
-    # The continuous node axis (node_scaling) can only anchor on nodes EVERY
-    # calibrated estimator serves — intersect the declarations.
+    # An anchor node of node_scaling must be a node that ALL calibrated
+    # estimators have. Thus use the intersection of the declared node sets.
     characterized: Tuple[str, ...] = ()
     if node_sets:
         common = set(node_sets[0]).intersection(*node_sets[1:])
@@ -111,7 +134,8 @@ def build_provider(
     return ProviderChain(
         provider=provider,
         calibrated_primitives=tuple(calibrated),
-        constant_primitives=("d2dlink", "hbm"),
+        constant_primitives=tuple(constant),
+        user_primitives=tuple(user_components),
         notes=tuple(notes),
         characterized_nodes=characterized,
     )
