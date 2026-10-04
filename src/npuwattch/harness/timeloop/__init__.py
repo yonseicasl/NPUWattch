@@ -78,6 +78,14 @@ HARNESS_SPEC = {
                     "components ('levels:') and dropping levels deliberately "
                     "('ignore:'); exact/leaf-name matches need no entry.",
         },
+        "energy_table": {
+            "flag": "--energy-table",
+            "required": False,
+            "kind": "file",
+            "hint": "a DRAM energy table yml (PyTorchSim format; per-bit-only "
+                    "tables are accepted) — overrides the table shipped for "
+                    "the Accelergy DRAM 'type'",
+        },
     },
     # --stats wires real activity; without it the harness synthesizes the
     # VECTORLESS default, so the CLI's --vectorless-activity override applies

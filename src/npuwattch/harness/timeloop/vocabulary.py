@@ -288,10 +288,29 @@ def attributes_for(
                 f"burst (256 bits) per access")
             width = 256
         out["data_width"] = width
-        warnings.append(
-            f"{component}: Accelergy class routed to the 'hbm' primitive — "
-            f"NPUWattch's only DRAM-device model, priced with analytic HBM2 "
-            f"constants. Override them per component if the part differs.")
+        # Accelergy's DRAM `type` picks the shipped energy table of the same
+        # name (energy/dram_tables/) — the per-bit number Accelergy itself
+        # charges for that type, HBM2 with the cited per-command split.
+        from ...energy.dram_table import table_for_type
+        dram_type = take(("type",))
+        table = table_for_type(dram_type)
+        if table is not None:
+            out["mem_access_energy_per_bit_pJ"] = table.transfer_pj_per_bit
+            if table.act_pj is not None:
+                out["mem_act_energy_pJ"] = table.act_pj
+            if table.ref_pj is not None:
+                out["mem_ref_energy_pJ"] = table.ref_pj
+            notes.append(
+                f"{component} (DRAM type {table.name}): "
+                f"{table.transfer_pj_per_bit:g} pJ/bit from the shipped table "
+                f"{table.path.name} (override with --energy-table)")
+        else:
+            what = (f"type {dram_type!r} has no shipped energy table"
+                    if dram_type else "no DRAM type declared")
+            warnings.append(
+                f"{component}: {what} — priced with the built-in HBM2 "
+                f"constants; declare an Accelergy type (LPDDR4, LPDDR, DDR3, "
+                f"GDDR5, HBM2, HMC) or pass --energy-table")
     elif primitive in ("intadd", "intmul", "intmac"):
         _int_attributes(primitive, attrs, take, out, component=component,
                         warnings=warnings, notes=notes)
@@ -444,37 +463,47 @@ def _storage_attributes(primitive, attrs, take, out, *, component,
     if rw_ports is not None:
         out["mem_rw_ports"] = rw_ports
 
-    # Timeloop's bandwidth (words per cycle) is a mapping constraint, not a
-    # physical attribute, but on a banked memory it says how many banks may
-    # be accessed in one cycle — worth echoing so the event accounting is
-    # understood: N accesses in a cycle are charged as N access events.
+    # Timeloop's bandwidth is a mapping constraint, not a physical attribute,
+    # but on a banked memory it says how many banks may be accessed in one
+    # cycle — worth echoing so the event accounting is understood: N accesses
+    # in a cycle are charged as N access events. Its unit is Timeloop's word,
+    # i.e. one `datawidth` element, while one bank access moves a whole block
+    # of `width / datawidth` elements (the stats reader divides by the same
+    # block size), so accesses/cycle = ceil(bandwidth / block).
     bw_vals = [v for v in (_as_int(attrs.get(k)) for k in _BANDWIDTH_KEYS) if v]
     if bw_vals:
         for k in _BANDWIDTH_KEYS:
             if k in attrs:
                 consumed.add(k)
         bw = max(bw_vals)
+        elem = _as_int(attrs.get("datawidth"))
+        block = width // elem if elem and width % elem == 0 else 1
+        accesses = -(-bw // block)
+        per = (f"{bw} words/cycle ({block} words per access)" if block > 1
+               else f"{bw} words/cycle")
         n_banks = banks or 1
         ports = (r_ports or 0) + (w_ports or 0) + (rw_ports or 0) or 1
-        if bw > 1 and n_banks > 1:
+        if accesses > 1 and n_banks > 1:
             notes.append(
-                f"{component} ({primitive}): bandwidth {bw} words/cycle → up "
-                f"to {min(bw, n_banks * ports)} bank accesses per cycle; each "
-                f"is charged as one access event")
-        if bw > n_banks * ports:
+                f"{component} ({primitive}): bandwidth {per} → up to "
+                f"{min(accesses, n_banks * ports)} bank accesses per cycle; "
+                f"each is charged as one access event")
+        if accesses > n_banks * ports:
             warnings.append(
-                f"{component} ({primitive}): bandwidth {bw} words/cycle "
-                f"exceeds {n_banks} bank(s) × {ports} port(s) = "
-                f"{n_banks * ports} accesses/cycle — the declared structure "
+                f"{component} ({primitive}): bandwidth {per} needs "
+                f"{accesses} accesses/cycle, more than {n_banks} bank(s) × "
+                f"{ports} port(s) = {n_banks * ports} — the declared structure "
                 f"cannot serve Timeloop's mapping; it would need "
-                f"{-(-bw // ports)} banks (or more ports)")
+                f"{-(-accesses // ports)} banks (or more ports)")
 
 
 def _int_attributes(primitive, attrs, take, out, *, component,
                     warnings, notes) -> None:
-    a = _as_int(take(("data_width_a", "a_width")))
-    b = _as_int(take(("data_width_b", "b_width")))
-    width = _as_int(take(_OPERAND_KEYS))
+    # `multiplier_width` / `width_a` / `width_b` are the Accelergy spellings
+    # (intmac compound class, aladdin_multiplier primitive).
+    a = _as_int(take(("data_width_a", "a_width", "width_a")))
+    b = _as_int(take(("data_width_b", "b_width", "width_b")))
+    width = _as_int(take(("multiplier_width",) + _OPERAND_KEYS))
     a = a or width
     if a is None:
         warnings.append(
@@ -488,7 +517,7 @@ def _int_attributes(primitive, attrs, take, out, *, component,
 
     declared_out = _as_int(take(("data_width_out", "out_width")))
     if primitive == "intmac":
-        acc = _as_int(take(("data_width_acc", "acc_width")))
+        acc = _as_int(take(("data_width_acc", "acc_width", "adder_width")))
         if acc is None:
             acc = _ACC_WIDTH_MULTIPLIER * max(a, b)
             notes.append(

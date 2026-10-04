@@ -1,0 +1,11 @@
+# HMC off-chip DRAM energy, pJ. Per-bit transfer energy only: the source
+# gives one access energy per bit and no row-activation or refresh split, so
+# this table suits Timeloop (whose stats carry no ACT/REF events). A PyTorchSim
+# run, which issues ACT commands, rejects a table without row_activation_pj.
+# Source: Accelergy CactiDRAM type table, citing DOI 10.1145/3093336.3037702.
+# Same number Timeloop/Accelergy charges for a DRAM of type "HMC".
+name: HMC
+
+offchip_dram:
+  transfer_pj_per_bit:
+    access: 4.2

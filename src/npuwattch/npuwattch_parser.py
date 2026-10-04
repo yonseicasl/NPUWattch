@@ -79,6 +79,8 @@ class NPUWattchArgs:
     # Write the HTML/JSON PPA report (manual §8) to this directory.
     report_dir: Optional[Path] = None
     node: str = "7nm"
+    #: True when --node was given on the command line (not the 7nm default).
+    node_explicit: bool = False
     transistor: str = "hp"          # hp | lp
     corner: str = "TT"              # TT | SS | FF
     voltage_offset_V: float = 0.0   # nominal Vdd
@@ -223,10 +225,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     harness_group.add_argument(
         "--energy-table",
         dest="energy_table",
-        help="PyTorchSim harness (optional): the run's DRAM energy-cost table "
-             "yml (the config's energy_cost_table_path, e.g. hbm2.yml). Its "
-             "constants replace the dram compound's built-in ones; without it "
-             "the built-in cited HBM2 constants are charged.",
+        help="PyTorchSim or Timeloop harness (optional): a DRAM energy-cost "
+             "table yml (PyTorchSim's energy_cost_table_path format, e.g. "
+             "hbm2.yml). PyTorchSim: replaces the dram compound's built-in "
+             "HBM2 constants. Timeloop: overrides the shipped table picked by "
+             "the Accelergy DRAM 'type' (LPDDR4/LPDDR/DDR3/GDDR5/HBM2/HMC); "
+             "per-bit-only tables are accepted there.",
     )
     harness_group.add_argument(
         "--arch-yaml",
@@ -268,7 +272,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "Technology / PVT (harness mode; defaults = hp / TT / nominal Vdd / 25C)"
     )
     tech_group.add_argument(
-        "--node", dest="node", default="7nm",
+        "--node", dest="node", default=None,
         help="Technology node, continuous, e.g. 7nm or 12.5nm (default: 7nm). "
              "Characterized nodes are 5/7/10/16/20nm; anything between is "
              "log-interpolated, anything up to ±50%% beyond the range "
@@ -549,7 +553,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         vectorless_activity=ns.vectorless_activity,
         tree=bool(ns.tree),
         report_dir=Path(ns.report_dir) if ns.report_dir else None,
-        node=ns.node,
+        node=ns.node or "7nm",
+        node_explicit=ns.node is not None,
         transistor=ns.transistor,
         corner=ns.corner,
         voltage_offset_V=ns.voltage_offset_V,
