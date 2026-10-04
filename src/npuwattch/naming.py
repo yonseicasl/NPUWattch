@@ -1,43 +1,47 @@
-"""Canonical input-name vocabulary — the single source of truth for the names
-estimators accept in a component's ``attributes`` block.
+"""NPUWattch names: the attribute names that the estimators accept.
 
-Why this exists
----------------
-Every harness (PyTorchSim, Timeloop/Accelergy, …) reads a simulator's own
-vocabulary, which is *not* ours: Timeloop says ``word-bits``, gem5 says
-``bitwidth``, our RTL generator says ``a_width``. Historically each estimator
-accepted a *list* of aliases (``arch_keys``), which meant a typo silently fell
-through to a default and two harnesses could disagree forever without anyone
-noticing.
+This module is the only definition of the names in the ``attributes`` block of
+a component.
 
-The contract is now inverted, and it is one-directional:
+Why this module is necessary
+----------------------------
+Each simulator uses its own names. For example, Timeloop writes ``word-bits``,
+gem5 writes ``bitwidth``, and the RTL generator writes ``a_width``. If an
+estimator accepts many names for one concept, a spelling error gives a default
+value and no message. Then two harnesses can give different results and no
+one sees the cause.
 
-* **The estimator's accepted name is the standard.** Exactly one name per
-  concept. No aliases.
-* **A harness may warn about its own source log**, but the names it *emits* must
-  already be canonical. Translating the simulator's vocabulary into ours is the
-  harness author's job, done once, at ingest.
-* **A non-canonical attribute name is an error**, not a silent default. If it is
-  a known legacy alias, the error says what to rename it to.
+Thus the rules are:
 
-Scope: this governs *architecture attributes* — the description's
-``components[].attributes``, i.e. what the hardware physically is. It does not
-govern estimator-local policy knobs (``toggle_rate``, ``read_zero_fraction``,
-``optimize``, ``source``, tile hints, …), which are not emitted by harnesses and
-are declared per estimator as optional parameters.
+* The name that the estimator accepts is the standard. Each concept has
+  exactly one name. There are no aliases.
+* A harness must emit only NPUWattch names. The author of the harness
+  translates the simulator names with a vocabulary table,
+  ``<harness>/definitions/vocabulary.yaml``. The engine
+  ``npuwattch_harness.vocabulary`` applies the table during ingest.
+* An attribute name that is a known old alias is an error. The error message
+  gives the correct name. The estimator does not use a default value.
+
+Scope: these rules apply to the architecture attributes, which are the
+``components[].attributes`` of the description. These attributes describe the
+hardware. The rules do not apply to the policy parameters of one estimator
+(``toggle_rate``, ``read_zero_fraction``, ``optimize``, ``source``, tile
+hints). A harness does not emit such parameters. Each estimator declares them
+as optional parameters.
 
 Naming rules
 ------------
 =====================  ======================================================
 Rule                   Content
 =====================  ======================================================
-No aliases             One canonical name per concept; mismatch → error
+No aliases             One name for each concept. A different name is an
+                       error
 Domain prefix          ``mem_`` storage, ``net_`` interconnect, ``mx_``
-                       microscaling. Universal parameters take no prefix
-Counts                 Plural noun (``mem_banks``, ``net_inputs``) — never
-                       ``num_``/``n_`` prefixes
-Units                  Suffix only when ambiguous (``_bits``, ``_V``, ``_C``,
-                       ``_ns``). ``data_width`` is self-evidently bits
+                       microscaling. Universal parameters have no prefix
+Counts                 Plural noun (``mem_banks``, ``net_inputs``). Do not
+                       use the prefixes ``num_`` or ``n_``
+Units                  A suffix only if the unit is not clear (``_bits``,
+                       ``_V``, ``_C``, ``_ns``). ``data_width`` is in bits
 =====================  ======================================================
 """
 
@@ -52,24 +56,22 @@ __all__ = [
     "CANONICAL",
     "LEGACY_ALIASES",
     "PRIMITIVE_PARAMS",
-    "canonical_names",
-    "resolve_alias",
     "validate_attributes",
 ]
 
 
 class NamingError(ValueError):
-    """A component attribute violates the canonical vocabulary."""
+    """A component attribute does not obey the naming rules."""
 
 
 @dataclass(frozen=True)
 class Param:
-    """One canonical attribute name."""
+    """One NPUWattch attribute name."""
 
     name: str
     kind: str            # "int" | "float" | "str"
     doc: str
-    unit: str = ""       # informational; units are encoded in the name itself
+    unit: str = ""       # Only for information. The name gives the unit.
 
 
 def _p(name: str, kind: str, doc: str, unit: str = "") -> Tuple[str, Param]:
@@ -77,7 +79,7 @@ def _p(name: str, kind: str, doc: str, unit: str = "") -> Tuple[str, Param]:
 
 
 # ---------------------------------------------------------------------------
-# The vocabulary
+# The NPUWattch names
 # ---------------------------------------------------------------------------
 
 CANONICAL: Dict[str, Param] = dict([
@@ -113,9 +115,10 @@ CANONICAL: Dict[str, Param] = dict([
        "number of concurrent accesses — use banks for that"),
     _p("mem_template", "str",
        "SRAM macro template for capacity-only specs: sram_64k | sram_256k "
-       "(fixes data_width/depth; see src/estimators/sram)"),
-    # Analytic DRAM-device constants (the `hbm` primitive — an off-chip device,
-    # no characterization flow; defaults in energy.unit_cost cite the source).
+       "(fixes data_width/depth; see src/npuwattch_estimators/sram)"),
+    # Analytic constants of a DRAM device (the `hbm` primitive). The device is
+    # off-chip and has no characterization flow. The defaults and their
+    # source are in energy.unit_cost.
     _p("mem_act_energy_pJ", "float",
        "DRAM row-activation energy per ACT (precharge + activate)", "pJ"),
     _p("mem_access_energy_per_bit_pJ", "float",
@@ -138,10 +141,14 @@ CANONICAL: Dict[str, Param] = dict([
        "Traversal energy per bit for analytic link models (d2dlink)", "pJ/bit"),
 
     # -- special function unit (fpsfu) --------------------------------------
-    # Op-group selection flags are 0/1 ints (numeric on purpose: they are MLP
-    # input features). Groups pair ops that share structure: exp{exp,exp2},
-    # trig{sin,cos} (shared range reduction), hyp{tanh,sigmoid}, erf; relu is a
-    # near-free comparator+mux extra.
+    # Each flag selects one op group. A flag is the integer 0 or 1, because
+    # the flags are input features of the MLP.
+    # A group contains the ops that use the same structure:
+    #   exp:  exp, exp2
+    #   trig: sin, cos (the same range reduction)
+    #   hyp:  tanh, sigmoid
+    #   erf:  erf
+    # relu adds only a comparator and a mux, thus its cost is almost zero.
     _p("sfu_op_exp", "int", "Op group enable: exp + exp2 (0/1)"),
     _p("sfu_op_trig", "int", "Op group enable: sin + cos (0/1)"),
     _p("sfu_op_hyp", "int", "Op group enable: tanh + sigmoid (0/1)"),
@@ -162,18 +169,18 @@ CANONICAL: Dict[str, Param] = dict([
     _p("mx_decode_frac_bits", "int", "Fractional bits after decode", "bits"),
 ])
 
-#: PVT/context keys. Not authored per component — the core merges these in from
-#: the description's ``technology:``/``clock:`` blocks (or a harness's CLI
-#: flags), so they are accepted in a features dict but never emitted as
-#: component attributes.
+#: Context keys (PVT and clock). A component does not declare them. The core
+#: adds them from the ``technology:`` and ``clock:`` blocks of the description,
+#: or from the CLI flags of a harness. Thus a features dict can contain them,
+#: but a harness does not emit them as component attributes.
 CONTEXT_NAMES: Tuple[str, ...] = (
     "node", "transistor", "corner", "voltage_offset_V", "temperature_C",
     "clock_mhz", "stim_mode",
 )
 
 # ---------------------------------------------------------------------------
-# Legacy aliases — accepted nowhere, but recognized so the error can say what to
-# rename. Every one of these was a live `arch_keys` entry before the freeze.
+# Legacy aliases. No estimator accepts them. The table lets the error message
+# give the correct NPUWattch name.
 # ---------------------------------------------------------------------------
 
 LEGACY_ALIASES: Dict[str, str] = {
@@ -206,8 +213,8 @@ LEGACY_ALIASES: Dict[str, str] = {
     "banks": "mem_banks",
     "num_read_ports": "mem_r_ports",
     "num_write_ports": "mem_w_ports",
-    # port totals have no single canonical successor — steer to the RW form,
-    # which is what a bare "n_ports=1" historically meant (a 1RW macro).
+    # A port total has no single NPUWattch name. The table gives the RW name,
+    # because "n_ports=1" usually describes a 1RW macro.
     "n_ports": "mem_rw_ports",
     "ports": "mem_rw_ports",
     "num_ports": "mem_rw_ports",
@@ -235,7 +242,7 @@ LEGACY_ALIASES: Dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Per-primitive parameter sets
+# Parameter sets, one for each primitive
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -264,7 +271,7 @@ _MEM = ParamSet(
 PRIMITIVE_PARAMS: Dict[str, ParamSet] = {
     # integer arithmetic
     "intadd": _INT_BINOP,
-    "adder": _INT_BINOP,            # legacy estimator module name for intadd
+    "adder": _INT_BINOP,            # the legacy name of intadd
     "intmul": _INT_BINOP,
     "intmac": ParamSet(
         required=_INT_BINOP.required + ("data_width_acc",),
@@ -274,9 +281,10 @@ PRIMITIVE_PARAMS: Dict[str, ParamSet] = {
     "fpadd": _FP_BINOP,
     "fpmul": _FP_BINOP,
     "fpmac": _FP_BINOP,
-    # special function unit — PWL evaluator for transcendentals (fp only; an
-    # int8 variant would be a direct-indexed LUT, i.e. a different primitive,
-    # deliberately NOT built — see docs/DESIGN_SFU_DMA.md)
+    # Special function unit: a piecewise-linear (PWL) evaluator for
+    # transcendental functions. It is for floating point only. An int8 unit
+    # is a LUT with a direct index, which is a different primitive. NPUWattch
+    # has no model for that primitive (see docs/DESIGN_SFU_DMA.md).
     "fpsfu": ParamSet(
         required=("node", "exponent_bits", "mantissa_bits", "sfu_op_exp",
                   "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf", "sfu_segments"),
@@ -306,25 +314,28 @@ PRIMITIVE_PARAMS: Dict[str, ParamSet] = {
                   "net_spines", "net_switch_radix"),
         optional=("net_oversubscription",),
     ),
-    # Die-to-die (chiplet) link: no RTL characterization flow exists, so the
-    # estimator side is an analytic constant — energy = data_width ×
-    # net_energy_per_bit_pJ per flit crossing. The default constant is a
-    # literature value (see energy.unit_cost.D2D_ENERGY_PER_BIT_PJ); override it
-    # per component in the description when the package/PHY is known.
+    # Die-to-die (chiplet) link. It has no RTL characterization flow, thus the
+    # model is an analytic constant:
+    #   energy of one flit crossing = data_width x net_energy_per_bit_pJ
+    # The default constant is a literature value (see
+    # energy.unit_cost.D2D_ENERGY_PER_BIT_PJ). If you know the package or the
+    # PHY, set the constant for the component in the description.
     "d2dlink": ParamSet(required=("node", "data_width"),
                         optional=("net_energy_per_bit_pJ",)),
-    # DRAM device (HBM channel): an off-chip part with no characterization
-    # flow, priced by analytic per-command constants (energy.unit_cost — the
-    # defaults cite O'Connor & Chatterjee et al., MICRO 2017, Table 3).
-    # data_width = bits moved per read/write command (request size × 8).
+    # DRAM device (HBM channel). It is an off-chip part and has no
+    # characterization flow. Analytic constants give the energy of each
+    # command (energy.unit_cost). The source of the defaults is O'Connor &
+    # Chatterjee et al., MICRO 2017, Table 3.
+    # data_width = bits that one read or write command moves
+    #            = request size in bytes x 8.
     "hbm": ParamSet(required=("node", "data_width"),
                     optional=("mem_act_energy_pJ",
                               "mem_access_energy_per_bit_pJ",
                               "mem_ref_energy_pJ")),
 }
 
-#: Description ``class:`` strings → primitive. The class vocabulary is a thin
-#: presentation layer; the primitive is what estimators register under.
+#: Class of a description -> primitive. A class is only a name in the
+#: description. An estimator registers for the primitive.
 CLASS_TO_PRIMITIVE: Dict[str, str] = {
     "register_file": "regfile",
     "xbar": "crossbar",
@@ -333,19 +344,9 @@ CLASS_TO_PRIMITIVE: Dict[str, str] = {
 
 
 def primitive_of(component_class: str) -> str:
-    """Resolve a description ``class:`` string to its primitive name."""
+    """Return the primitive for a class of a description."""
     key = str(component_class).lower()
     return CLASS_TO_PRIMITIVE.get(key, key)
-
-
-def canonical_names() -> Tuple[str, ...]:
-    """Every legal component-attribute name, sorted."""
-    return tuple(sorted(CANONICAL))
-
-
-def resolve_alias(name: str) -> Optional[str]:
-    """The canonical successor of a known legacy alias, else ``None``."""
-    return LEGACY_ALIASES.get(name)
 
 
 # ---------------------------------------------------------------------------
@@ -359,19 +360,19 @@ def validate_attributes(
     component: str = "<component>",
     policy_keys: Iterable[str] = (),
 ) -> List[str]:
-    """Check one component's attributes against the canonical vocabulary.
+    """Check the attributes of one component against the NPUWattch names.
 
-    Returns a list of **warnings**. Raises :class:`NamingError` on anything that
-    makes the estimator's answer wrong rather than merely coarse:
+    Return a list of warnings. Raise :class:`NamingError` if an attribute
+    makes the result of the estimator incorrect:
 
-    * a legacy alias (``bw``, ``depth``, ``a_width``, …) → error naming the
-      replacement, because silently defaulting is exactly the bug this freeze
-      removes;
-    * a required parameter missing for a known primitive.
+    * A legacy alias (``bw``, ``depth``, ``a_width``, ...). The error message
+      gives the correct name. Without the error, the estimator uses a default
+      value and gives no message.
+    * A known primitive that does not have a necessary parameter.
 
-    Unknown names that are not known aliases are a **warning**: a user component
-    class may legitimately carry attributes this build has never heard of, and
-    the estimator that consumes them decides whether they matter.
+    An unknown name that is not a legacy alias gives a warning, not an error.
+    A user-defined class can have attributes that this module does not know.
+    The estimator that reads them decides if they are important.
     """
     warnings: List[str] = []
     prim = primitive_of(primitive)
@@ -396,9 +397,9 @@ def validate_attributes(
     if spec is None:
         return warnings
 
-    # Context keys (node, PVT, clock) live in the description's `technology:`
-    # block, not per component — the core merges them in before the estimator
-    # is queried, so their absence here is not a component-authoring error.
+    # The context keys (node, PVT, clock) are in the `technology:` block of
+    # the description, not in a component. The core adds them before it
+    # queries the estimator. Thus a component without them is not an error.
     missing = [k for k in spec.required
                if k not in CONTEXT_NAMES and attributes.get(k) is None]
     if missing:

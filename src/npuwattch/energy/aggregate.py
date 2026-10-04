@@ -1,37 +1,37 @@
-"""Aggregate per-window activity into energy/area/power, per the manual §6.
+"""Calculate energy, area, and power from the activity of each window (manual §6).
 
-Implements exactly the §6 equations, honoring the count convention that is the
-source of silent N× bugs:
+This module uses the §6 equations:
 
     T_exec  = total_cycles · T_clk
     E_dyn   = Σ_c Σ_event  N(c,event) · E_event(c)     # activity counts, NOT ×count
-    E_leak  = ( Σ_c count(c) · P_leak(c) ) · T_exec     # area/leak DO scale with count
+    E_leak  = ( Σ_c count(c) · P_leak(c) ) · T_exec     # area and leakage use count
     E_total = E_dyn + E_leak ;  P_avg = E_total / T_exec
 
-For a systolic compound: the projection's ``count_from`` already sums the compute
-events over every PE instance (``systolic_active_cycles · lanes²``), so dynamic
-energy multiplies unit energy by that event count and by nothing else. Area and
-leakage use the element instance count (``lanes²``) times the number of physical
-arrays (``cores · arrays_per_core``).
+The count convention, with an example: an action that drives each of N
+instances for C cycles has an activity count of N·C. The dynamic energy is that
+count times the unit energy, and it is not multiplied by N again. Area and
+leakage use the instance count of the component.
+
+``aggregate_native`` is the entry point. Its inputs are a description
+(manual §3.1) and its activity rows (manual §3.3). All input paths (a harness
+or the ``-d``/``-l`` files) use it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..naming import validate_attributes
-from .unit_cost import TechContext, UnitCostProvider
+from ..user_components import user_components_of
+from .unit_cost import NoModelError, TechContext, UnitCostProvider
 
 __all__ = [
     "ComponentEnergy",
     "WindowEnergy",
     "RunEnergy",
-    "aggregate_window",
     "aggregate_native",
     "aggregate_run",
-    "analyze_run",
 ]
 
 
@@ -45,16 +45,17 @@ class ComponentEnergy:
     leak_power_mW: float
     leak_energy_pJ: float
     crit_path_ns: float
-    #: dynamic energy split by stim_mode (Σ over modes == dyn_energy_pJ) —
-    #: the finest grain the activity carries. This is what per-command
-    #: breakdowns (e.g. DRAM activate/read/write/refresh) read; rows without
-    #: a mode fall under "unspecified".
+    #: The dynamic energy for each stim_mode. The sum is dyn_energy_pJ.
+    #: A breakdown for each command reads this field (for example, the DRAM
+    #: activate, read, write, and refresh energies). The key of a row that
+    #: has no mode is "unspecified".
     dyn_by_mode: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class WindowEnergy:
-    kernel_hash: str
+    #: The name of the window (for example, a kernel hash or a layer name).
+    label: str
     components: Dict[str, ComponentEnergy]
     dyn_energy_pJ: float
     leak_energy_pJ: float
@@ -83,9 +84,9 @@ class RunEnergy:
 def _features(config: Any, tech: TechContext, stim_mode: Optional[str] = None,
               clock_mhz: Optional[float] = None) -> Dict[str, Any]:
     feats: Dict[str, Any] = dict(tech.features())
-    # The window's resolved clock joins the features so frequency-dependent
-    # estimators (the logic MLPs take log10_clock_ns) price at the run's
-    # clock; an explicit TechContext/--clock-mhz clock still wins.
+    # Add the clock of the window to the features. An estimator that depends
+    # on the frequency then uses the clock of the run (the logic MLPs use
+    # log10_clock_ns). A clock from TechContext or --clock-mhz has priority.
     if clock_mhz and not feats.get("clock_mhz"):
         feats["clock_mhz"] = float(clock_mhz)
     if isinstance(config, Mapping):
@@ -93,26 +94,6 @@ def _features(config: Any, tech: TechContext, stim_mode: Optional[str] = None,
     if stim_mode is not None:
         feats["stim_mode"] = stim_mode
     return feats
-
-
-def _resolve_clock(window: Any, tech: TechContext, clock_mhz: Optional[float]) -> float:
-    for cand in (clock_mhz, tech.clock_mhz, (window.config or {}).get("core_freq_mhz")):
-        if cand:
-            return float(cand)
-    raise ValueError(
-        f"no clock frequency for window {getattr(window, 'kernel_hash', '?')}: "
-        "pass clock_mhz, set TechContext.clock_mhz, or ensure the log has core_freq_mhz"
-    )
-
-
-def _exec_cycles(window: Any) -> Optional[int]:
-    if getattr(window, "exec_cycles", None):
-        return int(window.exec_cycles)
-    stats = getattr(window, "stats", {}) or {}
-    for k in ("total_exec_cycles", "numCycles"):
-        if stats.get(k):
-            return int(stats[k])
-    return None
 
 
 def _book_idle_per_cycle(
@@ -127,22 +108,25 @@ def _book_idle_per_cycle(
     exec_cycles: int,
     warnings: List[str],
 ) -> None:
-    """Book a memory's clocked-idle energy once per cycle (2026-09-13).
+    """Charge the clocked-idle energy of a memory one time for each cycle.
 
-    A provider may expose ``idle_terms(primitive, features) ->
-    (e_idle_per_cycle, idle_displaced_per_access)``: its access unit costs
-    then include, for one access in an otherwise quiet cycle, the idle energy
-    of every other clocked decoder group (``e_idle - displaced``). Charging
-    that inside every event over-books idle when several accesses share a
-    cycle (parallel banks) and under-books it in cycles with no access. With
-    the window's cycle count known, the idle part is moved out of the events:
+    A provider can have the optional method ``idle_terms(primitive, features)
+    -> (e_idle_per_cycle, idle_displaced_per_access)``. The unit cost of one
+    access of such a provider includes idle energy: the energy of all the
+    other clocked decoder groups in a cycle that has one access. This idle
+    part is ``e_idle - displaced``.
+
+    If each event includes this idle part, the idle energy is too large for
+    a cycle that has two or more accesses (parallel banks). It is too small
+    for a cycle that has no access. Thus, if the cycle count of the window is
+    known, this function moves the idle part out of the events:
 
         E_events = Σ N_mode · (E_mode - (e_idle - displaced))
         E_idle   = max(0, instances · e_idle · cycles - N_total · displaced)
 
-    Components whose activity already carries explicit ``idle`` rows keep the
-    event booking (their idle is the activity's business). Without a cycle
-    count the per-access booking stands, and the window says so.
+    A component that has ``idle`` rows in its activity is not changed. If the
+    window has no cycle count, each access event keeps its idle part, and the
+    window gets a warning.
     """
     idle_fn = getattr(provider, "idle_terms", None)
     if idle_fn is None:
@@ -188,14 +172,14 @@ def _aggregate_one_window(
     exec_cycles: int,
     provider: UnitCostProvider,
     tech: TechContext,
-    kernel_hash: str,
+    label: str,
     warnings: Optional[List[str]] = None,
 ) -> WindowEnergy:
-    """The §6 arithmetic for one window — shared by the BoundAction adapter
-    (``aggregate_window``) and the native adapter (``aggregate_native``).
+    """Calculate the §6 results of one window.
 
-    Dynamic energy sums event_count · per-cycle energy (events only); area and
-    leakage use the per-component instance count; leak energy = leak_power · t_exec.
+    The dynamic energy is the sum of event_count · energy_per_cycle. The area
+    and the leakage use the instance count of each component. The leakage
+    energy is leak_power · t_exec.
     """
     warnings = list(warnings or [])
     t_exec_s = exec_cycles * (1.0e-6 / clock_MHz)   # MHz -> period in seconds
@@ -205,7 +189,7 @@ def _aggregate_one_window(
     events_by_mode: Dict[str, Dict[str, float]] = {}
     for name, primitive, config, mode, count in activity_items:
         if name not in components:
-            continue                               # activity for an unlisted component
+            continue                               # the component is not in the description
         e_pc = provider.energy_per_cycle(
             primitive, _features(config, tech, mode, clock_mhz=clock_MHz))
         e = count * e_pc
@@ -248,7 +232,7 @@ def _aggregate_one_window(
     f_max = (1000.0 / max(crit_paths)) if crit_paths and max(crit_paths) > 0 else None
 
     return WindowEnergy(
-        kernel_hash=kernel_hash,
+        label=label,
         components=comp_energy,
         dyn_energy_pJ=e_dyn,
         leak_energy_pJ=e_leak,
@@ -263,47 +247,8 @@ def _aggregate_one_window(
     )
 
 
-def aggregate_window(
-    window: Any,
-    bound_actions: List[Any],
-    resolved: Mapping[str, Any],
-    provider: UnitCostProvider,
-    tech: TechContext,
-    *,
-    num_arrays: int = 1,
-    clock_mhz: Optional[float] = None,
-) -> WindowEnergy:
-    """Energy/area/power for one kernel window from the harness BoundAction path (§6).
-
-    Thin adapter over ``_aggregate_one_window``: ``resolved`` is
-    ``resolve_compound(...)`` output; ``bound_actions`` is ``bind_window(...)``.
-    ``num_arrays`` scales area/leak (physical array count), never dynamic energy.
-    """
-    warnings: List[str] = []
-    clock = _resolve_clock(window, tech, clock_mhz)
-    cycles = _exec_cycles(window)
-    if cycles is None:
-        warnings.append("no exec cycles; leakage energy set to 0")
-        cycles = 0
-
-    components = {
-        name: (rel.primitive, rel.config, int(rel.count) * max(1, num_arrays))
-        for name, rel in resolved.items()
-    }
-    activity_items = [
-        (rae.element, rae.primitive, rae.config, rae.stim_mode, ba.cycle_count)
-        for ba in bound_actions
-        for rae in ba.elements
-    ]
-    return _aggregate_one_window(
-        components, activity_items,
-        clock_MHz=clock, exec_cycles=cycles, provider=provider, tech=tech,
-        kernel_hash=getattr(window, "kernel_hash", "?"), warnings=warnings,
-    )
-
-
 def aggregate_run(window_energies: List[WindowEnergy], *, calibrated: bool) -> RunEnergy:
-    """Sum window results into run totals (§6 windowed aggregation)."""
+    """Add the window results to get the totals of the run (§6)."""
     e_dyn = sum(w.dyn_energy_pJ for w in window_energies)
     e_leak = sum(w.leak_energy_pJ for w in window_energies)
     e_total = e_dyn + e_leak
@@ -322,14 +267,15 @@ def aggregate_run(window_energies: List[WindowEnergy], *, calibrated: bool) -> R
     )
 
 
-# Native description ``class`` → the provider/estimator ``primitive`` key. Most are
-# identity; the systolic weight register is named ``register_file`` in §3.1.
-from ..naming import primitive_of as _primitive_of  # noqa: E402  (class → primitive)
+# ``_primitive_of`` gives the primitive name for the ``class`` of a component.
+# Most names are the same. An exception is the class ``register_file`` of
+# §3.1, which is the primitive ``regfile``.
+from ..naming import primitive_of as _primitive_of  # noqa: E402
 
 
 def aggregate_native(
     description: Mapping[str, Any],           # §3.1 {"npuwattch": {...}}
-    activity_rows: List[Mapping[str, Any]],  # §3.3 rows (window,component,mode,count)
+    activity_rows: List[Mapping[str, Any]],  # §3.3 rows (window, component, mode, count)
     provider: UnitCostProvider,
     tech: TechContext,
     *,
@@ -337,40 +283,62 @@ def aggregate_native(
     warnings: Optional[List[str]] = None,
     window_labels: Optional[Sequence[str]] = None,
 ) -> RunEnergy:
-    """The **core §6 entry**: energy from a native description + native activity.
+    """Calculate the energy of a run from a description and its activity rows.
 
-    Both input paths converge here — the PyTorchSim harness (``EmittedArch``, in
-    memory) and the direct ``-l activity.csv`` path (parsed rows). Components come
-    from the §3.1 ``components`` (``count`` already includes multi-array/core
-    instances; ``class`` → provider primitive); dynamic energy is keyed by the
-    ``mode`` column. Kernels run back-to-back, so each window's exec cycles come
-    from its rows' ``cycle_start/end``.
+    This function is the only energy entry point. A harness calls it with
+    the data of ``EmittedArch``. The ``-l activity.csv`` path calls it with
+    the rows of the file.
 
-    ``window_labels`` (optional, indexed by window number) names each window's
-    kernel in the per-window results — the harness passes
-    ``EmittedArch.window_labels``; a bare ``-l`` CSV has no names, so windows
-    fall back to ``window{i}``.
+    The components come from the ``components`` list of the description
+    (manual §3.1). ``count`` includes all the instances of the component.
+    ``class`` gives the primitive. The ``mode`` column of a row selects the
+    dynamic energy of one event.
+
+    The windows are consecutive in time. Thus the cycle count of a window
+    comes from ``cycle_start`` and ``cycle_end`` of its rows.
+
+    ``window_labels`` is optional. It gives the name of each window, and its
+    index is the window number. A harness supplies
+    ``EmittedArch.window_labels``. An activity CSV has no names, thus the
+    name of window ``i`` is ``window{i}``.
+
+    If no provider has a model for the class of a component, the function
+    raises ``ValueError``. A component of the user component library (the
+    ``user_components`` block of the description) has no attributes to check.
     """
     nw = description.get("npuwattch", {})
     clock = (nw.get("clock") or {}).get("frequency_MHz") or default_clock_mhz
     if not clock:
         raise ValueError("native description has no clock.frequency_MHz (and no default_clock_mhz)")
 
-    # Attribute names are a contract, not a suggestion: a hand-written or
-    # harness-emitted description that uses a legacy spelling raises here rather
-    # than silently defaulting inside an estimator.
+    # Each attribute has one NPUWattch name. A legacy alias of an attribute
+    # name causes an error here. Without the error, the estimator uses a
+    # default value and gives no message.
+    user_names = set(user_components_of(description))
     components = {}
     for c in nw.get("components", []):
-        primitive = _primitive_of(c.get("class", ""))
         attrs = dict(c.get("attributes") or {})
-        notes = validate_attributes(primitive, attrs, component=str(c.get("name", "?")))
-        if warnings is not None:
-            warnings.extend(notes)
+        if str(c.get("class", "")) in user_names:
+            primitive = str(c["class"])         # a user component keeps its name
+        else:
+            primitive = _primitive_of(c.get("class", ""))
+            notes = validate_attributes(primitive, attrs,
+                                        component=str(c.get("name", "?")))
+            if warnings is not None:
+                warnings.extend(notes)
         components[c["name"]] = (primitive, attrs, int(c.get("count", 1)))
+        # Make sure that a provider has a model for the class. The error
+        # message gives the component name.
+        try:
+            provider.area(primitive, _features(attrs, tech,
+                                               clock_mhz=float(clock)))
+        except NoModelError as e:
+            raise ValueError(f"{c['name']}: {e}") from e
 
-    # Queries outside what the estimators characterized (a pipeline depth the
-    # RTL never had, a clock faster than any implementation closed) still get
-    # a number; the provider says why it is not a measured design point.
+    # A query can be outside the range that the estimators characterized.
+    # Examples are a pipeline depth that the RTL does not have, and a clock
+    # that no implementation met. The provider gives a value for such a query,
+    # and a warning that tells why the value is not a measured design point.
     envelope_fn = getattr(provider, "envelope_warnings", None)
     if envelope_fn is not None and warnings is not None:
         for name, (primitive, attrs, _) in components.items():
@@ -404,34 +372,7 @@ def aggregate_native(
             _aggregate_one_window(
                 components, activity_items,
                 clock_MHz=float(clock), exec_cycles=cycles, provider=provider, tech=tech,
-                kernel_hash=label,
+                label=label,
             )
         )
     return aggregate_run(window_energies, calibrated=bool(getattr(provider, "calibrated", False)))
-
-
-def analyze_run(
-    togsim_dir: Path,
-    gem5_dir: Path,
-    provider: UnitCostProvider,
-    tech: TechContext,
-    *,
-    compound_name: str = "systolic_mac",
-    bundle: Any = None,
-    default_clock_mhz: Optional[float] = None,
-) -> RunEnergy:
-    """End-to-end: read a PyTorchSim run (TOGSim logs dir + gem5 outputs dir) →
-    native (via the emitter) → §6.
-
-    The one-call demo of the full pipeline (activity → native arch/activity →
-    energy), routed through the same ``aggregate_native`` core the CLI uses.
-    """
-    from ..arch_synth import synthesize_run
-
-    em = synthesize_run(
-        togsim_dir, gem5_dir, tech, compound_name=compound_name, bundle=bundle,
-        default_clock_mhz=default_clock_mhz,
-    )
-    return aggregate_native(em.description, em.activity_rows, provider, tech,
-                            default_clock_mhz=default_clock_mhz,
-                            window_labels=em.window_labels)

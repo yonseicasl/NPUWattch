@@ -1,13 +1,14 @@
-"""Parse gem5 ``stats.txt`` dump sections.
+"""Parse the dump sections of a gem5 ``stats.txt`` file.
 
-A gem5 stats file is one or more ``Begin/End Simulation Statistics`` sections,
-each a periodic ``m5.stats.dump()`` snapshot. For PyTorchSim the sections are
-**per-dump, not cumulative** (``system.cpu.numCycles`` is non-monotonic across
-sections), so per-kernel totals are the **sum across a file's sections**.
+A gem5 stats file has one or more ``Begin/End Simulation Statistics`` sections.
+Each section is one periodic ``m5.stats.dump()`` snapshot. For PyTorchSim, each
+section gives the values of **one dump and is not cumulative**
+(``system.cpu.numCycles`` is non-monotonic across sections). Thus the total of
+a kernel is the **sum across the sections of its file**.
 
-This reader is deliberately generic (name → value per section) so the roadmap
-generic-gem5 harness can reuse it; the PyTorchSim-specific stat selection lives
-in ``activity.py``.
+This reader is generic: it gives name → value for each section. A different
+gem5 harness can also use it. The selection of the PyTorchSim stats is in
+``activity.py``.
 """
 
 from __future__ import annotations
@@ -23,16 +24,16 @@ __all__ = [
 
 _BEGIN = "Begin Simulation Statistics"
 _END = "End Simulation Statistics"
-# "<name>  <value>  [cols...]  # comment" — take the first numeric token.
+# "<name>  <value>  [cols...]  # comment": the pattern takes the first numeric token.
 _STAT = re.compile(r"^(\S+)\s+(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b")
 _INST = re.compile(r"committedInstType::(\w+)")
 
 
 def parse_sections(text: str) -> List[Dict[str, float]]:
-    """Split into per-section ``{stat_name: value}`` dicts.
+    """Divide the text into one ``{stat_name: value}`` dict for each section.
 
-    A file with no ``Begin`` marker is treated as a single implicit section
-    (some gem5 configs emit a bare stats block).
+    A file with no ``Begin`` marker is one implicit section. Some gem5
+    configurations write a stats block without markers.
     """
     sections: List[Dict[str, float]] = []
     current: Dict[str, float] = {}
@@ -53,7 +54,7 @@ def parse_sections(text: str) -> List[Dict[str, float]]:
             current = {}
             have_current = False
             continue
-        code = line.split("#", 1)[0]  # drop trailing comment
+        code = line.split("#", 1)[0]  # remove the comment at the end of the line
         m = _STAT.match(code)
         if m:
             try:
@@ -68,16 +69,16 @@ def parse_sections(text: str) -> List[Dict[str, float]]:
 
 
 def sum_stat(sections: List[Dict[str, float]], name: str) -> float:
-    """Sum one stat across all sections (0.0 if never present)."""
+    """Sum one stat across all sections. The result is 0.0 if the stat is absent."""
     return float(sum(sec.get(name, 0.0) for sec in sections))
 
 
 def sum_committed_inst(sections: List[Dict[str, float]]) -> Dict[str, int]:
-    """Sum every ``committedInstType::<class>`` across sections.
+    """Sum each ``committedInstType::<class>`` stat across the sections.
 
-    Returns ``{class_name: total_count}`` (e.g. ``{"CustomMatMulwVpush": 71}``),
-    keyed by the bare instruction-class name regardless of the ``commitStatsN``
-    prefix.
+    Return ``{class_name: total_count}``, for example
+    ``{"CustomMatMulwVpush": 71}``. The key is the instruction class name
+    without the ``commitStatsN`` prefix.
     """
     totals: Dict[str, int] = {}
     for sec in sections:

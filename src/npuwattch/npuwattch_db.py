@@ -1,8 +1,8 @@
 """NPUWattch Database Module.
 
-This module builds an in-memory database from flattened Accelergy v0.4 YAML files.
-It extracts component information including name, class, subclass, attributes,
-and instance counts for use in energy estimation workflows.
+This module builds an in-memory database from a flattened Accelergy v0.4 YAML
+file. For each component, the database contains the name, the class, the
+subclass, the attributes, and the instance count.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ import yaml
 
 @dataclass
 class ComponentEntry:
-    """Represents a single component entry in the database."""
+    """One component entry of the database."""
     name: str
-    base_name: str  # Name without instance suffix
+    base_name: str  # The name without the instance suffix
     comp_class: str
     subclass: Optional[str]
     attributes: Dict[str, Any]
     instance_count: int
     enabled: bool = True
-    # Estimator output columns (populated later by estimator)
+    # Estimator results. An estimator sets them after the database is built.
     energy: Optional[float] = None
     area: Optional[float] = None
     timing: Optional[float] = None
@@ -40,12 +40,12 @@ class ComponentEntry:
 @dataclass
 class NPUWattchDatabase:
     """
-    In-memory database of architecture components extracted from flattened YAML.
+    The in-memory database of the components of a flattened YAML file.
     
     Attributes:
-        components: List of all component entries
-        version: Architecture version from the YAML
-        source_file: Path to the source flattened YAML file
+        components: All component entries
+        version: The architecture version in the YAML
+        source_file: The path of the flattened YAML file
     """
     components: List[ComponentEntry] = field(default_factory=list)
     version: str = "0.4"
@@ -65,26 +65,26 @@ class NPUWattchDatabase:
         return iter(self.components)
     
     def get_by_name(self, name: str) -> Optional[ComponentEntry]:
-        """Find a component by its base name (without instance suffix)."""
+        """Find a component by its name, with or without the instance suffix."""
         for comp in self.components:
             if comp.base_name == name or comp.name == name:
                 return comp
         return None
     
     def get_by_class(self, comp_class: str) -> List[ComponentEntry]:
-        """Find all components with a specific class."""
+        """Return all components of one class."""
         return [c for c in self.components if c.comp_class == comp_class]
     
     def get_by_subclass(self, subclass: str) -> List[ComponentEntry]:
-        """Find all components with a specific subclass."""
+        """Return all components of one subclass."""
         return [c for c in self.components if c.subclass == subclass]
     
     def total_instances(self) -> int:
-        """Get the total number of component instances across all entries."""
+        """Return the total instance count of all entries."""
         return sum(c.instance_count for c in self.components)
     
     def summary(self) -> Dict[str, Any]:
-        """Get a summary of the database contents."""
+        """Return a summary of the database."""
         return {
             "version": self.version,
             "source_file": str(self.source_file) if self.source_file else None,
@@ -96,9 +96,9 @@ class NPUWattchDatabase:
 
 class DatabaseBuilder:
     """
-    Builds an NPUWattchDatabase from flattened YAML files.
+    Builds an NPUWattchDatabase from a flattened YAML file.
     
-    The flattened YAML should have the structure:
+    The flattened YAML must have this structure:
         architecture:
             version: '0.4'
             local:
@@ -109,7 +109,7 @@ class DatabaseBuilder:
                   enabled: true  # optional
     """
     
-    # Pattern to match instance notation [n..m] at the end of name
+    # The instance notation [n..m] at the end of a name
     INSTANCE_PATTERN = re.compile(r'\[(\d+)\.\.(\d+)\]$')
     
     def __init__(self, verbose: int = 0):
@@ -117,16 +117,16 @@ class DatabaseBuilder:
         Initialize the database builder.
         
         Args:
-            verbose: Verbosity level (0=quiet, 1=info, 2+=detailed)
+            verbose: The verbosity level (0=quiet, 1=info, 2+=detailed)
         """
         self.verbose = verbose
     
     def _parse_instance_count(self, name: str) -> tuple[str, int]:
         """
-        Parse the instance count from a component name.
+        Divide a component name into its base name and its instance count.
         
         Args:
-            name: Component name, possibly with [n..m] suffix
+            name: The component name, with an optional [n..m] suffix
             
         Returns:
             Tuple of (base_name, instance_count)
@@ -147,13 +147,13 @@ class DatabaseBuilder:
     
     def _parse_component(self, entry: Dict[str, Any]) -> Optional[ComponentEntry]:
         """
-        Parse a single component entry from the YAML.
+        Parse one component entry of the YAML.
         
         Args:
-            entry: Dictionary representing one component from architecture.local
+            entry: One component of architecture.local
             
         Returns:
-            ComponentEntry or None if parsing fails
+            A ComponentEntry, or None if the entry has no name
         """
         name = entry.get('name', '')
         if not name:
@@ -176,10 +176,10 @@ class DatabaseBuilder:
         Build a database from a flattened YAML file.
         
         Args:
-            yaml_path: Path to the flattened YAML file
+            yaml_path: The path of the flattened YAML file
             
         Returns:
-            NPUWattchDatabase populated with component entries
+            An NPUWattchDatabase that contains the component entries
         """
         yaml_path = Path(yaml_path)
         
@@ -193,7 +193,7 @@ class DatabaseBuilder:
             print("[WARNING] Empty YAML file")
             return NPUWattchDatabase(source_file=yaml_path)
         
-        # Extract architecture section
+        # Read the architecture section
         arch = content.get('architecture', {})
         version = arch.get('version', '0.4')
         local_components = arch.get('local', [])
@@ -210,7 +210,7 @@ class DatabaseBuilder:
             if component:
                 db.components.append(component)
         
-        # Output detailed info if verbose >= 1
+        # Print the contents if verbose >= 1
         if self.verbose >= 1:
             self._print_database_contents(db)
         
@@ -222,19 +222,19 @@ class DatabaseBuilder:
     def build_from_dict(self, content: Dict[str, Any], 
                         source_name: str = "<dict>") -> NPUWattchDatabase:
         """
-        Build a database from an already-loaded dictionary.
+        Build a database from a dictionary that is already loaded.
         
         Args:
-            content: Dictionary containing the flattened architecture
-            source_name: Name to identify the source (for logging)
+            content: The dictionary of the flattened architecture
+            source_name: The name of the source, for the log
             
         Returns:
-            NPUWattchDatabase populated with component entries
+            An NPUWattchDatabase that contains the component entries
         """
         if self.verbose >= 1:
             print(f"[INFO] Starting database construction from: {source_name}")
 
-        # Extract architecture section
+        # Read the architecture section
         arch = content.get('architecture', {})
         version = arch.get('version', '0.4')
         local_components = arch.get('local', [])
@@ -250,7 +250,7 @@ class DatabaseBuilder:
             if component:
                 db.components.append(component)
         
-        # Output detailed info if verbose >= 2
+        # Print the contents if verbose >= 2
         if self.verbose >= 2:
             self._print_database_contents(db)
 
@@ -261,7 +261,7 @@ class DatabaseBuilder:
         return db
     
     def _print_database_contents(self, db: NPUWattchDatabase) -> None:
-        """Print detailed database contents to console."""
+        """Print the database contents to the console."""
         print("[INFO] Registered Components List:")
         print("=" * 100)
         print(f"{'NAME':<60} {'CLASS':<20} {'INSTANCES':>10}")
@@ -281,14 +281,14 @@ def build_database(
     verbose: int = 0,
 ) -> NPUWattchDatabase:
     """
-    Convenience function to build a database from a flattened YAML file.
+    Build a database from a flattened YAML file with a new builder.
     
     Args:
-        yaml_path: Path to the flattened YAML file
-        verbose: Verbosity level (0=quiet, 1=info, 2+=detailed)
+        yaml_path: The path of the flattened YAML file
+        verbose: The verbosity level (0=quiet, 1=info, 2+=detailed)
         
     Returns:
-        NPUWattchDatabase populated with component entries
+        An NPUWattchDatabase that contains the component entries
     """
     builder = DatabaseBuilder(verbose=verbose)
     return builder.build_from_yaml(yaml_path)
@@ -300,15 +300,15 @@ def build_database_from_dict(
     source_name: str = "<dict>",
 ) -> NPUWattchDatabase:
     """
-    Convenience function to build a database from a dictionary.
+    Build a database from a dictionary with a new builder.
     
     Args:
-        content: Dictionary containing the flattened architecture
-        verbose: Verbosity level (0=quiet, 1=info, 2+=detailed)
-        source_name: Name to identify the source (for logging)
+        content: The dictionary of the flattened architecture
+        verbose: The verbosity level (0=quiet, 1=info, 2+=detailed)
+        source_name: The name of the source, for the log
         
     Returns:
-        NPUWattchDatabase populated with component entries
+        An NPUWattchDatabase that contains the component entries
     """
     builder = DatabaseBuilder(verbose=verbose)
     return builder.build_from_dict(content, source_name)

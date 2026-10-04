@@ -1,0 +1,83 @@
+# ============================================================================
+#  PyTorchSim vocabulary table
+# ============================================================================
+# This table translates PyTorchSim names into NPUWattch names.
+# The engine is npuwattch_harness/vocabulary.py.
+#
+# PyTorchSim does not have an architecture file with classes and attributes.
+# The compound components of the run (compound_components.yaml, an input of
+# the run) give the architecture, and they use
+# NPUWattch attribute names directly. Thus this table has no `classes` and no
+# `attributes` section. It contains the names that the log readers find in a
+# PyTorchSim run: datatype spellings and gem5 instruction classes.
+
+tool: pytorchsim
+
+# ----------------------------------------------------------------------------
+# dtypes: MLIR or torch spelling (lowercase)  ->  datatype name
+# ----------------------------------------------------------------------------
+# An integer type `i<N>` or `u<N>` does not need an entry. The reader gets the
+# width from the name.
+dtypes:
+  # floating point, MLIR
+  f64: f64
+  f32: f32
+  f16: f16
+  bf16: bf16
+  f8e4m3fn: f8e4m3
+  f8e4m3: f8e4m3
+  f8e5m2: f8e5m2
+  # floating point, torch
+  torch.float64: f64
+  torch.double: f64
+  torch.float32: f32
+  torch.float: f32
+  torch.float16: f16
+  torch.half: f16
+  torch.bfloat16: bf16
+  # integer, torch
+  torch.int64: i64
+  torch.long: i64
+  torch.int32: i32
+  torch.int: i32
+  torch.int16: i16
+  torch.short: i16
+  torch.int8: i8
+  torch.uint8: u8
+  torch.bool: i1
+
+# ----------------------------------------------------------------------------
+# float_formats: datatype name  ->  [total bits, exponent bits, mantissa bits]
+# ----------------------------------------------------------------------------
+float_formats:
+  f64: [64, 11, 52]
+  f32: [32, 8, 23]
+  f16: [16, 5, 10]
+  bf16: [16, 8, 7]
+  f8e4m3: [8, 4, 3]
+  f8e5m2: [8, 5, 2]
+
+# ----------------------------------------------------------------------------
+# stats: groups of simulator counter names
+# ----------------------------------------------------------------------------
+# Each name is a gem5 `committedInstType` class. The reader copies the count of
+# each class into the window stats with the same name. The projection
+# of the run (projection.yaml) refers to these stat names.
+stats:
+  # Instructions that drive the systolic array.
+  matmul_instructions:
+    - CustomMatMul
+    - CustomMatMulwVpush
+    - CustomMatMuliVpush
+    - CustomMatMulvpop
+  # Instructions that drive the special function unit (SFU). One instruction
+  # moves one vector of `lanes` elements through the SFU.
+  # `CustomVlaneIdx` is not in this group. It generates lane indexes, it is
+  # not an SFU operation, and its energy is negligible.
+  sfu_instructions:
+    - CustomVexp
+    - CustomVexp2
+    - CustomVerf
+    - CustomVtanh
+    - CustomVsin
+    - CustomVcos

@@ -1,14 +1,14 @@
-"""Inline-SVG chart generation for the HTML PPA report (manual §8).
+"""The inline SVG charts of the HTML PPA report (manual §8).
 
-Pure functions returning SVG strings — no I/O, no state — so tests can assert
-on structure (element counts, summed percentages) rather than pixels. All
-numbers are computed by the caller (`report/html.py`); these functions only
-draw what they are handed.
+Each function is pure and returns an SVG string. There is no I/O and no
+state. Thus a test can check the structure (element counts, sum of the
+percentages) and not the pixels. The caller (`report/html.py`) calculates all
+the numbers. These functions only draw them.
 
-Component→color assignment is stable across every chart in a report:
-``color_for`` hashes the component name into a fixed palette, so the same
-component is the same color in the energy donut, the area donut, and the bar
-lists (skill guidance).
+A component has the same color in all charts of a report. ``color_for``
+calculates a hash of the component name and selects a color from a fixed
+palette. Thus the color is the same in the energy donut, the area donut, and
+the bar lists.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ __all__ = [
     "dyn_leak_bar", "donut", "hbar_list", "windows_chart",
 ]
 
-#: 12 chart colors, ordered for adjacent contrast on the report's light ground.
+#: The 12 chart colors. The order gives contrast between adjacent colors on
+#: the light background of the report.
 PALETTE = (
     "#C27200", "#118476", "#6E59B5", "#A5518E", "#2E6FA3", "#7A8B2F",
     "#B5484D", "#3A9A8F", "#8A6ED1", "#C1793A", "#4E7AC0", "#948C22",
@@ -34,13 +35,15 @@ _GRID = "#e3e1dc"
 
 
 def color_for(name: str) -> str:
-    """Stable component color: hash of the name → palette index."""
+    """Return the color of a component. The hash of the name gives the
+    palette index, thus the color does not change between charts."""
     h = int(hashlib.md5(name.encode("utf-8")).hexdigest(), 16)
     return PALETTE[h % len(PALETTE)]
 
 
 def fmt_si(value: float, unit: str) -> str:
-    """3-significant-figure value with an SI-scaled unit (pJ→nJ→µJ, mW→W)."""
+    """Return the value with 3 significant figures and an SI prefix on the
+    unit (pJ→nJ→µJ, mW→W)."""
     scales = {"pJ": (("µJ", 1e6), ("nJ", 1e3), ("pJ", 1.0)),
               "mW": (("W", 1e3), ("mW", 1.0))}
     for u, s in scales.get(unit, ((unit, 1.0),)):
@@ -55,11 +58,12 @@ def _esc(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# dynamic-vs-leakage split bar
+# Bar of the dynamic and leakage split
 # ---------------------------------------------------------------------------
 
 def dyn_leak_bar(dyn_pJ: float, leak_pJ: float, *, width: int = 560) -> str:
-    """Two-segment stacked bar: dynamic vs leakage share of total energy."""
+    """Draw a stacked bar with two segments: the dynamic share and the
+    leakage share of the total energy."""
     total = dyn_pJ + leak_pJ
     frac = (dyn_pJ / total) if total > 0 else 0.0
     h, w_dyn = 20, frac * width
@@ -84,11 +88,13 @@ def share_bar(a_label: str, a_val: float, b_label: str, b_val: float, *,
               unit: str = "pJ", a_fill: str = "#3b6ea5",
               b_fill: str = "#948C22", width: int = 560,
               aria: str = "two-way share") -> str:
-    """Two-segment stacked bar of a vs b, values + shares under the ends.
+    """Draw a stacked bar with two segments, a and b. The value and the share
+    of each segment are below the ends of the bar.
 
-    Same shape as ``dyn_leak_bar`` but generic — the report's NPU-vs-DRAM
-    energy split uses it (2026-08-11: DRAM dominates full-run totals, so it
-    gets this dedicated bar and stays out of the per-component donut).
+    The shape is the same as ``dyn_leak_bar``, but the labels and colors are
+    parameters. The report uses this bar for the NPU and DRAM energy split.
+    DRAM uses most of the energy of a full run. Thus DRAM has this separate
+    bar and is not in the component donut.
     """
     total = a_val + b_val
     frac = (a_val / total) if total > 0 else 0.0
@@ -111,18 +117,21 @@ def share_bar(a_label: str, a_val: float, b_label: str, b_val: float, *,
 
 
 # ---------------------------------------------------------------------------
-# donut (per-component share)
+# Donut (share of each component)
 # ---------------------------------------------------------------------------
 
 def donut(items: Sequence[Tuple[str, float]], *, unit: str = "pJ",
           size: int = 200) -> str:
-    """Donut of (label, value) shares. The caller passes already-grouped items
-    (top-N + "other"); values must be non-negative. Center shows the total."""
+    """Draw a donut of the shares of the (label, value) items.
+
+    The caller groups the items first: the N largest items and "other". The
+    values must not be negative. The center shows the total.
+    """
     total = sum(v for _, v in items)
     cx = cy = size / 2
     r, ring = size * 0.40, size * 0.16
     parts: List[str] = []
-    angle = -90.0                                     # start at 12 o'clock
+    angle = -90.0                                     # start at the top
     for label, value in items:
         if total <= 0 or value <= 0:
             continue
@@ -151,12 +160,13 @@ def donut(items: Sequence[Tuple[str, float]], *, unit: str = "pJ",
 
 
 # ---------------------------------------------------------------------------
-# horizontal bar list (per-component share)
+# Horizontal bar list (share of each component)
 # ---------------------------------------------------------------------------
 
 def hbar_list(items: Sequence[Tuple[str, float]], *, unit: str = "pJ",
               width: int = 560) -> str:
-    """One row per (label, value): swatch, name, bar ∝ value, value + share."""
+    """Draw one row for each (label, value) item. A row shows the color
+    swatch, the name, a bar ∝ value, the value, and the share."""
     total = sum(v for _, v in items) or 1.0
     vmax = max((v for _, v in items), default=1.0) or 1.0
     row_h, bar_x, bar_w = 22, 190, width - 190 - 120
@@ -181,15 +191,18 @@ def hbar_list(items: Sequence[Tuple[str, float]], *, unit: str = "pJ",
 
 
 # ---------------------------------------------------------------------------
-# cycle-level chart (§8.5): windowed energy bars + average-power line
+# Cycle-level chart (§8.5): energy bar of each window and average-power line
 # ---------------------------------------------------------------------------
 
 def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
                   height: int = 280) -> str:
-    """E(w) bars over a true cycle axis (bar width ∝ window cycles; dynamic
-    stacked under leakage) with the per-window average-power line overlaid on
-    a right-hand axis. ``windows`` rows need: label, cycles, dyn_pJ, leak_pJ,
-    total_pJ, avg_power_mW."""
+    """Draw the energy of each window as a bar on a cycle axis.
+
+    The width of a bar ∝ the cycles of the window. The dynamic energy is
+    below the leakage energy in the bar. A line shows the average power of
+    each window on the right axis. Each row of ``windows`` must have: label,
+    cycles, dyn_pJ, leak_pJ, total_pJ, avg_power_mW.
+    """
     if not windows:
         return ""
     L, R, T, B = 72, 76, 14, 44
@@ -201,7 +214,7 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
     y_p = lambda v: T + plot_h * (1 - v / p_max)
 
     parts: List[str] = []
-    for i in range(5):                                # energy grid + ticks
+    for i in range(5):                                # energy grid and ticks
         v = e_max * i / 4
         parts.append(
             f'<line x1="{L}" x2="{width - R}" y1="{y_e(v):.1f}" '
@@ -224,7 +237,7 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
             f'height="{T + plot_h - yd:.1f}" fill="#3b6ea5">'
             f'<title>{_esc(w["label"])}: dynamic '
             f'{fmt_si(w["dyn_pJ"], "pJ")}</title></rect>')
-        parts.append(                                  # leakage on top
+        parts.append(                                  # leakage above dynamic
             f'<rect class="w-leak" x="{x:.1f}" y="{yt:.1f}" width="{seg_w:.1f}" '
             f'height="{yd - yt:.1f}" fill="{_LEAK}" opacity="0.6">'
             f'<title>{_esc(w["label"])}: leakage '
@@ -239,7 +252,7 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
         line_pts.append(f'{x + seg_w / 2:.1f},{y_p(w["avg_power_mW"]):.1f}')
         x += seg_w + gap
 
-    parts.append(                                      # avg-power overlay
+    parts.append(                                      # average-power line
         f'<polyline class="p-line" points="{" ".join(line_pts)}" fill="none" '
         f'stroke="#2E6FA3" stroke-width="2"/>')
     for pt in line_pts:

@@ -1,24 +1,28 @@
-"""NPUWattch Argument Parser Module.
+"""NPUWattch argument parser.
 
-This module handles command-line argument parsing for NPUWattch, supporting:
-- Flatten mode: Convert Accelergy v0.4 YAML to flattened format
-- Estimator mode: Run energy/area/timing estimation on architecture
-- Training mode: Train MLP models for estimation
+This module parses the command-line arguments of NPUWattch for four modes:
+
+- Flatten mode converts an Accelergy v0.4 YAML file to the flattened format.
+- Estimator mode calculates the energy of a native description.
+- Harness mode makes the description and the activity rows from the files
+  of a simulator, then calculates the energy.
+- Training mode trains the MLP models of an estimator.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
 
 class NPUWattchArgumentParser(argparse.ArgumentParser):
-    """ArgumentParser that prepends a consistent banner before argparse's default error output."""
+    """An ArgumentParser that prints an NPUWattch error line before the argparse
+    error message."""
 
     def error(self, message: str) -> None:
         self._print_message(
@@ -30,8 +34,8 @@ class NPUWattchArgumentParser(argparse.ArgumentParser):
 
 @dataclass(frozen=True)
 class NPUWattchArgs:
-    """Parsed command-line arguments."""
-    # Normal execution mode
+    """The parsed command-line arguments."""
+    # Estimator mode
     description_files: List[Path]
     activity_logs: List[Path]
 
@@ -52,40 +56,29 @@ class NPUWattchArgs:
 
     verbose: int
 
-    # Harness mode (--harness NAME + that harness's named inputs); tech/PVT
-    # defaults = nominal. PyTorchSim writes its two result sets to separate
-    # locations, so each is its own explicit flag — there is no umbrella "-i".
-    # Which flags a given harness requires is declared in its HARNESS_SPEC and
-    # checked against the registry, not hardcoded here.
+    # Harness mode: --harness NAME and the named inputs of that harness.
+    # The flags come from the HARNESS_SPEC declarations (npuwattch_harness.registry
+    # cli_flags). `harness_inputs` is input name -> path and `harness_options`
+    # is option name -> value, for the flags that the user gave.
     harness: Optional[str] = None
-    togsim_dir: Optional[Path] = None
-    gem5_dir: Optional[Path] = None
-    config_yml: Optional[Path] = None
-    booksim_dir: Optional[Path] = None
-    energy_table: Optional[Path] = None
-    arch_yaml: Optional[Path] = None
-    # Timeloop harness activity: a timeloop-model/mapper .stats.txt (or a
-    # directory of per-layer stats files), the optional level→component map,
-    # and the multi-layer handling (None → the harness default, "windows").
-    timeloop_stats: Optional[Path] = None
-    stats_map: Optional[Path] = None
-    stats_mode: Optional[str] = None
+    harness_inputs: Dict[str, Path] = field(default_factory=dict)
+    harness_options: Dict[str, Any] = field(default_factory=dict)
     out_dir: Optional[Path] = None
-    # Estimator mode, -d without -l: fraction of random switching for the
-    # VECTORLESS estimate (None → energy.DEFAULT_VECTORLESS_ACTIVITY = 0.25).
+    # Vectorless runs: the fraction of random switching for the VECTORLESS
+    # estimate. None selects energy.DEFAULT_VECTORLESS_ACTIVITY (0.25).
     vectorless_activity: Optional[float] = None
-    # Print the instance-hierarchy tree (report.tree) of the modeled arch.
+    # Print the instance hierarchy (report.tree) of the design.
     tree: bool = False
     # Write the HTML/JSON PPA report (manual §8) to this directory.
     report_dir: Optional[Path] = None
     node: str = "7nm"
-    #: True when --node was given on the command line (not the 7nm default).
+    #: True if --node is on the command line (False for the 7nm default).
     node_explicit: bool = False
     transistor: str = "hp"          # hp | lp
     corner: str = "TT"              # TT | SS | FF
     voltage_offset_V: float = 0.0   # nominal Vdd
     temperature_C: float = 25.0
-    clock_mhz: Optional[float] = None   # None → from the harness log
+    clock_mhz: Optional[float] = None   # None: use the harness log
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -120,15 +113,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # =========================================================================
-    # Shared input / output (meaning depends on mode)
+    # Shared input / output (the mode sets the meaning)
     # =========================================================================
     io_group = parser.add_argument_group("Input / Output")
 
     io_group.add_argument(
         "-i", "--input", "--input_yaml",
         dest="input_path",
-        help="Input path: YAML to flatten (-f only; harness mode uses "
-             "--togsim-dir/--gem5-dir).",
+        help="Input path: YAML to flatten (-f only; harness mode uses the "
+             "named inputs of the harness).",
     )
 
     io_group.add_argument(
@@ -147,8 +140,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-d", "--description",
         dest="description_files",
         help="Native NPUWattch description YAML ('npuwattch:' root, §3.1). "
-             "Accelergy/Timeloop architecture YAMLs are a harness input: "
-             "--harness timeloop --arch-yaml <file>.",
+             "A simulator's own architecture file (e.g. an Accelergy/"
+             "Timeloop YAML) is a harness input: see --harness.",
     )
 
     estimator_group.add_argument(
@@ -161,8 +154,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--vectorless-activity",
         dest="vectorless_activity",
         type=float,
-        help="Vectorless runs only (-d without -l, or --harness timeloop "
-             "WITHOUT --stats): fraction of random switching assumed for the "
+        help="Vectorless runs only (-d without -l, or a harness run "
+             "without its activity input): fraction of random switching assumed for the "
              "VECTORLESS estimate, in (0, 1] (default 0.25; crossbar-family "
              "primitives use their measured valid25 mode instead).",
     )
@@ -188,86 +181,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # =========================================================================
     harness_group = parser.add_argument_group("Harness Mode Options")
 
+    harness_flags = _harness_flags()
+    harness_names = sorted({name for entry in harness_flags.values()
+                            for name in entry["by_harness"]})
     harness_group.add_argument(
         "--harness",
         dest="harness",
-        help="Select a simulator harness (e.g. 'pytorchsim') and synthesize the "
-             "native NPUWattch description + activity from its named inputs.",
+        help="Select a simulator harness"
+             + (f" ({', '.join(harness_names)})" if harness_names else "")
+             + " and synthesize the native NPUWattch description + activity "
+               "from its named inputs.",
     )
-    harness_group.add_argument(
-        "--togsim-dir",
-        dest="togsim_dir",
-        help="PyTorchSim harness: directory holding the run's FINAL TOGSim logs "
-             "(the root togsim_results/; outputs/<hash>/togsim_result/ are "
-             "autotune candidates, not results). Required with --harness pytorchsim.",
-    )
-    harness_group.add_argument(
-        "--config-yml",
-        dest="config_yml",
-        help="PyTorchSim harness (optional): the run's config.yml. The log "
-             "header wins; this fills gaps in damaged headers and cross-checks "
-             "the pairing (disagreements are warned).",
-    )
-    harness_group.add_argument(
-        "--gem5-dir",
-        dest="gem5_dir",
-        help="PyTorchSim harness: directory holding the per-kernel gem5/codegen "
-             "dirs (raw run: outputs/; author bundle: gem5_outputs/). Required "
-             "with --harness pytorchsim.",
-    )
-    harness_group.add_argument(
-        "--booksim-dir",
-        dest="booksim_dir",
-        help="PyTorchSim harness (optional): the run's booksim2_config/ "
-             "directory. Needed only for anynet NoC topologies (their .net "
-             "network file); fly NoCs are self-contained in the log.",
-    )
-    harness_group.add_argument(
-        "--energy-table",
-        dest="energy_table",
-        help="PyTorchSim or Timeloop harness (optional): a DRAM energy-cost "
-             "table yml (PyTorchSim's energy_cost_table_path format, e.g. "
-             "hbm2.yml). PyTorchSim: replaces the dram compound's built-in "
-             "HBM2 constants. Timeloop: overrides the shipped table picked by "
-             "the Accelergy DRAM 'type' (LPDDR4/LPDDR/DDR3/GDDR5/HBM2/HMC); "
-             "per-bit-only tables are accepted there.",
-    )
-    harness_group.add_argument(
-        "--arch-yaml",
-        dest="arch_yaml",
-        help="Timeloop harness: the Accelergy/Timeloop architecture YAML "
-             "(v0.4, 'architecture:' root). Required with --harness timeloop — "
-             "the only route for such files; -d takes native descriptions only.",
-    )
-    harness_group.add_argument(
-        "--stats",
-        dest="timeloop_stats",
-        help="Timeloop harness (optional): a timeloop-model/mapper .stats.txt "
-             "file, or a directory of per-layer stats files (sorted by name = "
-             "layer order). Provides real activity (reads/fills+updates/"
-             "Computes); without it the run is the labeled VECTORLESS "
-             "estimate.",
-    )
-    harness_group.add_argument(
-        "--stats-map",
-        dest="stats_map",
-        help="Timeloop harness (with --stats): YAML mapping stats level names "
-             "to description components ('levels: {LevelName: component}') "
-             "and dropping levels deliberately ('ignore: [DRAM]'). Levels "
-             "matching a component name (or its dotted leaf) need no entry.",
-    )
-    harness_group.add_argument(
-        "--stats-mode",
-        dest="stats_mode",
-        choices=["windows", "aggregate"],
-        help="Timeloop harness (with --stats): how a DIRECTORY of per-layer "
-             "stats files is combined — 'windows' (default) keeps one window "
-             "per layer (per-layer energy over time in the report), "
-             "'aggregate' sums counts into a single window.",
-    )
+    # One flag for each input and option that a harness declares in its
+    # HARNESS_SPEC. The parser has no knowledge of a specific harness.
+    for flag, entry in harness_flags.items():
+        harness_group.add_argument(
+            flag,
+            dest=entry["dest"],
+            choices=entry["choices"],
+            help=entry["help"].replace("%", "%%"),
+        )
 
-    # Technology / PVT for harness mode. Defaults are nominal — only an explicitly
-    # passed flag overrides them (hp / TT / nominal Vdd / 25C).
+    # Technology and PVT for harness mode. The defaults are nominal: hp, TT,
+    # nominal Vdd, 25C. Only a flag on the command line changes them.
     tech_group = parser.add_argument_group(
         "Technology / PVT (harness mode; defaults = hp / TT / nominal Vdd / 25C)"
     )
@@ -370,107 +306,90 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _harness_synthesizes_activity(name: str) -> bool:
-    """Whether harness ``name`` declares ``synthesizes_activity`` (no activity
-    reader — runs are VECTORLESS, so ``--vectorless-activity`` applies).
+def _harness_flags() -> Dict[str, Dict[str, Any]]:
+    """The CLI flags that the harnesses declare (``npuwattch_harness.registry.cli_flags``).
 
-    Same fallback contract as ``_check_harness_inputs``: registry import
-    failure or an unknown name → permissive here, ``run_harness`` is the
-    authority downstream.
+    If the registry cannot be imported, the result is empty. A broken harness
+    plugin must not make the other modes of the CLI unusable.
     """
     try:
-        from npuwattch.harness import available_harnesses
-        info = available_harnesses().get(name)
+        from npuwattch_harness.registry import cli_flags
+        return cli_flags()
     except Exception:
-        return True
-    return True if info is None else info.synthesizes_activity
+        return {}
 
 
-def _check_harness_inputs(parser, ns) -> None:
-    """Fail early when the selected harness's required inputs are missing.
+def _harness_info(name: str):
+    """The ``HarnessInfo`` of ``name``, or ``None`` if it is unknown.
 
-    The requirement lives in the harness's ``HARNESS_SPEC``, so a new harness
-    (``timeloop`` needs ``--arch-yaml``, not ``--togsim-dir``) is validated
-    correctly without touching this parser. If the registry cannot be imported
-    the check is skipped — ``run_harness`` validates authoritatively anyway, and
-    a broken plugin must not make the CLI unusable.
+    ``run_harness`` reports an unknown name with the list of available
+    harnesses. Thus the parser does not reject the name here.
     """
     try:
-        from npuwattch.harness import available_harnesses
-        info = available_harnesses().get(ns.harness)
+        from npuwattch_harness import available_harnesses
+        return available_harnesses().get(name)
     except Exception:
-        return
-    if info is None:
-        return                            # unknown name → run_harness lists them
-    missing = []
-    for decl in info.inputs.values():
-        flag = decl.get("flag")
-        if not decl.get("required", True) or not flag:
-            continue
-        if not getattr(ns, flag.lstrip("-").replace("-", "_"), None):
-            missing.append(f"{flag} ({decl.get('hint', '')})".strip())
-    if missing:
-        parser.error(
-            f"Harness mode (--harness {ns.harness}) requires "
-            + "; ".join(missing))
+        return None
 
 
 def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
-    """Parse command-line arguments and return validated NPUWattchArgs."""
+    """Parse and check the command-line arguments."""
     parser = build_arg_parser()
     ns = parser.parse_args(argv)
 
-    # Initialize defaults
+    # Defaults
     desc: List[Path] = []
     logs: List[Path] = []
     in_yaml: Optional[Path] = None
     out_yaml: Optional[Path] = None
     train_csv: Optional[Path] = None
     train_output: Optional[Path] = None
-    togsim_dir: Optional[Path] = None
-    gem5_dir: Optional[Path] = None
-    config_yml: Optional[Path] = None
-    booksim_dir: Optional[Path] = None
-    energy_table: Optional[Path] = None
-    arch_yaml: Optional[Path] = None
-    timeloop_stats: Optional[Path] = None
-    stats_map: Optional[Path] = None
+    harness_inputs: Dict[str, Path] = {}
+    harness_options: Dict[str, Any] = {}
     out_dir: Optional[Path] = None
+
+    # The harness flags that the user gave: flag -> (entry, value).
+    flags = _harness_flags()
+    given = {flag: (entry, getattr(ns, entry["dest"]))
+             for flag, entry in flags.items()
+             if getattr(ns, entry["dest"], None) is not None}
+    given_names = {entry["name"] for entry, _ in given.values()}
+    info = _harness_info(ns.harness) if ns.harness else None
 
     if ns.harness and ns.description_files:
         parser.error("--harness and -d/--description are mutually exclusive")
-    if not ns.harness and (ns.togsim_dir or ns.gem5_dir or ns.config_yml
-                           or ns.booksim_dir or ns.energy_table or ns.arch_yaml
-                           or ns.timeloop_stats or ns.stats_map
-                           or ns.stats_mode):
-        parser.error(
-            "--togsim-dir/--gem5-dir/--config-yml/--booksim-dir/--energy-table"
-            "/--arch-yaml/--stats/--stats-map/--stats-mode require --harness")
-    if (ns.stats_map or ns.stats_mode) and not ns.timeloop_stats:
-        parser.error(
-            "--stats-map/--stats-mode shape how the Timeloop stats are read; "
-            "they require --stats")
+    if not ns.harness and given:
+        parser.error(f"{'/'.join(given)} require(s) --harness")
+    for flag, (entry, _) in given.items():
+        for decl in entry["by_harness"].values():
+            needed = decl.get("requires")
+            if needed and needed not in given_names:
+                needed_flag = next(
+                    (f for f, e in flags.items() if e["name"] == needed), needed)
+                parser.error(f"{flag} requires {needed_flag}")
     if ns.vectorless_activity is not None:
         if ns.flatten or ns.train or ns.activity_logs:
             parser.error(
                 "--vectorless-activity applies only to vectorless runs: -d "
                 "WITHOUT -l, or a harness with no activity reader "
                 "(it replaces the missing activity log)")
-        if ns.timeloop_stats:
-            parser.error(
-                "--vectorless-activity: --stats provides real Timeloop "
-                "activity; the flag applies only to vectorless runs "
-                "(-d without -l, or --harness timeloop WITHOUT --stats)")
-        if ns.harness and not _harness_synthesizes_activity(ns.harness):
+        for flag, (entry, _) in given.items():
+            if any(decl.get("provides_activity")
+                   for decl in entry["by_harness"].values()):
+                parser.error(
+                    f"--vectorless-activity: {flag} provides real activity; "
+                    f"the flag applies only to vectorless runs (-d without "
+                    f"-l, or a harness run without {flag})")
+        if ns.harness and info is not None and not info.synthesizes_activity:
             parser.error(
                 f"--vectorless-activity: the {ns.harness!r} harness reads real "
                 f"activity from its logs; the flag applies only to vectorless "
-                f"runs (-d without -l, or --harness timeloop without --stats)")
+                f"runs (-d without -l, or a harness that has no activity input)")
         if not (0.0 < ns.vectorless_activity <= 1.0):
             parser.error(
                 f"--vectorless-activity must be in (0, 1], got {ns.vectorless_activity}")
 
-    # Validate mode-specific required arguments
+    # Check the arguments that each mode requires.
     if ns.flatten:
         # Flatten mode
         if not ns.input_path:
@@ -484,23 +403,36 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
             out_yaml = in_yaml.parent / f"{in_yaml.stem}_flattened{in_yaml.suffix}"
 
     elif ns.harness:
-        # Harness mode: inputs are explicit named directories; -i is retired here
-        # (PyTorchSim's two result sets live in separate locations).
+        # Harness mode: each input is a named path. -i is not a harness input.
+        required = ([decl.get("flag") for decl in info.inputs.values()
+                     if decl.get("required", True)] if info else [])
         if ns.input_path:
+            hint = f" (or {info.usage_hint})" if info and info.usage_hint else ""
             parser.error(
-                "-i is not a harness input; pass --togsim-dir <togsim_results/> "
-                "and --gem5-dir <outputs/ | gem5_outputs/> (or use run.sh to "
-                "auto-locate both under one root)"
-            )
-        _check_harness_inputs(parser, ns)
-        togsim_dir = Path(ns.togsim_dir) if ns.togsim_dir else None
-        gem5_dir = Path(ns.gem5_dir) if ns.gem5_dir else None
-        config_yml = Path(ns.config_yml) if ns.config_yml else None
-        booksim_dir = Path(ns.booksim_dir) if ns.booksim_dir else None
-        energy_table = Path(ns.energy_table) if ns.energy_table else None
-        arch_yaml = Path(ns.arch_yaml) if ns.arch_yaml else None
-        timeloop_stats = Path(ns.timeloop_stats) if ns.timeloop_stats else None
-        stats_map = Path(ns.stats_map) if ns.stats_map else None
+                "-i is not a harness input; pass the named inputs of the "
+                f"harness: {' '.join(required) or 'see --help'}{hint}")
+        if info is not None:
+            # Fail early if a required input is missing. `run_harness` does
+            # the complete check (unknown inputs, path kinds).
+            missing = [
+                f"{decl['flag']} ({decl.get('hint', '')})".strip()
+                for decl in info.inputs.values()
+                if decl.get("required", True) and decl.get("flag")
+                and decl["flag"] not in given]
+            if missing:
+                parser.error(
+                    f"Harness mode (--harness {ns.harness}) requires "
+                    + "; ".join(missing))
+        for flag, (entry, value) in given.items():
+            if not entry["is_option"]:
+                # An input that the selected harness does not declare stays
+                # in the dict: `run_harness` rejects it by name.
+                harness_inputs[entry["name"]] = Path(value)
+            elif info is None or ns.harness in entry["by_harness"]:
+                harness_options[entry["name"]] = value
+            else:
+                parser.error(
+                    f"{flag} is not an option of the {ns.harness!r} harness")
         out_dir = Path(ns.output_path) if ns.output_path else None
 
     elif ns.train:
@@ -540,15 +472,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         train_lr=ns.train_lr,
         verbose=ns.verbose,
         harness=ns.harness,
-        togsim_dir=togsim_dir,
-        gem5_dir=gem5_dir,
-        config_yml=config_yml,
-        booksim_dir=booksim_dir,
-        energy_table=energy_table,
-        arch_yaml=arch_yaml,
-        timeloop_stats=timeloop_stats,
-        stats_map=stats_map,
-        stats_mode=ns.stats_mode,
+        harness_inputs=harness_inputs,
+        harness_options=harness_options,
         out_dir=out_dir,
         vectorless_activity=ns.vectorless_activity,
         tree=bool(ns.tree),
@@ -564,18 +489,9 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
 
 
 def load_description_files(paths: List[Path]) -> list[dict]:
-    """Load YAML description files."""
+    """Load the YAML description files."""
     loaded: list[dict] = []
     for p in paths:
         with p.open("r", encoding="utf-8") as f:
             loaded.append(yaml.safe_load(f) or {})
     return loaded
-
-
-def load_activity_logs(paths: List[Path]) -> list[str]:
-    """Load text activity log files."""
-    lines: list[str] = []
-    for p in paths:
-        with p.open("r", encoding="utf-8") as f:
-            lines.extend([ln.rstrip("\n") for ln in f])
-    return lines

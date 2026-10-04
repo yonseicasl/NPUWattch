@@ -1,36 +1,44 @@
-"""Unit-cost provider — the calling convention between the estimators and the
-energy aggregator.
+"""Unit-cost provider: the calling convention between the estimators and the
+energy calculation.
 
-A ``UnitCostProvider`` answers, for one primitive instance at a queried
-technology/PVT/frequency, the four §6 unit costs NPUWattch needs:
+A ``UnitCostProvider`` gives the four unit costs of manual §6 for one instance
+of a primitive, at the technology, PVT, and frequency of the query:
 
-    energy_per_cycle(primitive, features)  pJ per active cycle in a given stim_mode
-    leak_power(primitive, features)        mW per instance (static)
-    area(primitive, features)              µm² per instance
-    crit_path(primitive, features)         ns per instance
+    energy_per_cycle(primitive, features)  pJ for one active cycle in one stim_mode
+    leak_power(primitive, features)        mW for one instance (static)
+    area(primitive, features)              µm² for one instance
+    crit_path(primitive, features)         ns for one instance
 
-``features`` is a plain dict (the element's config ∪ the tech context ∪, for
-energy, ``stim_mode``) — the same features-dict convention as
-``EstimatorHost.estimate_energy(module, features)``. This is the interface the
-**trained MLP models drop into** (workstream D, user item #4): a real provider
-wraps ``EstimatorHost`` and returns per-(component×metric) MLP predictions. Until
-those land, ``StubUnitCostProvider`` returns deterministic *placeholder* numbers so
-the whole activity→energy pipeline runs end-to-end; its ``calibrated`` flag is
-``False`` so any report can label the result a first-order estimate.
+``features`` is a dict. It contains the attributes of the component and the
+technology context. For an energy query, it also contains ``stim_mode``.
+``EstimatorHost.estimate_energy(module, features)`` uses the same dict
+convention. The provider of an estimator returns the predictions of its
+trained MLP models through this interface.
+
+The providers make a chain (``provider_factory``). Each provider answers for
+its own primitives and sends the other queries to the next provider. The last
+link is ``NoModelProvider``, which raises an error: NPUWattch gives no value
+for a block that it has no model for. The user gives the cost of such a block
+in the user component library (``npuwattch.user_components``).
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Mapping
+
+import yaml
+
+from .dram_table import default_table
 
 try:
     from typing import Protocol, runtime_checkable
 except ImportError:  # pragma: no cover - py<3.8
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
-__all__ = ["TechContext", "UnitCostProvider", "StubUnitCostProvider",
+__all__ = ["TechContext", "UnitCostProvider", "NoModelError",
+           "NoModelProvider",
            "D2DLinkCostProvider", "D2D_ENERGY_PER_BIT_PJ",
            "HBMCostProvider", "HBM_ACT_ENERGY_PJ",
            "HBM_ACCESS_ENERGY_PER_BIT_PJ", "HBM_REF_ENERGY_PJ"]
@@ -38,17 +46,17 @@ __all__ = ["TechContext", "UnitCostProvider", "StubUnitCostProvider",
 
 @dataclass(frozen=True)
 class TechContext:
-    """Technology / PVT / frequency the estimators are queried at.
+    """The technology, PVT, and frequency of the estimator queries.
 
-    Simulators know nothing of node/PVT — these come from the user (CLI/defaults).
-    ``clock_mhz`` may be left ``None`` and filled per-run from the log's
-    ``core_freq_mhz``.
+    A simulator does not know the node or the PVT. The user gives them on the
+    CLI, or the defaults apply. ``clock_mhz`` can be ``None``. The estimators
+    then use the clock of the description.
     """
 
     node: str = "7nm"
     transistor: str = "hp"          # hp | lp
     corner: str = "TT"              # TT | SS | FF
-    voltage_offset_V: float = 0.0   # −0.15 … +0.15
+    voltage_offset_V: float = 0.0   # from −0.15 to +0.15
     temperature_C: float = 25.0
     clock_mhz: float | None = None
 
@@ -65,139 +73,113 @@ class TechContext:
 
 @runtime_checkable
 class UnitCostProvider(Protocol):
-    """Per-instance unit costs for a primitive at a queried tech/PVT/frequency."""
+    """The unit costs of one instance of a primitive, for the queried features."""
 
-    #: False for placeholder providers → reports must flag "not calibrated".
+    #: False if a value can come from a model that is not calibrated.
     calibrated: bool
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float: ...
     def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float: ...
     def area(self, primitive: str, features: Mapping[str, Any]) -> float: ...
     def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float: ...
-    # Optional (looked up with getattr): ``idle_terms(primitive, features) ->
-    # (e_idle_per_cycle_pJ, idle_displaced_per_access_pJ) | None`` lets the
-    # aggregator book a memory's clocked-idle energy once per cycle instead of
-    # inside every access event (see aggregate._book_idle_per_cycle).
-    # Optional ``envelope_warnings(primitive, features) -> List[str]``: why a
-    # query is not a characterized design point (clamped depth, extrapolated
-    # params/clock); aggregate_native reports it once per component.
+    # Two methods are optional. The callers find them with getattr.
+    #
+    # ``idle_terms(primitive, features) ->
+    # (e_idle_per_cycle_pJ, idle_displaced_per_access_pJ) | None``:
+    # with these terms, the energy calculation charges the clocked-idle energy
+    # of a memory one time for each cycle, not in each access event. Refer to
+    # aggregate._book_idle_per_cycle.
+    #
+    # ``envelope_warnings(primitive, features) -> List[str]``: the reasons why
+    # a query is not a characterized design point (a clamped depth, or an
+    # extrapolated parameter or clock). aggregate_native shows them one time
+    # for each component.
 
 
 # ---------------------------------------------------------------------------
-# Placeholder provider (deterministic, NOT calibrated)
+# End of the provider chain
 # ---------------------------------------------------------------------------
 
-# Relative dynamic activity of each stim_mode (idle ≈ leakage-only).
-_STIM_ACTIVITY: Dict[str, float] = {
-    "idle": 0.02,
-    "read": 0.4,
-    "write": 0.5,
-    "hold_b": 0.6,
-    "hold_scale": 0.6,
-    "sparse50": 0.5,
-    "stream": 0.7,
-    "fixed_route": 0.7,
-    "valid25": 0.35,
-    "random": 1.0,
-    # fpsfu op-group modes: one group's table + the shared PWL datapath active.
-    "exp": 0.8,
-    "trig": 0.8,
-    "hyp": 0.8,
-    "erf": 0.8,
-}
-
-
-def _effective_width(features: Mapping[str, Any]) -> int:
-    """A rough operand width from the canonical width attributes.
-
-    Only canonical names (``npuwattch.naming``) are read — harnesses translate
-    their simulator's vocabulary at ingest, so by the time a features dict
-    reaches a provider there is exactly one spelling per concept.
-    """
-    for k in ("data_width", "data_width_a", "data_width_out", "data_width_acc"):
-        v = features.get(k)
-        if isinstance(v, int):
-            return max(1, v)
-    exp = features.get("exponent_bits")
-    mant = features.get("mantissa_bits")
-    if isinstance(exp, int) and isinstance(mant, int):
-        return exp + mant + 1
-    return 16
+class NoModelError(ValueError):
+    """No provider has a model for a primitive."""
 
 
 @dataclass(frozen=True)
-class StubUnitCostProvider:
-    """Deterministic, physically-plausible-but-uncalibrated unit costs.
+class NoModelProvider:
+    """The last link of the provider chain. It has no model.
 
-    Exists only so the pipeline yields numbers before the MLPs are trained. The
-    magnitudes are order-of-magnitude toys, monotone in width, not real silicon.
+    A query that arrives here is for a primitive that no estimator serves.
+    Each method raises :class:`NoModelError`. To give the cost of such a
+    block, the user adds it to the user component library
+    (``npuwattch.user_components``).
     """
 
-    calibrated: bool = False
+    #: This provider gives no value, thus it gives no uncalibrated value.
+    calibrated: bool = True
 
-    def _base_area_um2(self, primitive: str, features: Mapping[str, Any]) -> float:
-        w = _effective_width(features)
-        # MACs ~ w² (multiplier dominated); regfile ~ w·depth; else ~ w.
-        if primitive in ("intmac", "fpmac", "mxfpmac"):
-            base = 0.15 * w * w
-        elif primitive == "fpsfu":
-            # PWL evaluator: a mantissa multiplier (~w²) + one coefficient
-            # table per enabled op group, scaled by the segment count.
-            groups = sum(
-                1 for k in ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp",
-                            "sfu_op_erf", "sfu_op_relu")
-                if int(features.get(k, 0) or 0)
-            )
-            segs = max(1, int(features.get("sfu_segments", 64)))
-            base = 0.12 * w * w + 0.02 * w * segs * max(1, groups)
-        elif primitive == "regfile":
-            base = 0.05 * w * max(1, int(features.get("mem_depth_per_bank", 1)))
-        else:
-            base = 0.05 * w
-        return base * (1.0 + max(0, int(features.get("pipeline_stages", 0))) * 0.1)
-
-    def area(self, primitive: str, features: Mapping[str, Any]) -> float:
-        return self._base_area_um2(primitive, features)
-
-    def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
-        # leakage ∝ area; a small mW/µm² density.
-        return 2.0e-4 * self._base_area_um2(primitive, features)
+    def _raise(self, primitive: str) -> float:
+        raise NoModelError(
+            f"no model for class {primitive!r} — NPUWattch has no estimator "
+            f"for it; give its area and action energies in the user component "
+            f"library (--user-components)")
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
-        stim = str(features.get("stim_mode", "random"))
-        activity = _STIM_ACTIVITY.get(stim, 1.0)
-        w = _effective_width(features)
-        # dynamic switching energy ~ area·activity, in pJ (toy scale).
-        return 1.0e-3 * self._base_area_um2(primitive, features) * activity
+        return self._raise(primitive)
+
+    def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
+        return self._raise(primitive)
+
+    def area(self, primitive: str, features: Mapping[str, Any]) -> float:
+        return self._raise(primitive)
 
     def crit_path(self, primitive: str, features: Mapping[str, Any]) -> float:
-        w = _effective_width(features)
-        stages = max(1, int(features.get("pipeline_stages", 1)))
-        # log-depth path, shortened by pipelining.
-        return (0.08 * math.log2(w + 1) + 0.05) / stages
+        return self._raise(primitive)
 
 
 # ---------------------------------------------------------------------------
-# Analytic die-to-die link model (constant pJ/bit — no characterization flow)
+# Die-to-die link model: a constant energy for each bit, from a table file
 # ---------------------------------------------------------------------------
 
-#: Default die-to-die link traversal energy. A **literature constant**, not a
-#: measurement: on-package SerDes/parallel PHYs land around 0.5–1 pJ/bit
-#: (UCIe-class links; Simba's GRS reports 0.82–1.75 pJ/bit) — we take the
-#: conservative round value. Override per component via the canonical
-#: ``net_energy_per_bit_pJ`` attribute in the description.
-D2D_ENERGY_PER_BIT_PJ = 1.0
+#: The directory of the link energy tables (package data).
+LINK_TABLE_DIR = Path(__file__).resolve().parent / "link_tables"
+
+
+def _load_d2d_energy_per_bit() -> float:
+    """Read the default d2dlink constant from ``link_tables/d2dlink.yml``."""
+    path = LINK_TABLE_DIR / "d2dlink.yml"
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))["energy_pj_per_bit"]
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as e:
+        raise ValueError(f"link energy table {path}: {e}") from e
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ValueError(
+            f"link energy table {path}: energy_pj_per_bit must be a positive "
+            f"number, got {value!r}")
+    return float(value)
+
+
+#: Default energy of the ``d2dlink`` primitive for each bit. It comes from
+#: ``link_tables/d2dlink.yml``, which has the value and its source. A
+#: component can give its own value with the attribute
+#: ``net_energy_per_bit_pJ``.
+D2D_ENERGY_PER_BIT_PJ = _load_d2d_energy_per_bit()
 
 
 @dataclass(frozen=True)
 class D2DLinkCostProvider:
-    """Chain link answering primitive ``d2dlink`` with the analytic constant.
+    """The provider of the primitive ``d2dlink``. It uses a constant.
 
-    Energy per crossing = ``data_width × net_energy_per_bit_pJ``; there is no
-    leakage/area/timing model (all 0.0 — the PHY is not ours to model).
-    Everything else delegates to ``fallback``. ``calibrated`` is inherited from
-    the fallback: a constant is never calibration.
+    The energy of one flit that crosses the link is
+    ``data_width × net_energy_per_bit_pJ``. Leakage, area, and timing are 0.0,
+    because NPUWattch has no model of the PHY. The provider sends the queries
+    for all other primitives to ``fallback``.
+
+    ``calibrated`` comes from the fallback. A constant is not a calibrated
+    model, thus it cannot change this value.
     """
+
+    #: The primitives that this provider answers with a constant.
+    primitives = ("d2dlink",)
 
     fallback: Any = None
 
@@ -251,46 +233,41 @@ class D2DLinkCostProvider:
 
 
 # ---------------------------------------------------------------------------
-# Analytic DRAM device model (per-command constants — no characterization flow)
+# DRAM device model: a constant energy for each command, from a table file
 # ---------------------------------------------------------------------------
 
-#: HBM2 per-command energies. **Literature constants**, not measurements of our
-#: own: no public HBM power tool or vendor IDD datasheet exists, so these come
-#: from the detailed physical-floorplan model of
-#:
-#:   M. O'Connor, N. Chatterjee, D. Lee, J. Wilson, A. Agrawal, S. W. Keckler,
-#:   and W. J. Dally, "Fine-Grained DRAM: Energy-Efficient DRAM for Extreme
-#:   Bandwidth Systems," MICRO-50, 2017, Table 3 (HBM2 column).
-#:   DOI: 10.1145/3123939.3124545
-#:
-#: Row activation (precharge + activate, one 1 KB row) = 909 pJ. Access energy
-#: = 1.51 (pre-GSA) + 1.17 (post-GSA, 50% toggle) + 0.80 (I/O, 50% activity)
-#: = 3.48 pJ/bit, charged per RD/WR command × data_width; read and write are
-#: charged symmetrically (the paper does not split them). Refresh per REFab is
-#: derived first-order from the same activation energy (8 Gb channel ÷ 1 KB
-#: rows = 2^20 rows spread over JESD235's 16384 REF commands → 64 rows ×
-#: 909 pJ). Override any of the three per component via the canonical
-#: ``mem_act_energy_pJ`` / ``mem_access_energy_per_bit_pJ`` /
-#: ``mem_ref_energy_pJ`` attributes (the shipped dram compound pins them
-#: explicitly, with the citation, in its YAML).
-HBM_ACT_ENERGY_PJ = 909.0
-HBM_ACCESS_ENERGY_PER_BIT_PJ = 3.48
-HBM_REF_ENERGY_PJ = 58176.0
+#: Default per-command energies of the ``hbm`` primitive. They come from the
+#: default DRAM energy table, ``dram_tables/hbm2.yml``. That file has the
+#: values and their source. A component can give its own values with the
+#: attributes ``mem_act_energy_pJ``, ``mem_access_energy_per_bit_pJ``, and
+#: ``mem_ref_energy_pJ``.
+HBM_ACT_ENERGY_PJ = default_table().act_pj
+HBM_ACCESS_ENERGY_PER_BIT_PJ = default_table().transfer_pj_per_bit
+HBM_REF_ENERGY_PJ = default_table().ref_pj
 
 
 @dataclass(frozen=True)
 class HBMCostProvider:
-    """Chain link answering primitive ``hbm`` with the analytic constants.
+    """The provider of the primitive ``hbm``. It uses constants.
 
-    Per-event energy is selected by ``stim_mode``: ``activate`` / ``refresh``
-    return their per-command constants; ``read`` / ``write`` (and ``random``,
-    the vectorless anchor) return ``data_width × per-bit access energy``.
-    Leakage/area/timing are 0.0 — the DRAM die is not our silicon, and its
-    background/standby power is deliberately NOT modeled (vendor IDD values
-    are not public; declared out_of_scope in the projection). Everything else
-    delegates to ``fallback``; ``calibrated`` is inherited — a constant is
-    never calibration.
+    ``stim_mode`` selects the energy of one event:
+
+    * ``activate`` and ``refresh``: the constant of that command.
+    * ``read``, ``write``, and ``random``: ``data_width`` × the access energy
+      for each bit. A vectorless run uses ``random``.
+    * ``idle``: 0.0.
+
+    Leakage, area, and timing are 0.0. NPUWattch does not model the DRAM die
+    or its background and standby power, because vendor IDD values are not
+    public. The projection declares this power as out_of_scope.
+
+    The provider sends the queries for all other primitives to ``fallback``.
+    ``calibrated`` comes from the fallback. A constant is not a calibrated
+    model, thus it cannot change this value.
     """
+
+    #: The primitives that this provider answers with a constant.
+    primitives = ("hbm",)
 
     fallback: Any = None
 
@@ -324,7 +301,7 @@ class HBMCostProvider:
         bits = int(features.get("data_width") or 0)
         per_bit = self._const(features, "mem_access_energy_per_bit_pJ",
                               HBM_ACCESS_ENERGY_PER_BIT_PJ)
-        return bits * per_bit                    # read / write / random
+        return bits * per_bit                    # read, write, or random
 
     def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
         if primitive != "hbm":

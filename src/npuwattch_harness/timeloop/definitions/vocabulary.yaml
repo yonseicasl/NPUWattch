@@ -1,0 +1,211 @@
+# ============================================================================
+#  Timeloop / Accelergy vocabulary table
+# ============================================================================
+# This table translates Accelergy v0.4 names into NPUWattch names.
+# The engine is npuwattch_harness/vocabulary.py. The engine checks this table
+# when it loads the table: each target name must be a NPUWattch name.
+#
+# To support a new Accelergy spelling, add the spelling to this file.
+# Python changes are not necessary.
+#
+# Name matching: the engine changes each Accelergy name to lowercase and
+# replaces "-" with "_". Write the names in this file in that form.
+
+tool: timeloop
+
+# ----------------------------------------------------------------------------
+# classes: Accelergy `class` or `subclass`  ->  NPUWattch primitive
+# ----------------------------------------------------------------------------
+# A compound component of the run with the name of the class has priority
+# over this table (compound_components.yaml, an input of the run).
+# A class that is not in this table uses the user component library entry of
+# the same name (user_components.yaml, an input of the run). If there is no
+# entry, the component is not modeled and the run gives a warning.
+# Network classes (XY_NoC, legacy_network) are not in the table. A mesh router
+# is not a characterized fabric. Declare the fabric as crossbar, fattree, or
+# foldedclos to model it.
+classes:
+  # storage
+  sram: sram
+  smartbuffer_sram: sram
+  smartbuffer: sram
+  scratchpad: sram
+  storage: sram
+  buffer: sram
+  regfile: regfile
+  register_file: regfile
+  rf: regfile
+  smartbuffer_rf: regfile
+  fifo: fifo
+  # `hbm` is the only DRAM device model. All off-chip memory uses it.
+  dram: hbm
+  main_memory: hbm
+  hbm: hbm
+  # compute
+  intmac: intmac
+  mac: intmac
+  intmultiplier_accumulator: intmac
+  fpmac: fpmac
+  intadd: intadd
+  adder: intadd
+  int_adder: intadd
+  integer_adder: intadd
+  intmul: intmul
+  multiplier: intmul
+  int_multiplier: intmul
+  intmultiplier: intmul
+  fpadd: fpadd
+  fp_adder: fpadd
+  float_adder: fpadd
+  fpmul: fpmul
+  fp_multiplier: fpmul
+  float_multiplier: fpmul
+  mxfpmac: mxfpmac
+  fpsfu: fpsfu
+  # interconnect
+  crossbar: crossbar
+  xbar: crossbar
+  mux: simplemux
+  multiplexer: simplemux
+  simplemux: simplemux
+  fattree: fattree
+  foldedclos: foldedclos
+  wire: d2dlink
+  d2dlink: d2dlink
+
+# ----------------------------------------------------------------------------
+# float_format: how Accelergy declares a floating-point datatype
+# ----------------------------------------------------------------------------
+# The Accelergy classes `mac`, `adder`, and `multiplier` do not give a number
+# format. If one of `keys` contains one of `words`, the engine replaces the
+# integer primitive with its floating-point sibling.
+float_format:
+  keys: [number_format, datatype, data_type, format, precision]
+  words: [fp, float, floating, bfloat, bf16, half, double]
+  siblings:
+    intmac: fpmac
+    intadd: fpadd
+    intmul: fpmul
+
+# ----------------------------------------------------------------------------
+# families: primitives that use the same attribute table
+# ----------------------------------------------------------------------------
+# A primitive that is not in a family keeps only the attributes that already
+# have a NPUWattch name.
+families:
+  storage: [sram, regfile, fifo]
+  dram: [hbm]
+  int: [intadd, intmul, intmac]
+  fp: [fpadd, fpmul, fpmac, fpsfu]
+  mx: [mxfpmac]
+  fabric: [crossbar, simplemux]
+  link: [d2dlink]
+
+# ----------------------------------------------------------------------------
+# attributes: NPUWattch attribute  ->  Accelergy spellings
+# ----------------------------------------------------------------------------
+# The engine uses the first spelling that the component declares.
+#
+# `datawidth` is not a storage word width. In Accelergy, `datawidth` is the
+# width of one element, and the memory word is `datawidth x block_size`.
+# For a compute unit, `datawidth` is the operand width.
+#
+# `latency` is not a pipeline depth. For storage it is the access latency.
+attributes:
+  storage:
+    data_width: [data_width, word_bits, memory_width, width]
+    mem_depth_per_bank: [mem_depth_per_bank, memory_depth, depth, entries,
+                         num_entries, n_entries]
+    mem_banks: [mem_banks, n_banks, num_banks, banks]
+    mem_r_ports: [mem_r_ports, n_rd_ports, num_read_ports, read_ports]
+    mem_w_ports: [mem_w_ports, n_wr_ports, num_write_ports, write_ports]
+    mem_rw_ports: [mem_rw_ports, n_rw_ports, n_rdwr_ports, num_rw_ports,
+                   num_rdwr_ports, n_ports, num_ports, ports]
+  dram:
+    data_width: [data_width, word_bits, memory_width, width]
+  int:
+    data_width_a: [data_width_a, a_width, width_a]
+    data_width_b: [data_width_b, b_width, width_b]
+    data_width_out: [data_width_out, out_width]
+    data_width_acc: [data_width_acc, acc_width, adder_width]
+    pipeline_stages: [pipeline_stages, n_stages, stages]
+  fp:
+    data_width: [data_width, datawidth, width, word_bits]
+    exponent_bits: [exponent_bits, exp_bits]
+    mantissa_bits: [mantissa_bits, man_bits]
+    sfu_segments: [sfu_segments]
+    sfu_op_exp: [sfu_op_exp]
+    sfu_op_trig: [sfu_op_trig]
+    sfu_op_hyp: [sfu_op_hyp]
+    sfu_op_erf: [sfu_op_erf]
+    sfu_op_relu: [sfu_op_relu]
+    pipeline_stages: [pipeline_stages, n_stages, stages]
+  mx:
+    pipeline_stages: [pipeline_stages, n_stages, stages]
+  fabric:
+    data_width: [data_width, datawidth, width, word_bits]
+    net_inputs: [net_inputs, num_inputs, n_inputs, inputs, ingresses]
+    net_outputs: [net_outputs, num_outputs, n_outputs, outputs, egresses]
+  link:
+    data_width: [data_width, datawidth, width, word_bits]
+
+# ----------------------------------------------------------------------------
+# hints: Accelergy attributes that have no NPUWattch name
+# ----------------------------------------------------------------------------
+# The derivation rules in timeloop/vocabulary.py use these values to calculate
+# NPUWattch attributes. For example, `capacity_bits / data_width` gives the
+# depth. The hint names are local to this harness.
+hints:
+  storage:
+    element_width: [datawidth]
+    block_size: [block_size, blocksize]
+    capacity_bits: [capacity_bit, capacity_bits]
+    capacity_kb: [sizekb, size_kb, capacity_kb]
+    bandwidth: [read_bandwidth, write_bandwidth, shared_bandwidth, bandwidth]
+  dram:
+    element_width: [datawidth]
+    block_size: [block_size, blocksize]
+    dram_type: [type]
+  int:
+    operand_width: [multiplier_width, data_width, datawidth, width, word_bits]
+
+# ----------------------------------------------------------------------------
+# ignore: Accelergy attributes that are not hardware
+# ----------------------------------------------------------------------------
+# NPUWattch drops these attributes and does not write a note.
+# - Spatial fanout is already in the instance count.
+# - Bandwidth and network names are Timeloop mapping constraints.
+# - Accelergy copies the clock to each component. The clock is a property of
+#   the description (see `description` below).
+ignore:
+  - meshx
+  - meshy
+  - cluster_size
+  - clustersize
+  - instances
+  - read_bandwidth
+  - write_bandwidth
+  - bandwidth
+  - shared_bandwidth
+  - network_read
+  - network_write
+  - network_fill
+  - network_drain
+  - allow_overbooking
+  - has_power_gating
+  - utilized_capacity
+  - clockrate
+  - clock_rate
+  - frequency_mhz
+  - clock_mhz
+  - global_cycle_seconds
+  - cycle_seconds
+
+# ----------------------------------------------------------------------------
+# description: top-level Accelergy attributes
+# ----------------------------------------------------------------------------
+# `clock_mhz` spellings give the clock in MHz.
+# `cycle_seconds` spellings give the clock period in seconds.
+description:
+  clock_mhz: [clockrate, clock_rate, frequency_mhz, clock_mhz]
+  cycle_seconds: [global_cycle_seconds, cycle_seconds]

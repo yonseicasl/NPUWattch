@@ -1,29 +1,30 @@
-"""Continuous technology-node resolution over the characterized node set.
+"""Evaluate a technology node that is not a characterized node.
 
-The MLP estimators are trained at a handful of characterized nodes (today
-5/7/10/16/20 nm, node one-hot inputs) and hard-error on anything else. The CLI,
-however, accepts the node axis **continuously**: Accelergy/Timeloop
-descriptions routinely declare 65/45/32 nm, and a node whitelist would turn
-every such run into a crash.
+The MLP estimators have models for a small set of characterized nodes
+(5, 7, 10, 16, and 20 nm). The node is a one-hot input, and an estimator
+raises an error for a different node. But the CLI accepts a continuous node
+value, because Accelergy and Timeloop descriptions frequently use 65, 45, or
+32 nm.
 
-The rule:
+The rules are:
 
-* The supported envelope is the characterized range extended by **50 % on each
-  side**: lower bound = min characterized node x 0.5, upper = max x 1.5.
-  With the current 5-20 nm datasets that is **2.5-30 nm**.
-* Any node inside the envelope is evaluated: between two characterized nodes by
-  **log-log interpolation** of the two anchor predictions (energy/area/delay
-  scale polynomially with feature size, so straight lines in log-log space are
-  the right local model); beyond the characterized edge by log-log
-  **extrapolation** from the edge pair's trend (WARNING).
-* A node outside the envelope is **clamped** to the nearest envelope bound and
-  the run continues — with a WARNING on the CLI *and* in the report, never a
-  crash. The numbers then model the clamp bound, not the requested node, and
-  every output says so.
+* The supported envelope is the characterized range with **50 %** added on
+  each side. The lower bound is the minimum characterized node x 0.5. The
+  upper bound is the maximum characterized node x 1.5. For the 5 nm to 20 nm
+  datasets, the envelope is **2.5 nm to 30 nm**.
+* A node between two characterized nodes uses **log-log interpolation** of
+  the two anchor predictions. Energy, area, and delay are polynomial functions
+  of the feature size, thus a straight line in log-log space is a good local
+  model.
+* A node outside the characterized range and inside the envelope uses log-log
+  **extrapolation** from the two nodes at that edge. The run gets a warning.
+* A node outside the envelope is **clamped** to the nearest envelope bound,
+  and the run continues. The CLI and the report show a warning. The results
+  are then for the envelope bound, not for the requested node.
 
-The estimators themselves stay node-discrete: this layer only ever queries them
-at characterized nodes, so their own validation is untouched (defense in depth
-for direct API users).
+The estimators do not change. This module queries them only at characterized
+nodes, thus the node check of each estimator continues to operate for a
+direct API call.
 """
 
 from __future__ import annotations
@@ -44,19 +45,20 @@ __all__ = [
     "resolve_node",
 ]
 
-#: Envelope factors around the characterized range: accept min x 0.5 ...
-#: max x 1.5, clamp-with-warning beyond.
+#: The envelope factors. The envelope is from the minimum characterized node
+#: x 0.5 to the maximum characterized node x 1.5. A node outside the envelope
+#: is clamped, with a warning.
 ENVELOPE_LO_FACTOR = 0.5
 ENVELOPE_HI_FACTOR = 1.5
 
-#: Relative tolerance for "this IS a characterized node".
+#: The relative tolerance to decide that a node is a characterized node.
 _EXACT_RTOL = 1e-6
 
 
 def parse_node_nm(value: Any) -> float:
-    """A node spelling -> nanometers, continuously ("7nm", "8.5nm", 12, "45NM").
+    """Return the node in nanometers. Examples: "7nm", "8.5nm", 12, "45NM".
 
-    Raises ``ValueError`` for anything that is not a positive length in nm.
+    Raise ``ValueError`` if the value is not a positive length in nm.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         nm = float(value)
@@ -76,42 +78,48 @@ def parse_node_nm(value: Any) -> float:
 
 
 def node_envelope_nm(characterized_nm: Sequence[float]) -> Tuple[float, float]:
-    """The accepted continuous range: characterized min x 0.5 ... max x 1.5."""
+    """Return the envelope: characterized minimum x 0.5 to maximum x 1.5."""
     return (min(characterized_nm) * ENVELOPE_LO_FACTOR,
             max(characterized_nm) * ENVELOPE_HI_FACTOR)
 
 
 @dataclass(frozen=True)
 class NodeResolution:
-    """How a requested node is evaluated against the characterized set.
+    """The method to evaluate a requested node with the characterized nodes.
 
     ``kind`` is one of:
 
-    * ``exact`` — the requested node is characterized; single-anchor queries.
-    * ``interpolated`` — inside the characterized range; log-log interpolation
-      between the bracketing anchors (INFO note).
-    * ``extrapolated`` — outside the characterized range but inside the +-50 %
-      envelope; log-log extrapolation from the edge pair (WARNING).
-    * ``clamped`` — outside the envelope; evaluated at the envelope bound via
-      the edge pair (WARNING; the results model the bound, not the request).
+    * ``exact``: the requested node is a characterized node. Each query uses
+      one anchor.
+    * ``interpolated``: the node is inside the characterized range. Each query
+      uses log-log interpolation between the two adjacent anchors. The run
+      gets a note.
+    * ``extrapolated``: the node is outside the characterized range and inside
+      the +-50 % envelope. Each query uses log-log extrapolation from the two
+      anchors at the edge. The run gets a warning.
+    * ``clamped``: the node is outside the envelope. Each query uses the
+      envelope bound, with the two anchors at the edge. The run gets a
+      warning, because the results are for the bound and not for the request.
     """
 
     requested: str
     requested_nm: float
     eval_nm: float
     kind: str
-    lo: str                       # anchor node strings from the characterized set
+    lo: str                       # the anchor nodes, from the characterized set
     hi: str
-    weight: float                 # position of eval_nm on the lo..hi log axis
+    weight: float                 # the position of eval_nm on the log axis from lo to hi
     warnings: Tuple[str, ...] = ()
     notes: Tuple[str, ...] = ()
 
 
 def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
-    """Plan the evaluation of ``node`` over ``characterized`` (e.g. ["5nm", ...]).
+    """Make the :class:`NodeResolution` of ``node`` for the ``characterized`` nodes.
 
-    Raises ``ValueError`` only for an unparseable node spelling — every parseable
-    node resolves (clamped at worst), per the 2026-08-13 decision.
+    ``characterized`` is a list of node strings, for example ["5nm", "7nm"].
+    Raise ``ValueError`` only if the function cannot parse the node. Each
+    node that it can parse gets a resolution. A node outside the envelope is
+    clamped.
     """
     if not characterized:
         raise ValueError("resolve_node needs a non-empty characterized node set")
@@ -172,13 +180,15 @@ def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
 
 
 class NodeScalingProvider:
-    """Unit-cost provider adapter executing a :class:`NodeResolution`.
+    """A provider that applies a :class:`NodeResolution` to an inner provider.
 
-    Every metric query is answered from the inner provider evaluated at the
-    resolution's characterized anchor node(s); two-anchor answers are combined
-    log-linearly in log(node) (``weight`` may lie outside [0, 1] for
-    extrapolation). Providers that ignore the node (hbm/d2dlink/placeholder)
-    return identical anchor answers, which short-circuit unchanged.
+    For each query, this provider queries the inner provider at the anchor
+    nodes of the resolution. If there are two anchors, it combines the two
+    answers linearly in log(value) against log(node). For extrapolation,
+    ``weight`` can be outside [0, 1].
+
+    Some providers do not use the node (hbm, d2dlink, user components). Their
+    two answers are equal, and this provider returns that value.
     """
 
     def __init__(self, inner: Any, resolution: NodeResolution):
@@ -199,8 +209,9 @@ class NodeScalingProvider:
         if y1 > 0 and y2 > 0:
             return math.exp((1.0 - res.weight) * math.log(y1)
                             + res.weight * math.log(y2))
-        # Mixed-sign/zero anchors cannot be combined in log space; fall back to
-        # linear and floor at 0 (an extrapolation weight could cross zero).
+        # Log space is not possible if an anchor value is zero or negative.
+        # Use linear interpolation then. The minimum result is 0, because an
+        # extrapolation weight can give a negative value.
         return max(0.0, (1.0 - res.weight) * y1 + res.weight * y2)
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
@@ -238,8 +249,10 @@ class NodeScalingProvider:
         return (mix(lo[0], hi[0]), mix(lo[1], hi[1]))
 
     def envelope_warnings(self, primitive: str, features: Mapping[str, Any]):
-        """The inner provider's envelope findings at the anchor node(s) this
-        layer actually queries (deduplicated, anchor order)."""
+        """Return the envelope warnings of the inner provider at the anchor nodes.
+
+        The list has no duplicates. Its order is the order of the anchors.
+        """
         fn = getattr(self._inner, "envelope_warnings", None)
         if fn is None:
             return []
@@ -254,14 +267,14 @@ class NodeScalingProvider:
 
 
 def apply_node_scaling(chain: Any, tech: Any) -> Tuple[Any, Optional[NodeResolution]]:
-    """Wrap a ``ProviderChain`` so its provider serves the tech's node continuously.
+    """Put a :class:`NodeScalingProvider` around the provider of a ``ProviderChain``.
 
-    Returns the (possibly re-wrapped) chain plus the resolution. When the chain
-    declares no characterized nodes (stub-only environments) the chain is
-    returned untouched with ``None`` — legacy discrete behavior.
+    Return the new chain and the resolution of the node of ``tech``. If the
+    chain declares no characterized nodes, return the same chain and ``None``.
+    The providers then get the node of ``tech`` without a change.
 
-    An unparseable node raises ``ValueError`` — the console turns that into a
-    clean CLI error.
+    If the function cannot parse the node, it raises ``ValueError``. The CLI
+    shows this as an error message.
     """
     characterized = tuple(getattr(chain, "characterized_nodes", ()) or ())
     if not characterized:

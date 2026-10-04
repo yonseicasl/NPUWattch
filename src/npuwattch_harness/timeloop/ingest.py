@@ -1,26 +1,31 @@
-"""Timeloop/Accelergy ingest — an architecture YAML → a native NPUWattch run.
+"""Timeloop/Accelergy ingest: an Accelergy architecture file -> a NPUWattch run.
 
-This is the home of what used to be the console's "legacy Accelergy path"
-(``-d arch.yaml`` → flatten → per-component estimator calls). That path predated
-the §6 energy core: it asked one estimator plugin per component for a number and
-printed it, with no activity model, no window accounting, and no report. It also
-carried its own class→plugin routing table, which is why ``src/estimators/`` kept
-prototype-era ``adder``/``crossbar``/``regfile``/``custom`` directories alive.
+This module is the entry point of the harness. It changes an Accelergy v0.4
+architecture file into a description (manual §3.1). The description then goes
+through the same energy core (manual §6) as all other inputs:
 
-Here the same input becomes a **native §3.1 description** and goes through the
-identical core every other input goes through — the same provider chain (v2 logic
-MLPs + the SRAM estimator), the same §6 aggregation, the same ``--report``. The
-Accelergy-specific knowledge that remains is exactly what a harness owns: reading
-that toolchain's file format (:mod:`npuwattch.yaml_flattener_accelergy_v4`) and
-translating its vocabulary into ours (:mod:`.vocabulary`).
+* the same model providers (the logic MLPs and the SRAM estimator),
+* the same energy aggregation,
+* the same ``--report``.
 
-**Activity.** With ``--stats`` (a ``timeloop-{model,mapper}.stats.txt`` file or
-a directory of per-layer stats files), the run is **vectored**: :mod:`.stats`
-turns Timeloop's per-level access counts into native §3.3 rows (reads → read,
-fills+updates → write, Computes → op in the ``hold_b`` mode the projection
-declares). Without it, the run is the labeled **VECTORLESS** estimate: every
-component charged at 25 % of random switching, exactly as ``-d native.yaml``
-without ``-l`` is.
+Two modules contain the knowledge that is specific to Accelergy.
+:mod:`.accelergy_flattener` reads the file format. :mod:`.vocabulary`
+translates the Accelergy names into NPUWattch names.
+
+Activity
+--------
+``--stats`` takes one ``timeloop-{model,mapper}.stats.txt`` file, or a
+directory that has one stats file for each layer. With ``--stats``,
+:mod:`.stats` changes the access counts of each level into activity rows
+(manual §3.3):
+
+* reads -> ``read``
+* fills + updates -> ``write``
+* Computes -> ``op``, in the ``hold_b`` stim_mode (weight-stationary)
+
+Without ``--stats``, the run is a vectorless run and has the label VECTORLESS.
+Each component gets 25 % of the random switching activity. A run with
+``-d native.yaml`` and no ``-l`` does the same.
 """
 
 from __future__ import annotations
@@ -28,33 +33,67 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from ...arch_synth import EmittedArch
-from ...naming import NamingError, validate_attributes
+from npuwattch.arch_synth import EmittedArch
+from ..compounds import Compound, CompoundBundleError, resolve_action, resolve_compound
+from ..registry import HarnessError
+from ..run_inputs import (
+    attach_user_components,
+    find_definition,
+    load_run_bundle,
+    load_user_library,
+)
+from ..vocabulary import positive_int
+from .dram import select_table, warn_if_unused
+from npuwattch.naming import CANONICAL, NamingError, validate_attributes
 from .vocabulary import (
-    UNMAPPED_PRIMITIVE,
+    VOCABULARY,
     attributes_for,
     primitive_for,
     reclassify_regfile_as_sram,
 )
 
-__all__ = ["ingest", "description_from_accelergy"]
+__all__ = ["DEFINITIONS_DIR", "ingest", "description_from_accelergy"]
 
-#: Top-level attribute names carrying the design clock, in MHz and in seconds.
-_CLOCK_MHZ_KEYS = ("clockrate", "clock_rate", "frequency_mhz", "clock_mhz")
-_CLOCK_SECONDS_KEYS = ("global_cycle_seconds", "cycle_seconds")
+#: Projection action name -> the activity event of the Timeloop stats.
+_ACTION_EVENT = {"read": "read", "write": "write", "compute": "op"}
 
+DEFINITIONS_DIR = Path(__file__).resolve().parent / "definitions"
 
 def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
-    """Harness entrypoint: ``{"arch": <architecture.yaml>, "stats"?: <path>,
-    "stats_map"?: <yaml>}`` → ``EmittedArch``."""
+    """Entry point of the harness. Return an ``EmittedArch``.
+
+    ``inputs`` is ``{"arch": <architecture.yaml>, "stats"?: <path>,
+    "stats_map"?: <yaml>, "energy_table"?: <yml>, "compound_components"?,
+    "projection"?, "user_components"?}``.
+
+    The last three are the definition files of the design. The default of
+    each is the file with the fixed name in the directory of the architecture
+    file (``npuwattch_harness.run_inputs``).
+    """
     arch_path = Path(inputs["arch"])
+    run_dir = arch_path.resolve().parent
+    energy_table = select_table(inputs.get("energy_table"))
+    compounds_path = find_definition(inputs, "compound_components", run_dir)
+    bundle = load_run_bundle(compounds_path,
+                             find_definition(inputs, "projection", run_dir))
+    library_path = find_definition(inputs, "user_components", run_dir)
+    library = load_user_library(library_path)
+
+    compound_instances: Dict[str, Tuple[str, Dict[str, int]]] = {}
     description, warnings, notes = description_from_accelergy(
         arch_path, tech, default_clock_mhz=opts.get("default_clock_mhz"),
         verbose=int(opts.get("verbose", 0)),
-        node_explicit=bool(opts.get("node_explicit", False)))
-    if inputs.get("energy_table") is not None:
-        _apply_energy_table(description, Path(inputs["energy_table"]),
-                            warnings, notes)
+        node_explicit=bool(opts.get("node_explicit", False)),
+        energy_table=energy_table, user_components=library,
+        compounds=bundle.compounds, compound_instances=compound_instances)
+    warn_if_unused(description, energy_table, warnings)
+    attach_user_components(description, library, library_path, notes)
+    used_compounds = {cls for cls, _ in compound_instances.values()}
+    notes.extend(
+        f"compound component {name!r} ({compounds_path.name}): parsed, but "
+        f"not used"
+        for name in bundle.compounds if name not in used_compounds)
+    compound_bindings = _compound_bindings(bundle, compound_instances)
 
     stats_path = inputs.get("stats")
     if stats_path is not None:
@@ -68,12 +107,13 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
             activity_from_stats(
                 Path(stats_path), description,
                 mode=str(opts.get("stats_mode") or "windows"),
-                map_path=inputs.get("stats_map")))
+                map_path=inputs.get("stats_map"),
+                compound_bindings=compound_bindings))
         warnings.extend(s_warnings)
         notes.extend(s_notes)
         vectorless: Optional[float] = None
     else:
-        from ...energy.vectorless import (
+        from npuwattch.energy.vectorless import (
             DEFAULT_VECTORLESS_ACTIVITY,
             vectorless_activity_rows,
         )
@@ -90,7 +130,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     try:
         from .tree import tree_from_accelergy
         hierarchy = tree_from_accelergy(arch_path)
-    except Exception as e:                      # view only — never fatal
+    except Exception as e:                      # The view is optional. Continue.
         warnings.append(f"hierarchy view unavailable: {e}")
 
     return EmittedArch(
@@ -106,40 +146,90 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     )
 
 
-def _apply_energy_table(description: Dict[str, Any], path: Path,
-                        warnings: List[str], notes: List[str]) -> None:
-    """``--energy-table``: price every DRAM component with the user's table,
-    over the type-matched shipped one (or the HBM2 fallback and its warning).
-    A per-bit-only table is fine here — Timeloop stats carry no ACT/REF."""
-    from ...energy.dram_table import load_energy_table
+def _expand_compound(compound: Compound, name: str, entry: Any,
+                     components: List[Dict[str, Any]],
+                     warnings: List[str]) -> Dict[str, int]:
+    """Add one description component for each element of a compound.
 
-    table = load_energy_table(path, require_activation=False)
-    drams = [c for c in description["npuwattch"]["components"]
-             if c.get("class") == "hbm"]
-    if not drams:
-        warnings.append(f"--energy-table {path.name} supplied but the "
-                        f"description has no DRAM component — the table is "
-                        f"unused")
-        return
-    for c in drams:
-        attrs = c.setdefault("attributes", {})
-        for key in ("mem_act_energy_pJ", "mem_ref_energy_pJ"):
-            attrs.pop(key, None)
-        attrs["mem_access_energy_per_bit_pJ"] = table.transfer_pj_per_bit
-        if table.act_pj is not None:
-            attrs["mem_act_energy_pJ"] = table.act_pj
-        if table.ref_pj is not None:
-            attrs["mem_ref_energy_pJ"] = table.ref_pj
-        name = str(c["name"])
-        warnings[:] = [w for w in warnings
-                       if not (w.startswith(name + ":")
-                               and "built-in HBM2" in w)]
-        notes[:] = [n for n in notes
-                    if not (n.startswith(name + " (DRAM type")
-                            and "shipped table" in n)]
-        notes.append(f"{name}: {table.transfer_pj_per_bit:g} pJ/bit from "
-                     f"--energy-table {table.name!r} ({path.name}: "
-                     f"{table.transfer_split_str()})")
+    ``entry`` is the Accelergy component. Its integer attributes are the
+    symbols of the config expressions of the compound. Return the symbols.
+
+    A compound that cannot be resolved is a definition error, thus the
+    function raises :class:`HarnessError`.
+    """
+    symbols: Dict[str, int] = {}
+    for key, value in (entry.attributes or {}).items():
+        number = positive_int(value)
+        if number is not None and not isinstance(value, bool):
+            symbols[str(key).strip().replace("-", "_").lower()] = number
+    try:
+        resolved = resolve_compound(compound, None, symbols)
+        for element, rel in resolved.items():
+            attrs = {k: v for k, v in (rel.config or {}).items()
+                     if v is not None}
+            component = f"{name}.{element}"
+            # A name that is not a symbol stays a string. For a numeric
+            # attribute that is an expression that has no value.
+            for key, value in attrs.items():
+                if (isinstance(value, str) and key in CANONICAL
+                        and CANONICAL[key].kind in ("int", "float")):
+                    raise CompoundBundleError(
+                        f"element {element!r}: {key} = {value!r} has no "
+                        f"value; the Accelergy component does not declare "
+                        f"that attribute as an integer")
+            warnings.extend(validate_attributes(rel.primitive, attrs,
+                                                component=component))
+            components.append({
+                "name": component,
+                "class": rel.primitive,
+                "count": int(entry.instance_count) * int(rel.count),
+                "attributes": attrs,
+            })
+    except (CompoundBundleError, NamingError) as e:
+        raise HarnessError(
+            f"{name}: compound component {compound.name!r}: {e} (the "
+            f"symbols of this component are: "
+            f"{', '.join(sorted(symbols)) or 'none'})") from e
+    return symbols
+
+
+def _compound_bindings(
+    bundle: Any, compound_instances: Mapping[str, Tuple[str, Dict[str, int]]],
+) -> Dict[str, Dict[str, List[Tuple[str, str, int]]]]:
+    """Return the activity bindings of the compound components of a design.
+
+    The result is ``component -> event -> [(element component, stim_mode,
+    scale)]``. The stats reader uses it to send the events of a compound
+    component to its elements. The projection of the run gives the elements
+    and the stim_mode of each event (``read``, ``write``, ``compute``).
+    """
+    projection = bundle.projections.get("timeloop")
+    if projection is None:
+        raise HarnessError(
+            f"the projection of a Timeloop run must declare `tool: timeloop` "
+            f"(found: {', '.join(sorted(bundle.projections)) or 'none'})")
+    for cname, actions in projection.compounds.items():
+        unknown = sorted(set(actions) - set(_ACTION_EVENT))
+        if unknown:
+            raise HarnessError(
+                f"projection: compound {cname!r} has action(s) "
+                f"{', '.join(unknown)}; the Timeloop events are "
+                f"{', '.join(_ACTION_EVENT)}")
+    bindings: Dict[str, Dict[str, List[Tuple[str, str, int]]]] = {}
+    for name, (cname, symbols) in compound_instances.items():
+        per_event: Dict[str, List[Tuple[str, str, int]]] = {}
+        for action in projection.compounds.get(cname, {}):
+            try:
+                resolved = resolve_action(
+                    projection, bundle.compounds[cname], action, None,
+                    bundle.primitive_modes, extra_symbols=symbols)
+            except CompoundBundleError as e:
+                raise HarnessError(f"{name}: projection {cname}.{action}: {e}") from e
+            per_event[_ACTION_EVENT[action]] = [
+                (f"{name}.{el.element}", el.stim_mode, resolved.scale)
+                for el in resolved.elements]
+        bindings[name] = per_event
+    return bindings
 
 
 def description_from_accelergy(
@@ -149,16 +239,38 @@ def description_from_accelergy(
     default_clock_mhz: Optional[float] = None,
     verbose: int = 0,
     node_explicit: bool = False,
+    energy_table: Optional[Any] = None,
+    user_components: Optional[Mapping[str, Any]] = None,
+    compounds: Optional[Mapping[str, Compound]] = None,
+    compound_instances: Optional[Dict[str, Tuple[str, Dict[str, int]]]] = None,
 ) -> Tuple[Dict[str, Any], List[str], List[str]]:
-    """Accelergy v0.4 architecture YAML → ``({"npuwattch": ...}, warnings, notes)``.
+    """Accelergy v0.4 architecture file -> ``({"npuwattch": ...}, warnings, notes)``.
 
-    The flattener already resolves the hierarchy, spatial fanout and attribute
-    inheritance, so each flattened entry is one physical component with a full
-    dotted name and an instance count. This function's job is the vocabulary
-    boundary: class → primitive, attributes → canonical names.
+    The flattener resolves the hierarchy, the spatial fanout, and the attribute
+    inheritance. Thus each flattened entry is one physical component. It has a
+    full dotted name and an instance count.
+
+    This function translates the names: class -> primitive, and Accelergy
+    attributes -> NPUWattch names.
+
+    ``energy_table`` is the ``EnergyTable`` of ``--energy-table``, or ``None``.
+    It gives the energy constants of each DRAM component.
+
+    The function finds the model of an Accelergy class in this order:
+
+    1. ``compounds``: a compound component with the name of the class. The
+       component becomes one description component for each element,
+       ``<name>.<element>``. If ``compound_instances`` is given, the function
+       records ``name -> (compound name, expression symbols)`` in it.
+    2. The vocabulary table: one class -> one primitive.
+    3. ``user_components``: the user component library entry with the name of
+       the class.
+
+    A component whose class is in none of these is not in the description,
+    and the run gives a warning.
     """
-    from ...npuwattch_db import build_database_from_dict
-    from ...yaml_flattener_accelergy_v4 import AccelergyV04Flattener
+    from npuwattch.npuwattch_db import build_database_from_dict
+    from .accelergy_flattener import AccelergyV04Flattener
 
     flattener = AccelergyV04Flattener()
     content = flattener.parse_yaml(str(arch_path))
@@ -176,17 +288,44 @@ def description_from_accelergy(
         if not entry.enabled:
             continue
         name = entry.base_name or entry.name
-        declared = _declared_node(entry.attributes)
-        if declared:
-            declared_nodes.add(declared)
+        # Record the `technology` attribute of the component as a node name
+        # (for example, "45nm").
+        for key, value in (entry.attributes or {}).items():
+            if str(key).strip().lower() == "technology":
+                text = str(value).strip().lower().replace(" ", "")
+                declared_nodes.add(text if text.endswith("nm") else f"{text}nm")
+                break
+        class_name = str(entry.comp_class or "").strip().lower()
+        if class_name in (compounds or {}):
+            symbols = _expand_compound(
+                compounds[class_name], name, entry, components, warnings)
+            if compound_instances is not None:
+                compound_instances[name] = (class_name, symbols)
+            notes.append(
+                f"{name}: class {entry.comp_class!r} is the compound "
+                f"component {class_name!r} "
+                f"({', '.join(compounds[class_name].elements)})")
+            continue
         primitive = primitive_for(entry.comp_class, entry.subclass,
                                   entry.attributes)
         if primitive is None:
-            unmapped.append(f"{name} (class {entry.comp_class!r})")
-            primitive = UNMAPPED_PRIMITIVE
+            user_class = class_name
+            if user_class in (user_components or {}):
+                # A user component has no attributes. Its cost is in the
+                # user component library.
+                components.append({
+                    "name": name, "class": user_class,
+                    "count": int(entry.instance_count), "attributes": {}})
+                notes.append(
+                    f"{name}: class {entry.comp_class!r} uses the user "
+                    f"component library entry {user_class!r}")
+            else:
+                unmapped.append(f"{name} (class {entry.comp_class!r})")
+            continue
 
         attrs = attributes_for(primitive, entry.attributes, component=name,
-                               warnings=warnings, notes=notes)
+                               warnings=warnings, notes=notes,
+                               energy_table=energy_table)
 
         if primitive == "regfile" and reclassify_regfile_as_sram(attrs):
             primitive = "sram"
@@ -194,8 +333,17 @@ def description_from_accelergy(
                 f"{name}: declared a regfile but holds more than "
                 f"32 Kib — modeled with the SRAM estimator")
 
-        primitive, attrs = _validated(primitive, attrs, component=name,
-                                      warnings=warnings)
+        # Check the names. One incorrect component must not stop a large
+        # description. It is not in the description and the run gives a
+        # warning.
+        try:
+            warnings.extend(validate_attributes(primitive, attrs,
+                                                component=name))
+        except NamingError as e:
+            warnings.append(
+                f"{name}: {e} — NOT modeled: its energy and area are NOT "
+                f"included in these results")
+            continue
         components.append({
             "name": name,
             "class": primitive,
@@ -206,18 +354,23 @@ def description_from_accelergy(
     if unmapped:
         warnings.append(
             f"{len(unmapped)} component(s) have no NPUWattch primitive and are "
-            f"priced with the placeholder: {', '.join(sorted(unmapped))}")
+            f"NOT modeled (their energy and area are NOT included in these "
+            f"results): {', '.join(sorted(unmapped))} — to include one, "
+            f"define its class as a compound component "
+            f"(--compound-components) or add it to the user component "
+            f"library (--user-components)")
     if not components:
         raise ValueError(
             f"{arch_path}: no enabled components found — is this an Accelergy "
             f"v0.4 architecture description?")
 
-    # A native description carries ONE technology block; Accelergy declares the
-    # node per component. Disagreement is worth saying out loud — the run is
-    # being evaluated at the CLI's node, not the one written in the file.
-    # An explicit --node is the user saying which node they want — the usual
-    # case for a Timeloop file whose `technology:` only feeds Accelergy's own
-    # tables — so it is a note; the silent 7nm default still warns.
+    # A description has one technology block. Accelergy declares the node for
+    # each component. The run uses the node of the CLI, not the node in the
+    # file. If the two nodes are different, tell the user:
+    # - With an explicit --node, the user selected the node. This is usual,
+    #   because `technology:` in a Timeloop file is only for the Accelergy
+    #   tables. The message is a note.
+    # - With the default node (7nm), the message is a warning.
     foreign = sorted(n for n in declared_nodes if n != str(tech.node).lower())
     if foreign:
         msg = (f"the description declares technology {', '.join(foreign)} but "
@@ -247,46 +400,23 @@ def description_from_accelergy(
     return description, warnings, notes
 
 
-def _declared_node(attributes: Mapping[str, Any]) -> Optional[str]:
-    """The component's own ``technology:`` attribute, normalized to '45nm'."""
-    for key, value in (attributes or {}).items():
-        if str(key).strip().lower() != "technology":
-            continue
-        text = str(value).strip().lower().replace(" ", "")
-        return text if text.endswith("nm") else f"{text}nm"
-    return None
-
-
-def _validated(primitive: str, attrs: Dict[str, Any], *, component: str,
-               warnings: List[str]) -> Tuple[str, Dict[str, Any]]:
-    """Run §3.1 naming validation; a component that fails becomes user_defined.
-
-    A single malformed component must not take down a 200-component
-    description — it becomes placeholder-priced and says why.
-    """
-    try:
-        warnings.extend(validate_attributes(primitive, attrs,
-                                            component=component))
-    except NamingError as e:
-        warnings.append(
-            f"{component}: {e} — priced with the placeholder instead")
-        return UNMAPPED_PRIMITIVE, attrs
-    return primitive, attrs
-
-
 def _clock_mhz(flattener: Any, tech: Any,
                default_clock_mhz: Optional[float]) -> Tuple[float, Optional[str]]:
-    """Clock precedence: ``--clock-mhz`` > the description > the CLI default.
+    """Return the clock frequency in MHz and an optional note.
 
-    Accelergy spells the clock two ways at the top level — ``clockrate`` in MHz
-    and Timeloop's ``global_cycle_seconds``.
+    Priority: ``--clock-mhz`` > the Accelergy file > the CLI default.
+
+    An Accelergy file can declare the clock at the top level in two forms: a
+    frequency in MHz (``clockrate``) or the Timeloop cycle time in seconds
+    (``global_cycle_seconds``). ``VOCABULARY.description`` lists the accepted
+    spellings.
     """
     declared = getattr(flattener, "top_level_attributes", None) or {}
     lowered = {str(k).strip().replace("-", "_").lower(): v
                for k, v in declared.items()}
 
     from_desc: Optional[float] = None
-    for key in _CLOCK_MHZ_KEYS:
+    for key in VOCABULARY.description["clock_mhz"]:
         if lowered.get(key) is not None:
             try:
                 from_desc = float(lowered[key])
@@ -294,11 +424,11 @@ def _clock_mhz(flattener: Any, tech: Any,
                 from_desc = None
             break
     if from_desc is None:
-        for key in _CLOCK_SECONDS_KEYS:
+        for key in VOCABULARY.description["cycle_seconds"]:
             value = lowered.get(key)
             if value:
                 try:
-                    from_desc = 1.0e-6 / float(value)   # s/cycle → MHz
+                    from_desc = 1.0e-6 / float(value)   # s/cycle -> MHz
                 except (TypeError, ValueError, ZeroDivisionError):
                     from_desc = None
                 break

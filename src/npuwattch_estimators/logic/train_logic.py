@@ -1,34 +1,44 @@
 #!/usr/bin/env python3
 """Train the logic-primitive MLPs (component × metric) — manual §5.
 
-Deliberately the same recipe and code shape as ``sram/train_sram.py`` (user
-decision 2026-07-28): Adam 1e-3 + plateau decay, batch 256 capped at n/8,
-early stop on val MAPE, seed 42, CPU, absolute log10 targets, quartet
-checkpoints.  Differences:
+The recipe and the code structure are the same as ``sram/train_sram.py``:
 
-- one model per (component, metric): 7 components × {energy, leakage,
-  timing, area};
-- the §5.3 adaptive loss uses its ORIGINAL two axes (SCR, SAR) — the SRAM
-  trainer's target-axis form was the SPICE adaptation.  Same empty-bin rule:
-  empty bins weight 0, normalized to unit mean over the training samples;
-- power metrics carry a ``stim_mode`` one-hot including ``none`` (the
-  unvectored row; 2026-07-28 decision).  ``--ab-none`` (default on) retrains
-  each energy model WITHOUT the none rows and evaluates both on the same
-  non-none test rows — the evidence for dropping ``none`` later, if it ever
-  clearly hurts;
-- timing/area rows are per DESIGN (deduped across modes; the sweep implements
-  each design once).
+- Adam with a learning rate of 1e-3, and a decrease on a plateau
+- a batch of 256, with a maximum of n/8
+- an early stop on the validation MAPE
+- seed 42, CPU
+- absolute log10 targets
+- one set of checkpoint files for each model
+
+Differences from SRAM:
+
+- There is one model for each (component, metric) pair. The components are
+  ``logic_mlp.COMPONENTS``. The metrics are energy, leakage, timing, and area.
+- The §5.3 adaptive loss uses its two initial axes (SCR, SAR). The SRAM
+  trainer uses the target axis because SPICE rows have no SCR or SAR. The rule
+  for empty bins is the same: an empty bin has the weight 0, and the mean
+  weight of the training samples is 1.
+- The power metrics have a ``stim_mode`` one-hot input, which includes
+  ``none`` (the row without vectors). The A/B test trains each energy model
+  again WITHOUT the none rows. It then compares the two models on the same
+  non-none test rows. The result shows if ``none`` increases the error.
+  ``--skip-ab`` stops this test.
+- The timing and area rows are one for each DESIGN, because the sweep
+  implements each design one time. The trainer removes the duplicates across
+  the modes.
 
 Outputs (to --out-dir, default = this directory):
   <component>_<metric>__<VERSION>.{pt,scalers.json,loss.json,meta.json}
   eval_report.json
-  envelope__<VERSION>.json  (characterized param/clock envelope, all
-                             components — read by logic.py's range checks)
+  envelope__<VERSION>.json  (the characterized envelope of the parameters and
+                             the clock, for all components; the range checks
+                             of logic.py read it)
 
-``VERSION`` is ``logic_mlp.VERSION`` (currently ``v2``) — the same constant the
-inference side loads by, so a bump swaps the whole served set at once. Bump it
-whenever the *characterized object* changes (a library fix, re-pipelined RTL, a
-new feature axis), not for a routine retrain on the same data.
+``VERSION`` is ``logic_mlp.VERSION`` (``v2``). The inference code loads the
+checkpoints with the same constant, thus a new value changes all the served
+models at the same time. Give it a new value if the *characterized object*
+changes: a library correction, re-pipelined RTL, or a new feature axis. Do
+not change it for a new training run on the same data.
 
 Usage:
   python train_logic.py [--components fpmac,intmac,...] [--metrics energy,...]
@@ -74,7 +84,7 @@ def _resolve_dataset_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# sample assembly
+# assembly of the samples
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -82,8 +92,8 @@ class Sample:
     component: str
     node: str
     clock_ns: float
-    params: str                      # arch_params string (design identity)
-    mode: str                        # stim_mode; "" for timing/area
+    params: str                      # arch_params string (identifies the design)
+    mode: str                        # stim_mode, or "" for timing and area
     scr: float
     sar: float
     y_log10: float
@@ -108,8 +118,8 @@ def _mk(component: str, metric: str, row: Dict[str, str],
                         "params": row.get("arch_params"), "node": node,
                         "clock_ns": clock_ns, "mode": mode, "value": value})
         return None
-    # empty numeric param = 1 (pre-07-21 mxfpmac rows lack pipeline_stages:
-    # that template is combinational = 1 stage)
+    # An empty numeric parameter is 1. The mxfpmac rows without
+    # pipeline_stages are combinational designs (1 stage).
     params = {c: float(row[c]) if row.get(c, "") not in ("", None) else 1.0
               for c in lmlp.PARAM_COLUMNS[component]}
     params.update({c: float(row.get(c, 0) or 0)
@@ -128,7 +138,7 @@ def assemble(component: str, rows: List[Dict[str, str]]
              ) -> Tuple[Dict[str, List[Sample]], List[Dict]]:
     samples: Dict[str, List[Sample]] = {m: [] for m in lmlp.METRICS}
     dropped: List[Dict] = []
-    for metric in lmlp.MODE_METRICS:                    # one row per mode
+    for metric in lmlp.MODE_METRICS:                    # one row for each mode
         for row in rows:
             if row.get("stim_mode") not in lmlp.STIM_MODES[component]:
                 dropped.append({"component": component, "metric": metric,
@@ -140,7 +150,7 @@ def assemble(component: str, rows: List[Dict[str, str]]
             if s:
                 samples[metric].append(s)
     seen: set = set()
-    for row in rows:                                    # one row per design
+    for row in rows:                                    # one row for each design
         key = (row["arch_params"], row["node"], row["clock_period_ns"])
         if key in seen:
             continue
@@ -154,11 +164,11 @@ def assemble(component: str, rows: List[Dict[str, str]]
 
 def leak_quarantine_keys(rows: List[Dict[str, str]], dex: float
                          ) -> Tuple[set, Dict[str, Any]]:
-    """Row keys whose leakage is contaminated (see --leakage-outlier-dex).
+    """Return the keys of the rows whose leakage is an outlier.
 
-    Per node, the clean anchor is the 10th percentile of log10(leak/cell) —
-    robust even where contamination is the majority (16nm: ~70% of rows),
-    because the clean floor is device physics and node-flat (~-6.3).
+    See ``--leakage-outlier-dex``. For each node, the reference is the 10th
+    percentile of log10(leak/cell). A row is an outlier if its value is more
+    than ``dex`` decades above the reference.
     """
     per_node: Dict[str, List[float]] = {}
     vals: List[Tuple[Tuple, str, float]] = []
@@ -189,7 +199,10 @@ def leak_quarantine_keys(rows: List[Dict[str, str]], dex: float
 
 def split_by_group(items: Sequence[Sample], seed: int,
                    fracs=(0.8, 0.1, 0.1)) -> Tuple[List[Sample], ...]:
-    """80/10/10 by design — all mode-rows of one implementation stay together."""
+    """Divide the samples 80/10/10 by design.
+
+    All the mode rows of one implementation stay in the same part.
+    """
     groups = sorted({s.group for s in items})
     rng = random.Random(seed)
     rng.shuffle(groups)
@@ -206,7 +219,7 @@ def split_by_group(items: Sequence[Sample], seed: int,
 
 
 # ---------------------------------------------------------------------------
-# §5.3 loss — the original two axes (SCR, SAR), empty-bin rule from SRAM
+# §5.3 loss: the two initial axes (SCR, SAR), and the empty-bin rule of SRAM
 # ---------------------------------------------------------------------------
 
 def fit_loss_weights(train_s: Sequence[Sample], bins: int = 20,
@@ -219,13 +232,13 @@ def fit_loss_weights(train_s: Sequence[Sample], bins: int = 20,
         edges = torch.linspace(0.0, 1.0, bins + 1)
         idx = torch.bucketize(v, edges[1:-1])
         pmf = torch.bincount(idx, minlength=bins).float() / len(vals)
-        # Empty bins get weight 0 (nothing ever falls there) — including their
-        # 1/eps in a normalization would crush the occupied bins (the SRAM
-        # empty-bin lesson, applied per axis).
+        # An empty bin has the weight 0, because no sample is in it. If the
+        # normalization included its 1/eps, the weights of the bins with
+        # samples would become too small. The rule applies to each axis.
         w = torch.where(pmf > 0, 1.0 / (pmf + eps), torch.zeros_like(pmf))
         axes.append({"name": name, "edges": edges.tolist(), "weights": w.tolist()})
         per_axis_w.append((idx, w))
-    # w_i = mu * sqrt(wc*wa), normalized to unit mean over TRAIN SAMPLES.
+    # w_i = mu * sqrt(wc*wa). The mean over the TRAINING SAMPLES is 1.
     raw = torch.sqrt(per_axis_w[0][1][per_axis_w[0][0]]
                      * per_axis_w[1][1][per_axis_w[1][0]])
     norm = float(raw.mean())
@@ -287,7 +300,7 @@ def mape(truth: Sequence[float], pred: Sequence[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# training (same recipe as train_sram.train_model)
+# training (the same recipe as train_sram.train_model)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -423,7 +436,7 @@ def eval_per_mode(net, scalers, samples: Sequence[Sample]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# audits (leave-node-out) + the none A/B
+# audits (leave-node-out) and the A/B test of 'none'
 # ---------------------------------------------------------------------------
 
 def run_audits(component: str, metric: str, samples: List[Sample],
@@ -451,18 +464,20 @@ def run_audits(component: str, metric: str, samples: List[Sample],
 def ab_none(component: str, samples: List[Sample], arch: List[int],
             epochs: int, seed: int, patience: int,
             with_none: TrainResult, test_s: List[Sample]) -> Dict[str, Any]:
-    """Retrain the energy model WITHOUT the 'none' rows; compare both on the
-    same non-none test rows — the evidence basis for dropping 'none' later."""
+    """Train the energy model again WITHOUT the 'none' rows.
+
+    Compare the two models on the same non-none test rows. The result shows
+    if 'none' increases the error.
+    """
     if "none" not in lmlp.STIM_MODES[component]:
-        return {"skipped": "'none' already excluded from this component's "
-                           "vocabulary (dropped per an earlier A/B)"}
+        return {"skipped": "'none' is not a mode of this component"}
     test_ex = [s for s in test_s if s.mode != "none"]
     if not test_ex:
         return {"skipped": "no non-none test rows"}
     sans = [s for s in samples if s.mode != "none"]
     tr, va, _ = split_by_group(sans, seed, fracs=(0.9, 0.1, 0.0))
-    # Keep the comparison honest: exclude any training design that appears in
-    # the shared test rows.
+    # For a correct comparison, remove each training design that is also in
+    # the common test rows.
     test_groups = {s.group for s in test_ex}
     tr = [s for s in tr if s.group not in test_groups]
     va = [s for s in va if s.group not in test_groups] or tr[-max(1, len(tr)//10):]
@@ -501,21 +516,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="skip the energy none-A/B retrain")
     ap.add_argument("--leakage-exclude-nodes", default="",
                     help="comma-separated nodes whose rows are EXCLUDED from the "
-                         "leakage models only (coarser fallback for the same "
-                         "contamination --leakage-outlier-dex quarantines per row)")
+                         "leakage models only")
     ap.add_argument("--leakage-outlier-dex", type=float, default=1.5,
                     help="quarantine leakage rows whose log10(leak/cell) exceeds "
-                         "the node's clean anchor (10th pct) by this many decades "
-                         "(0 disables). 2026-07-28: a subset of std cells carries "
-                         "corrupted leakage characterization (~1000x, physically "
-                         "inverted vs clock pressure; 16/20nm clock-tree cells, "
-                         "7nm combinational cells) — the clean population sits "
-                         "~0.5 dex wide at ~-6.3 log10(mW/cell) on every node, "
-                         "contamination at +2..+3.7 dex, so 1.5 dex splits them "
-                         "cleanly. See eval_report 'leakage_quarantine'.")
+                         "the node's reference (10th pct) by this many decades "
+                         "(0 disables). See eval_report 'leakage_quarantine'.")
     args = ap.parse_args(argv)
 
-    torch.set_num_threads(4)          # tiny nets: more threads hurt (see SRAM)
+    # The nets are small. More threads make the training slower (as for SRAM).
+    torch.set_num_threads(4)
     ddir = Path(args.dataset_dir) if args.dataset_dir else _resolve_dataset_dir()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -544,9 +553,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if leak_excl:
         report["leakage_exclusions"] = {
             "nodes": sorted(leak_excl),
-            "reason": "clock-tree cell leakage characterization corrupted at "
-                      "these nodes (clock-network leakage up to ~2000x, "
-                      "physically inverted vs clock constraint); leakage "
+            "reason": "excluded with --leakage-exclude-nodes; the leakage "
                       "models cover the remaining nodes only",
         }
 
@@ -640,12 +647,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     component, metric, samples[metric], arch, args.epochs,
                     args.seed, args.patience)
 
-        # free per-component eval tensors before the next component
+        # Write the report after each component.
         (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
 
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
     print(f"wrote {out_dir / 'eval_report.json'}")
-    # the provider's range checks read the SAME data the models were fit on
+    # The range checks of the provider use the SAME data as the training.
     env = lmlp.write_envelope(ddir, out_dir, lmlp.COMPONENTS)
     print(f"wrote {env}")
     return 0

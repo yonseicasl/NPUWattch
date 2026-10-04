@@ -1,0 +1,15 @@
+# Die-to-die (chiplet) link energy constant, in pJ for each bit.
+#
+# This is the default constant of the `d2dlink` primitive. The energy of one
+# flit that crosses the link is data_width x energy_pj_per_bit.
+#
+# The value is a literature constant. It is not a measurement of NPUWattch.
+# On-package SerDes and parallel PHYs use approximately 0.5 to 1 pJ/bit
+# (UCIe-class links). The GRS link of Simba reports 0.82 to 1.75 pJ/bit.
+# The value below is the conservative round number. If you change the value,
+# update this text also.
+#
+# A component can give its own value with the attribute
+# `net_energy_per_bit_pJ`.
+name: d2dlink
+energy_pj_per_bit: 1.0

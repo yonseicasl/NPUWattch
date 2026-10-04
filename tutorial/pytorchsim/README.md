@@ -16,6 +16,9 @@ outputs/fqywo6ndalo/meta.txt            operand dtypes and shapes
 outputs/fqywo6ndalo/m5out/stats.txt     gem5 statistics
 outputs/fqywo6ndalo/c<hash>.mlir        the compiled kernel
 booksim2_config/fly_c16_m16.icnt        the NoC topology used
+compound_components.yaml                the hardware model: compounds made of NPUWattch primitives
+projection.yaml                         PyTorchSim actions -> activity of the compound elements
+user_components.yaml                    cost of blocks NPUWattch has no model for (one example)
 run                                     the script
 out/                                    report.html + report.json — shipped, and ./run overwrites them
 ```
@@ -58,6 +61,21 @@ warning says so. TPUv2/v3/v4 all have 16 MB, hence 16384 KB. Everything else in
 
 ## Messages you will see, and why
 
+- `user component 'example_68000_cpu_core' (user_components.yaml): parsed, but
+  not used` — NPUWattch has no model for some blocks (custom control logic, a
+  CPU core). For those you give the area and the energy of each action in a
+  user component library, `user_components.yaml` in this folder
+  (`--user-components my_lib.yaml` selects another file). The file here has
+  this one example entry, and the design does not use it, so the run prints
+  this reminder. It does not change the result.
+
+`compound_components.yaml` and `projection.yaml` are inputs too: together they
+are the hardware model of this TPU-like design (systolic array, vector unit,
+scratchpads, SFU, DMA, DRAM, NoC) and the rule that turns each simulator
+counter into activity. NPUWattch reads the three files from this folder by
+their fixed names; `--compound-components`, `--projection`, and
+`--user-components` select other files. Without them the run stops with an
+error — NPUWattch has no built-in design.
 - `Configured clock (940 MHz) is within 20% of the estimated f_max (992 MHz)`
   — NPUWattch predicts a critical path, not only energy. This design has 5%
   timing margin at 940 MHz, which is tight.

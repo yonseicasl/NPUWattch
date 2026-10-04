@@ -1,10 +1,15 @@
-# LPDDR off-chip DRAM energy, pJ. Per-bit transfer energy only: the source
-# gives one access energy per bit and no row-activation or refresh split, so
-# this table suits Timeloop (whose stats carry no ACT/REF events). A PyTorchSim
-# run, which issues ACT commands, rejects a table without row_activation_pj.
-# Source: Accelergy CactiDRAM type table (accelergy-cacti-plug-in), citing
-# "Malladi et al., ISCA'12".
-# Same number Timeloop/Accelergy charges for a DRAM of type "LPDDR".
+# LPDDR off-chip DRAM energy constants, in pJ.
+#
+# This table has only the transfer energy for each bit. The source gives one
+# access energy for each bit. It gives no row activation energy and no
+# refresh energy.
+# The table is sufficient for Timeloop, because its stats have no ACT or REF
+# events. PyTorchSim counts ACT commands. Thus a PyTorchSim run does not
+# accept a table that has no row_activation_pj.
+#
+# Source: Accelergy CactiDRAM type table (accelergy-cacti-plug-in). That table
+# cites "Malladi et al., ISCA'12".
+# Timeloop and Accelergy use the same value for a DRAM of type "LPDDR".
 name: LPDDR
 
 offchip_dram:

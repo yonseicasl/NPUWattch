@@ -1,0 +1,46 @@
+# ============================================================================
+#  User component library (example)
+# ============================================================================
+# A user component is a block that NPUWattch has no model for. You give its
+# cost in this file: the area, and the energy of each action. NPUWattch does
+# not calculate these values.
+#
+# This file is an INPUT of the run. NPUWattch reads `user_components.yaml`
+# from the directory of the run inputs, or the file that you give with
+# --user-components.
+#
+# THE ENTRY BELOW IS AN EXAMPLE. No design uses it, thus each run shows the
+# message "parsed, but not used". Replace it with your components.
+#
+# How a design uses an entry:
+#   - The entry name is the class of the component in the design.
+#   - Each action name is a `mode` of the activity (manual §3.3). The energy
+#     of the component is the sum of (action count x energy_pJ).
+#
+# Keys of an entry:
+#   reference      The technology of the values. `node` is necessary.
+#   design_class   Optional: register | compute. The custom component scaler
+#                  uses it.
+#   area_um2       The area of one instance.
+#   leak_power_mW  Optional. The leakage power of one instance. Default: 0.
+#   actions        action name -> {energy_pJ: energy of one action}
+#
+# The custom component scaler changes the values from the reference technology
+# to the technology of the run. THE SCALER IS NOT IMPLEMENTED. NPUWattch uses
+# the values as they are and gives a warning if the nodes are different.
+
+user_components:
+
+  # A Motorola 68000 microprocessor core. The values are approximate numbers
+  # for the original part (3.5 um NMOS, 44 mm2 die, 8 MHz, about 1.5 W).
+  example_68000_cpu_core:
+    reference:
+      node: 3500nm
+    design_class: compute
+    area_um2: 44000000.0
+    leak_power_mW: 0.0
+    actions:
+      idle:                 # one clock cycle with no instruction
+        energy_pJ: 90000.0
+      process:              # one clock cycle of instruction execution
+        energy_pJ: 190000.0

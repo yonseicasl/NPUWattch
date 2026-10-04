@@ -1,20 +1,24 @@
-"""Torch-side companion of the SRAM estimator.
+"""The torch part of the SRAM estimator.
 
-This file is loaded LAZILY by ``sram.py`` via ``importlib`` (file path, not a
-package import), so ``sram.py`` itself stays stdlib-only and runpy-safe for
-``EstimatorHost``.  Everything SRAM+torch lives here, inside the standalone
-plugin directory ``src/estimators/sram/``:
+``sram.py`` loads this file with ``importlib``, by file path and only if it is
+necessary. It is not a package import. Thus ``sram.py`` uses only the standard
+library, and ``EstimatorHost`` can execute it with runpy. All SRAM code that
+uses torch is in this file, in the self-contained estimator directory
+``src/npuwattch_estimators/sram/``:
 
-- the checkpoint quartet format (``<metric>__v1.{pt,scalers.json,loss.json,
-  meta.json}``, manual §3.5: state_dict-only ``.pt``, all transforms frozen in
-  the sidecars, never refit at inference);
-- the MLP definition and the shared feature/one-hot vocabulary (also used by
-  ``train_sram.py``);
-- ``MlpTilePointSource`` — the TilePointSource implementation that predicts
-  ABSOLUTE log10 per-tile costs (leak-subtracted dynamic pJ / mW / ns / um2)
-  at the queried (ΔV, T).  The Appendix-A delay composition stays in code:
-  the timing model predicts the four raw paths, t_read/t_write are composed
-  here (the max() branch may flip across PVT — intended).
+- The checkpoint quartet format:
+  ``<metric>__v1.{pt,scalers.json,loss.json,meta.json}`` (manual §3.5). The
+  ``.pt`` file has only the state_dict. The other files of the quartet hold
+  all transforms. Inference does not fit them again.
+- The MLP definition and the vocabulary of features and one-hots.
+  ``train_sram.py`` also uses them.
+- ``MlpTilePointSource``: the TilePointSource implementation. It predicts the
+  ABSOLUTE log10 costs of one tile at the (ΔV, T) of the query. The units are
+  dynamic pJ without leakage, mW, ns, and um2.
+
+The timing model predicts the composed access times ``t_read`` and
+``t_write``. ``compose_timing`` has the Appendix-A delay composition that
+makes these targets from the four raw paths.
 """
 
 from __future__ import annotations
@@ -35,11 +39,12 @@ MODEL_NAMES = ("energy", "leakage", "timing", "area")
 ENERGY_OPS = ("rd_1to1", "rd_1to0", "wr_same", "wr_toggle",
               "dec_act", "dec_flip", "dec_idle")
 LEAK_COMPS = ("array", "dec")
-# Composed access times, not raw paths: the raw dec_wlen_wl surface carries
-# synthesis discontinuities (decoder structure/drive flips with row count)
-# that no smooth model of (log2 rows, log2 cols) can follow; the composed
-# targets are what the estimator consumes (§5.1's "access time") and dilute
-# those jumps with the smooth array terms.
+# The timing targets are composed access times, not raw paths.
+# - The raw dec_wlen_wl data has discontinuities from synthesis: the decoder
+#   structure and drive strength change with the row count. A smooth model
+#   of (log2 rows, log2 cols) cannot fit them.
+# - The estimator uses the composed targets (the "access time" of manual
+#   §5.1). The smooth array terms make the discontinuities smaller.
 TIMING_TARGETS = ("t_read", "t_write")
 AREA_COMPS = ("array", "dec")
 ONE_HOTS: Dict[str, Tuple[str, ...]] = {
@@ -51,7 +56,7 @@ ONE_HOTS: Dict[str, Tuple[str, ...]] = {
 TARGET_UNITS = {"energy": "pJ", "leakage": "mW", "timing": "ns", "area": "um2"}
 DEFAULT_ARCH: Dict[str, List[int]] = {
     "energy": [128, 128, 128],
-    "leakage": [128, 128, 128],   # hardest surface: exponential in V and T
+    "leakage": [128, 128, 128],   # the most difficult data: exponential in V and T
     "timing": [128, 128, 128],
     "area": [64, 64],
 }
@@ -72,12 +77,15 @@ def base_feature_names(model: str) -> List[str]:
     if model != "area":
         names += ["voltage_offset_V", "temperature_C"]
     if model == "leakage":
-        names += ["inv_T_1000K"]                # 1000/(T+273.15), Arrhenius axis
-    # Per-node one-hot alongside the numeric node: lets the model bend the
-    # trend at device transitions (the 20nm boundary node's leakage blows up
-    # ~7.5x at +0.1V/85C where FinFET nodes move ~1.3x — a numeric-only node
-    # feature bleeds that into 16nm). Same rationale as §5.2's device-family
-    # one-hot; here every dataset node gets its own flag.
+        names += ["inv_T_1000K"]                # 1000/(T+273.15), the Arrhenius axis
+    # A one-hot for each node, together with the numeric node feature.
+    # - It lets the model change the trend at a device transition.
+    # - Example: at +0.1V/85C, the leakage of the 20nm node increases ~7.5x,
+    #   but that of the FinFET nodes increases ~1.3x.
+    # - With only a numeric node feature, the 20nm behavior changes the 16nm
+    #   prediction.
+    # - The device-family one-hot of manual §5.2 has the same purpose. Here
+    #   each dataset node has its own flag.
     names += [f"node_is_{n}nm" for n in NODE_LIST]
     return names
 
@@ -109,7 +117,11 @@ def n_inputs(model: str) -> int:
 
 
 def scale_mask(model: str) -> List[bool]:
-    """True = standardize this input column (continuous); one-hots left as-is."""
+    """Return the mask of input columns to standardize.
+
+    True is a continuous column. The one-hot columns are False and do not
+    change.
+    """
     n_cont = _n_continuous(model)
     total = len(base_feature_names(model)) + len(ONE_HOTS[model])
     return [True] * n_cont + [False] * (total - n_cont)
@@ -131,7 +143,7 @@ class SramMlp(nn.Module):
 
 
 def dataset_hash(dataset_dir: Path) -> str:
-    """sha256 over the two dataset CSVs (array then decoder, raw bytes)."""
+    """Return the sha256 of the raw bytes of the two dataset CSVs (array, then decoder)."""
     h = hashlib.sha256()
     for name in ("sram_array.csv", "sram_decoder.csv"):
         h.update((dataset_dir / name).read_bytes())
@@ -156,7 +168,7 @@ def available(model_dir: Path) -> bool:
 def save_quartet(model_dir: Path, model: str, net: SramMlp, scalers: Mapping[str, Any],
                  loss_spec: Mapping[str, Any], meta: Mapping[str, Any]) -> None:
     paths = quartet_paths(Path(model_dir), model)
-    torch.save(net.state_dict(), paths["pt"])      # state_dict ONLY (§3.5)
+    torch.save(net.state_dict(), paths["pt"])      # the state_dict ONLY (manual §3.5)
     paths["scalers"].write_text(json.dumps(dict(scalers), indent=1))
     paths["loss"].write_text(json.dumps(dict(loss_spec), indent=1))
     paths["meta"].write_text(json.dumps(dict(meta), indent=1))
@@ -174,7 +186,7 @@ class LoadedModel:
     meta: Dict[str, Any]
 
     def predict_linear(self, rows: Sequence[Sequence[float]]) -> List[float]:
-        """Feature rows -> linear-domain values (10**log10)."""
+        """Predict linear values (10**log10) for a list of feature rows."""
         with torch.no_grad():
             x = torch.tensor(rows, dtype=torch.float32)
             xs = torch.where(self.x_scale_mask,
@@ -187,7 +199,7 @@ class LoadedModel:
 class MlpBundle:
     model_dir: Path
     models: Dict[str, LoadedModel]
-    dataset_sha256: str                       # from the meta files (must agree)
+    dataset_sha256: str                       # from the meta files, which must all agree
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -227,7 +239,10 @@ def _load_one(model_dir: Path, model: str) -> LoadedModel:
 
 def load_bundle(model_dir: Path,
                 dataset_dir: Optional[Path] = None) -> Tuple[MlpBundle, List[str]]:
-    """Load (and cache) the four quartets; warn on dataset-hash drift."""
+    """Load and cache the four quartets.
+
+    Give a warning if the dataset hash is different from that of the training.
+    """
     model_dir = Path(model_dir).resolve()
     key = str(model_dir)
     bundle = _BUNDLE_CACHE.get(key)
@@ -254,17 +269,19 @@ def load_bundle(model_dir: Path,
 
 def compose_timing(dec_wlen_wl: float, rd_delay: float,
                    wr_bl: float, wr_cell: float) -> Tuple[float, float]:
-    """Appendix-A composition from the four raw paths."""
+    """Return (t_read, t_write): the Appendix-A composition of the four raw paths."""
     return dec_wlen_wl + rd_delay, max(dec_wlen_wl, wr_bl) + wr_cell
 
 
 class MlpTilePointSource:
-    """TilePointSource backed by the trained MLPs (absolute predictions).
+    """The TilePointSource that uses the trained MLPs (absolute predictions).
 
-    Constructed per query with the clamped (ΔV, T); ``tile_costs`` keeps the
-    seam signature (accepts the table's PvtScale ``k`` for parity and ignores
-    it — the absolute predictions already include PVT).  ``tile_costs_cls`` is
-    sram.py's TileCosts dataclass, injected to avoid a circular load.
+    Each query makes one instance with the clamped (ΔV, T). ``tile_costs``
+    has the signature of the TilePointSource interface. It accepts the
+    PvtScale ``k`` of the table source but does not use it, because the
+    absolute predictions include the PVT effect. ``tile_costs_cls`` is the
+    TileCosts dataclass of sram.py. The caller supplies it to prevent a
+    circular load.
     """
 
     def __init__(self, bundle: MlpBundle, dv: float, temp: float,

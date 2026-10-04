@@ -1,21 +1,21 @@
-"""NPUWattch Estimator Host Module.
+"""NPUWattch estimator host.
 
-Discovers the estimator plugins under ``src/estimators`` and calls into them
-**without importing them** (``ast`` for the spec, ``runpy`` for execution), so a
-plugin's heavy dependencies — torch, in particular — never enter the main
-program's import graph.
+This module finds the estimator plugins in ``src/npuwattch_estimators`` and
+calls them. It does **not import** a plugin. It reads the spec with ``ast``
+and runs the code with ``runpy``. Thus the large dependencies of a plugin
+(torch, for example) do not enter the import graph of the main program.
 
-Responsibilities:
-- Scanning available estimators and reading their ``ESTIMATOR_SPEC``
-- Executing declared entrypoints (``unit_cost_provider``, ``energy``, …)
-- Training models through a plugin's ``train_*`` entrypoint
-- Error handling without program termination
+Functions of the host:
 
-It does **not** decide which estimator a given architecture component belongs
-to. That routing used to live here (class→plugin table + per-component feature
-extraction) and served the retired legacy Accelergy path; it now belongs to the
-harness that reads the description (``harness/timeloop/vocabulary.py``), and
-pricing goes through ``energy.provider_factory``'s composed provider chain.
+- Scan the available estimators and read their ``ESTIMATOR_SPEC``.
+- Run the declared entrypoints (``unit_cost_provider``, ``energy``, …).
+- Train models through the ``train_*`` entrypoint of a plugin.
+- Report an error without a stop of the program.
+
+The host does **not** select the estimator of a component. The harness that
+reads the description changes each class to a primitive (for example,
+``npuwattch_harness/timeloop/vocabulary.py``). The provider chain of
+``energy.provider_factory`` gives the costs.
 """
 
 from __future__ import annotations
@@ -31,11 +31,11 @@ import runpy
 
 @dataclass(frozen=True)
 class EstimatorModuleInfo:
-    """One estimator plugin directory (``logic``, ``sram``).
+    """One estimator plugin directory (for example, ``logic`` or ``sram``).
 
-    A plugin may serve several primitives — the ``logic`` module declares a
-    ``primitives`` list covering all 14 characterized blocks — so the directory
-    name is the plugin's, not a primitive's.
+    One plugin can serve more than one primitive. The ``logic`` plugin
+    declares a ``primitives`` list of all the logic primitives that it serves.
+    Thus the directory name is the name of the plugin, not of a primitive.
     """
     name: str
     module_dir: Path
@@ -46,29 +46,29 @@ class EstimatorModuleInfo:
 
 def _resolve_estimator_root() -> Path:
     """
-    Resolve the estimator root directory.
+    Find the estimator root directory.
 
     Priority:
-      1) Dev/repo usage: ./src/estimators relative to current working directory.
-      2) Installed usage: locate the installed top-level 'estimators' package directory.
+      1) Repository use: ./src/npuwattch_estimators in the current working directory.
+      2) Installed use: the directory of the installed 'npuwattch_estimators' package.
     """
-    dev_root = Path.cwd() / "src" / "estimators"
+    dev_root = Path.cwd() / "src" / "npuwattch_estimators"
     if dev_root.is_dir():
         return dev_root
 
-    spec = importlib.util.find_spec("estimators")
+    spec = importlib.util.find_spec("npuwattch_estimators")
     if spec and spec.submodule_search_locations:
         return Path(list(spec.submodule_search_locations)[0])
 
     raise FileNotFoundError(
-        "[ERROR] Could not locate estimator root. Tried ./src/estimators and installed 'estimators' package."
+        "[ERROR] Could not locate estimator root. Tried ./src/npuwattch_estimators and installed 'npuwattch_estimators' package."
     )
 
 
 def _extract_estimator_spec(py_file: Path) -> Optional[dict]:
     """
-    Extract ESTIMATOR_SPEC dict literal without importing or executing the module.
-    Requires ESTIMATOR_SPEC to be a literal dict (supported by ast.literal_eval).
+    Read the ESTIMATOR_SPEC dict of a file. Do not import or run the module.
+    ESTIMATOR_SPEC must be a literal dict that ast.literal_eval accepts.
     """
     try:
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
@@ -84,10 +84,10 @@ def _extract_estimator_spec(py_file: Path) -> Optional[dict]:
 
 class EstimatorHost:
     """
-    Scans ./src/estimators (or installed equivalent) and enables calling helper functions
-    in estimator modules WITHOUT importing them as Python modules.
+    Scans the estimator root and calls functions of the estimator plugins.
+    The host does NOT import a plugin as a Python module.
 
-    Provides safe estimation methods that return None on error instead of terminating.
+    The estimation methods return None on an error. They do not stop the program.
     """
 
     def __init__(self, estimator_root: Optional[Path] = None,
@@ -98,10 +98,10 @@ class EstimatorHost:
 
     def scan_estimators(self) -> Dict[str, EstimatorModuleInfo]:
         """
-        Scan estimator_root for modules of the form:
-          estimators/<name>/<name>.py
+        Scan estimator_root for plugins of the form:
+          npuwattch_estimators/<name>/<name>.py
 
-        For each module, record all .py sources for reporting and extract ESTIMATOR_SPEC.
+        For each plugin, record all its .py files and read its ESTIMATOR_SPEC.
         """
         root = self.estimator_root
         modules: Dict[str, EstimatorModuleInfo] = {}
@@ -134,11 +134,11 @@ class EstimatorHost:
         return self._modules
 
     def list_modules(self) -> List[str]:
-        """Return list of available estimator module names."""
+        """Return the sorted names of the estimator plugins."""
         return sorted(self._modules.keys())
 
     def report_to_console(self) -> None:
-        """Report all Python sources discovered under ./src/estimators."""
+        """Print the plugins and the Python files in the estimator root."""
         print(f"[INFO] Estimator root: {self.estimator_root}")
 
         if not self._modules:
@@ -152,7 +152,7 @@ class EstimatorHost:
             rel_entry = info.entry_file.relative_to(self.estimator_root)
             print(f"  - {name} (entry: {rel_entry})")
 
-            # Report required params (if available)
+            # Print the required parameters, if the spec gives them.
             required = []
             if info.spec:
                 required = info.spec.get("parameters", {}).get("required", []) or []
@@ -167,18 +167,18 @@ class EstimatorHost:
         print("=" * 100)
 
     def has_module(self, name: str) -> bool:
-        """Check if an estimator module exists."""
+        """Return True if the estimator plugin exists."""
         return name in self._modules
 
     def get_spec(self, module_name: str) -> Optional[dict]:
-        """Get the ESTIMATOR_SPEC for a module, or None if not found."""
+        """Return the ESTIMATOR_SPEC of a plugin, or None if there is none."""
         info = self._modules.get(module_name)
         if not info or not info.spec:
             return None
         return info.spec
 
     def _load_namespace(self, module_name: str) -> Optional[Dict[str, Any]]:
-        """Load a module's namespace by executing its entry file via runpy (no import)."""
+        """Run the entry file of a plugin with runpy and return its namespace."""
         info = self._modules.get(module_name)
         if not info:
             return None
@@ -192,11 +192,11 @@ class EstimatorHost:
         self, module_name: str, function_name: str, *args: Any, **kwargs: Any
     ) -> Tuple[Any, Optional[str]]:
         """
-        Execute a function contained in a scanned estimator module.
+        Run a function of a scanned estimator plugin.
 
         Returns:
-            Tuple of (result, error_message). If successful, error_message is None.
-            If failed, result is None and error_message contains the error.
+            (result, error_message). On success, error_message is None.
+            On failure, result is None and error_message describes the error.
         """
         if module_name not in self._modules:
             error = f"[ERROR] Estimator module '{module_name}' not found. Available: {self.list_modules()}"
@@ -229,10 +229,10 @@ class EstimatorHost:
         self, module_name: str, entrypoint_key: str, *args: Any, **kwargs: Any
     ) -> Tuple[Any, Optional[str]]:
         """
-        Execute an entrypoint declared in ESTIMATOR_SPEC['entrypoints'].
+        Run an entrypoint that ESTIMATOR_SPEC['entrypoints'] declares.
 
         Returns:
-            Tuple of (result, error_message).
+            (result, error_message).
         """
         spec = self.get_spec(module_name)
         if not spec:
@@ -249,21 +249,21 @@ class EstimatorHost:
         return self.execute(module_name, ep, *args, **kwargs)
 
     ###########################################################################
-    # Safe Estimation Methods - Return None on error, don't terminate
+    # Estimation methods: return None on an error, do not stop the program
     ###########################################################################
 
     def estimate_energy(
         self, module_name: str, features: Dict[str, Any], **kwargs: Any
     ) -> Optional[float]:
         """
-        Safely estimate energy for given features.
+        Estimate the energy for the given features.
 
         Args:
-            module_name: Name of the estimator module
-            features: Feature dictionary for estimation
+            module_name: The name of the estimator plugin
+            features: The feature dictionary
 
         Returns:
-            Estimated energy value or None if estimation failed
+            The energy, or None if the estimation failed
         """
         if not self.has_module(module_name):
             print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for energy.")
@@ -278,14 +278,14 @@ class EstimatorHost:
         self, module_name: str, features: Dict[str, Any], **kwargs: Any
     ) -> Optional[float]:
         """
-        Safely estimate area for given features.
+        Estimate the area for the given features.
 
         Args:
-            module_name: Name of the estimator module
-            features: Feature dictionary for estimation
+            module_name: The name of the estimator plugin
+            features: The feature dictionary
 
         Returns:
-            Estimated area value or None if estimation failed
+            The area, or None if the estimation failed
         """
         if not self.has_module(module_name):
             print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for area.")
@@ -300,14 +300,14 @@ class EstimatorHost:
         self, module_name: str, features: Dict[str, Any], **kwargs: Any
     ) -> Optional[float]:
         """
-        Safely estimate timing for given features.
+        Estimate the timing for the given features.
 
         Args:
-            module_name: Name of the estimator module
-            features: Feature dictionary for estimation
+            module_name: The name of the estimator plugin
+            features: The feature dictionary
 
         Returns:
-            Estimated timing value or None if estimation failed
+            The timing, or None if the estimation failed
         """
         if not self.has_module(module_name):
             print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for timing.")
@@ -322,14 +322,14 @@ class EstimatorHost:
         self, module_name: str, features: Dict[str, Any], **kwargs: Any
     ) -> Dict[str, Optional[float]]:
         """
-        Estimate energy, area, and timing for given features.
+        Estimate the energy, the area, and the timing for the given features.
 
         Args:
-            module_name: Name of the estimator module
-            features: Feature dictionary for estimation
+            module_name: The name of the estimator plugin
+            features: The feature dictionary
 
         Returns:
-            Dictionary with 'energy', 'area', 'timing' keys (values may be None)
+            A dictionary with the keys 'energy', 'area', 'timing'. A value can be None.
         """
         return {
             "energy": self.estimate_energy(module_name, features, **kwargs),
@@ -348,26 +348,26 @@ class EstimatorHost:
         lr: float = 1e-3,
     ) -> Tuple[Any, Optional[str]]:
         """
-        Train a model for the specified estimator.
+        Train a model of the given estimator.
 
         Args:
-            module_name: Name of the estimator module
-            model_type: Type of model to train ('energy', 'area', 'timing')
-            csv_file: Path to training data CSV
-            output_path: Optional output path for saved model
-            epochs: Number of training epochs
-            batch_size: Training batch size
-            lr: Learning rate
+            module_name: The name of the estimator plugin
+            model_type: The model type ('energy', 'area', 'timing')
+            csv_file: The path of the training data CSV
+            output_path: The optional output path of the model
+            epochs: The number of training epochs
+            batch_size: The training batch size
+            lr: The learning rate
 
         Returns:
-            Tuple of (trained_model, error_message)
+            (trained_model, error_message)
         """
         if not self.has_module(module_name):
             error = f"[ERROR] Estimator '{module_name}' does not exist. Cannot train."
             print(error)
             return None, error
 
-        # Determine the training entrypoint
+        # Find the training entrypoint.
         spec = self.get_spec(module_name)
         if spec:
             entrypoints = spec.get("entrypoints", {})
@@ -390,11 +390,11 @@ class EstimatorHost:
         )
 
     ###########################################################################
-    # Utility Methods
+    # Utility methods
     ###########################################################################
 
     def get_available_entrypoints(self, module_name: str) -> List[str]:
-        """Get list of available entrypoints for a module."""
+        """Return the entrypoint names of a plugin."""
         spec = self.get_spec(module_name)
         if not spec:
             return []
@@ -402,10 +402,10 @@ class EstimatorHost:
 
     def check_model_availability(self, module_name: str) -> Optional[Dict[str, bool]]:
         """
-        Check which models are available for an estimator.
+        Find which models of an estimator are available.
 
         Returns:
-            Dictionary mapping model types to availability, or None if check failed
+            A dictionary of model type -> availability, or None if the check failed
         """
         if not self.has_module(module_name):
             print(f"[ERROR] Estimator '{module_name}' does not exist.")

@@ -1,81 +1,99 @@
-"""DRAM energy-cost tables: PyTorchSim's ``energy_cost_table_path`` format,
-shared by every harness.
+"""DRAM energy tables. All harnesses use this module.
 
-Shipped tables (``dram_tables/*.yml``, one per DRAM type Accelergy accepts)
-let the Timeloop harness price an Accelergy ``DRAM`` by its declared ``type``
-(:func:`table_for_type`); ``--energy-table`` overrides them on either harness.
+A DRAM energy table gives the energy constants of one DRAM type. NPUWattch
+always gets the constants of an ``hbm`` component from a table:
 
-The simulator config names a YAML of DRAM energy constants (author handoff
-2026-08-10, sample ``hbm2.yml``); the log echoes the loaded table as
-``[Config/Energy] Loaded energy (cost) table "NAME" from PATH``. When the user
-supplies that file (``--energy-table``, auto-added by ``run.sh`` from
-``<root>/energy_tables/``), the emitter overrides the dram compound's built-in
-constants with the table's values, so NPUWattch charges exactly what the run
-declared. Without it, the built-in cited constants apply (O'Connor MICRO 2017
-— identical to the authors' HBM2 table today, pinned by
-``tests/harness/test_dram_authors_verification.py``).
+* ``dram_tables/*.yml``: one table for each DRAM type. ``hbm2.yml`` is the
+  default table (:func:`default_table`).
+* ``--energy-table``: a table that the user gives for one run.
 
-Table contract (the authors let us fix the structure)::
+Each harness selects the table in its ``dram.py`` module.
+:meth:`EnergyTable.attributes` gives the component attributes for a table.
 
-    name: HBM2                       # required — matched against the log echo
+The file format is the ``energy_cost_table_path`` format of PyTorchSim. The
+PyTorchSim log shows the name of its table in this line:
+``[Config/Energy] Loaded energy (cost) table "NAME" from PATH``.
+
+Table format::
+
+    name: HBM2                       # necessary. Compared with the log line.
     offchip_dram:
-      row_activation_pj: 909.0       # one ACT(+PRE) command — required for
-                                     #   PyTorchSim (it issues ACTs); optional
-                                     #   for per-bit-only tables (Timeloop has
-                                     #   no ACT events)
-      transfer_pj_per_bit:           # required — per-bit terms, summed;
-        dram: 1.51                   #   labels are free-form (dram/io/phy in
-        io: 1.17                     #   the author sample) and kept for the
-        phy: 0.80                    #   report's transfer-split provenance
-      refresh_pj_per_refab: 58176.0  # optional — our proposed extension; the
-                                     #   author sample has none, so the
-                                     #   built-in derived constant stays
+      row_activation_pj: 909.0       # one ACT (+PRE) command. Necessary for
+                                     #   PyTorchSim, which counts ACT commands.
+                                     #   Optional for Timeloop, which has no
+                                     #   ACT events.
+      transfer_pj_per_bit:           # necessary. The terms are added.
+        dram: 1.51                   #   The labels are free text. The report
+        io: 1.17                     #   shows them.
+        phy: 0.80
+      refresh_pj_per_refab: 58176.0  # optional. A NPUWattch extension of the
+                                     #   PyTorchSim format.
 
-Refresh: the authors' energy formula has no refresh term. When the table omits
-it, the dram compound keeps charging the built-in derived REFab constant — the
-caller notes that, it is never silent.
+If a table has no refresh term, the refresh energy comes from the default
+table, and the harness writes a note.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional
 
 import yaml
 
-__all__ = ["EnergyTable", "EnergyTableError", "TABLE_DIR", "load_energy_table",
-           "table_for_type"]
+__all__ = ["EnergyTable", "EnergyTableError", "TABLE_DIR", "default_table",
+           "load_energy_table", "table_for_type"]
 
-#: Shipped per-type tables (package data).
+#: The directory of the DRAM energy tables, one for each DRAM type (package
+#: data).
 TABLE_DIR = Path(__file__).resolve().parent / "dram_tables"
 
 
 class EnergyTableError(ValueError):
-    """The energy table file is missing a required key or malformed."""
+    """The energy table file has an incorrect format or no necessary key."""
 
 
 @dataclass(frozen=True)
 class EnergyTable:
     name: str
     path: Path
-    #: per-ACT(+PRE) energy; None for a per-bit-only table.
+    #: Energy of one ACT (+PRE) command. None if the table has only the
+    #: transfer terms.
     act_pj: Optional[float]
-    #: per-bit transfer terms, label → pJ/bit (order preserved from the file).
+    #: The transfer terms: label -> pJ for each bit, in the order of the file.
     transfer_terms: Dict[str, float] = field(default_factory=dict)
-    #: per-REFab refresh energy; None when the table has no refresh term
-    #: (the author format) — the built-in derived constant then stays.
+    #: Energy of one REFab command. None if the table has no refresh term.
+    #: The refresh energy then comes from the default table.
     ref_pj: Optional[float] = None
 
     @property
     def transfer_pj_per_bit(self) -> float:
-        # 10 significant digits: keeps any real precision, drops binary float
-        # summation noise (1.51+1.17+0.80 → 3.48, not 3.4799999999999995 —
-        # this value lands in the description YAML and the report verbatim).
+        # Round the sum to 10 significant digits. This removes the binary
+        # float error of the sum: 1.51+1.17+0.80 gives 3.48, not
+        # 3.4799999999999995. The description YAML and the report show this
+        # value without a change.
         return float(f"{sum(self.transfer_terms.values()):.10g}")
 
+    def attributes(self) -> Dict[str, float]:
+        """The ``hbm`` component attributes that this table defines.
+
+        A table without an activation or a refresh term does not give that
+        attribute.
+        """
+        attrs: Dict[str, float] = {}
+        if self.act_pj is not None:
+            attrs["mem_act_energy_pJ"] = self.act_pj
+        attrs["mem_access_energy_per_bit_pJ"] = self.transfer_pj_per_bit
+        if self.ref_pj is not None:
+            attrs["mem_ref_energy_pJ"] = self.ref_pj
+        return attrs
+
     def transfer_split_str(self) -> str:
-        """``dram 1.51 + io 1.17 + phy 0.8`` — for provenance notes."""
+        """Return the transfer terms as text, for the notes of a run.
+
+        Example: ``dram 1.51 + io 1.17 + phy 0.8``.
+        """
         return " + ".join(f"{k} {v:g}" for k, v in self.transfer_terms.items())
 
 
@@ -86,11 +104,17 @@ def _positive_number(value: object, where: str) -> float:
 
 
 def load_energy_table(path: Path, *, require_activation: bool = True) -> EnergyTable:
-    """Parse one table. ``require_activation=False`` accepts a per-bit-only
-    table (no ``row_activation_pj``) — fine where no ACT events are charged."""
+    """Read one table file.
+
+    With ``require_activation=False``, the function accepts a table that has
+    no ``row_activation_pj``. Such a table is sufficient for a harness that
+    has no ACT events.
+    """
     path = Path(path)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as e:
+        raise EnergyTableError(f"energy table not found: {path}") from e
     except yaml.YAMLError as e:
         raise EnergyTableError(f"energy table {path}: not valid YAML — {e}") from e
     if not isinstance(data, dict):
@@ -128,9 +152,23 @@ def load_energy_table(path: Path, *, require_activation: bool = True) -> EnergyT
                        transfer_terms=terms, ref_pj=ref_pj)
 
 
+@lru_cache(maxsize=None)
+def default_table() -> EnergyTable:
+    """Return the default table, ``dram_tables/hbm2.yml``.
+
+    This table is the one source of the default ``hbm`` constants. It has all
+    three terms: activation, transfer, and refresh. If the file is not
+    available, the function raises :class:`EnergyTableError`.
+    """
+    return load_energy_table(TABLE_DIR / "hbm2.yml")
+
+
 def table_for_type(dram_type: object) -> Optional[EnergyTable]:
-    """The shipped table whose ``name`` is ``dram_type`` (case-insensitive,
-    e.g. Accelergy's ``LPDDR4``), or None when there is none."""
+    """Return the table in ``dram_tables/`` whose ``name`` is ``dram_type``.
+
+    The comparison ignores the letter case. An example is the Accelergy type
+    ``LPDDR4``. Return None if there is no such table.
+    """
     if not isinstance(dram_type, str) or not dram_type.strip():
         return None
     path = TABLE_DIR / f"{dram_type.strip().lower()}.yml"

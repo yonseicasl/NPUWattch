@@ -28,18 +28,13 @@ where = ["src"]
 # Report template + JSON schema (manual §8 / §3.6).
 "npuwattch.report" = ["templates/*.j2", "schema.json"]
 # System contract for the compound interpreter.
-"npuwattch.harness.compounds" = ["data/*.json", "data/*.md"]
+"npuwattch_harness.compounds" = ["data/*.json", "data/*.md"]
 # Shipped per-type DRAM energy tables (Timeloop DRAM `type`, --energy-table).
-"npuwattch.energy" = ["dram_tables/*.yml"]
-# Per-harness definition bundles (compounds + projections), JSON or YAML.
-"npuwattch.harness.pytorchsim" = [
-  "definitions/*.md",
-  "definitions/compounds/*.json", "definitions/compounds/*.yaml", "definitions/compounds/*.yml",
-  "definitions/projections/*.json", "definitions/projections/*.yaml", "definitions/projections/*.yml",
-]
-"npuwattch.harness.timeloop" = [
-  "definitions/projections/*.json", "definitions/projections/*.yaml", "definitions/projections/*.yml",
-]
+"npuwattch.energy" = ["dram_tables/*.yml", "link_tables/*.yml"]
+# Per-harness vocabulary table. The definitions of a design (compound
+# components, projection, user components) are inputs of a run, not package data.
+"npuwattch_harness.pytorchsim" = ["definitions/*.md", "definitions/*.yaml"]
+"npuwattch_harness.timeloop" = ["definitions/*.yaml"]
 
 [tool.setuptools.dynamic]
 version = {attr = "npuwattch._version.__version__"}

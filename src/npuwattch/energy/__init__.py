@@ -1,10 +1,9 @@
 """Activity → energy aggregation (manual §6).
 
-``unit_cost`` defines the estimator calling convention (``UnitCostProvider``) plus
-a placeholder ``StubUnitCostProvider``; ``aggregate`` turns per-window activity
-(the harness's ``bind_window`` output) into per-component and total
-energy/area/power. The trained MLP models drop in as a calibrated
-``UnitCostProvider`` without touching the aggregator (user item #4).
+``unit_cost`` defines the calling convention of the estimators
+(``UnitCostProvider``). ``provider_factory`` makes the provider chain of a run.
+``aggregate`` calculates the energy, area, and power of each component and of
+the run from a description (manual §3.1) and its activity rows (manual §3.3).
 """
 
 from __future__ import annotations
@@ -16,8 +15,6 @@ from .aggregate import (
     WindowEnergy,
     aggregate_native,
     aggregate_run,
-    aggregate_window,
-    analyze_run,
 )
 from .node_scaling import (
     NodeResolution,
@@ -30,7 +27,8 @@ from .provider_factory import ProviderChain, build_provider
 from .unit_cost import (
     D2D_ENERGY_PER_BIT_PJ,
     D2DLinkCostProvider,
-    StubUnitCostProvider,
+    NoModelError,
+    NoModelProvider,
     TechContext,
     UnitCostProvider,
 )
@@ -53,10 +51,9 @@ __all__ = [
     "WindowEnergy",
     "aggregate_native",
     "aggregate_run",
-    "aggregate_window",
-    "analyze_run",
     "read_activity_csv",
-    "StubUnitCostProvider",
+    "NoModelError",
+    "NoModelProvider",
     "TechContext",
     "UnitCostProvider",
 ]

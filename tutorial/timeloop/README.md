@@ -13,6 +13,9 @@ arch.yaml                 the architecture description (Accelergy v0.4)
 stats/01_conv1.stats.txt  Timeloop's activity counts for layer 1
 stats/02_conv2.stats.txt  ... one file per layer, 8 in total
 stats/08_fc8.stats.txt
+compound_components.yaml  compound components: an Accelergy class -> several primitives
+projection.yaml           Timeloop events (read/write/compute) -> compound elements
+user_components.yaml      cost of blocks NPUWattch has no model for (one example)
 run                       the script
 out/                      report.html + report.json — shipped, and ./run overwrites them
 ```
@@ -106,10 +109,26 @@ on. `--stats-mode aggregate` sums them into a single window instead.
 
 ## Messages you will see, and why
 
-- `Accelergy class routed to the 'hbm' primitive` — `arch.yaml` declares
-  LPDDR4, but `hbm` is currently NPUWattch's only DRAM-device model. The DRAM
-  row is priced with analytic HBM2 constants, not a trained model, and is marked
-  `const` in the summary.
+- `user component 'example_68000_cpu_core' (user_components.yaml): parsed, but
+  not used` — NPUWattch has no model for some blocks (custom control logic, a
+  CPU core). For those you give the area and the energy of each action in a
+  user component library, `user_components.yaml` next to `arch.yaml`
+  (`--user-components my_lib.yaml` selects another file). The file here has
+  this one example entry, and the design does not use it, so the run prints
+  this reminder. It does not change the result.
+- `compound component 'counter' (compound_components.yaml): parsed, but not
+  used` — a compound component turns one Accelergy class into several
+  NPUWattch primitives (here: `counter` = an adder + a register).
+  `compound_components.yaml` and `projection.yaml` next to `arch.yaml` are
+  read automatically (`--compound-components` / `--projection` select other
+  files). `arch.yaml` has no `counter`, so this is a reminder too. Add a
+  component with `class: counter` and `attributes: {width: 12}` to see it
+  appear as two rows.
+- `DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml` —
+  `arch.yaml` declares an LPDDR4 DRAM, so NPUWattch reads the energy constants
+  from its LPDDR4 table. A DRAM is priced with table constants, not a trained
+  model, and is marked `const` in the summary. A DRAM with no `type` falls back
+  to the LPDDR4 table with a warning; `--energy-table` supplies your own table.
 - `no operand width declared — assuming 8 bits` — Accelergy's `intmac` class
   has `multiplier_width`/`adder_width`, which are not the same thing as an
   operand width. NPUWattch says what it assumed instead of guessing silently.

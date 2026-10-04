@@ -15,7 +15,7 @@ train_sram.py     trains the 4 MLPs, writes the checkpoints + eval_report.json
 The host never imports this package — the contract is file-shaped:
 
 1. **Discovery**: `EstimatorHost.scan_estimators()` looks for
-   `estimators/<name>/<name>.py` and reads the module-level `ESTIMATOR_SPEC`
+   `npuwattch_estimators/<name>/<name>.py` and reads the module-level `ESTIMATOR_SPEC`
    dict via `ast.literal_eval` (no execution). That dict is how this plugin
    announces itself: primitive name (`"sram"`), entrypoints, parameters
    (with `arch_keys` aliases), model files.
@@ -28,7 +28,7 @@ The host never imports this package — the contract is file-shaped:
    `[ERROR] sram: …` and return `None` — they never raise at the host.
 3. **Routing**: the harness that reads the description decides. For
    Accelergy/Timeloop inputs that is
-   `harness/timeloop/vocabulary.reclassify_regfile_as_sram`, which sends any
+   `npuwattch_harness/timeloop/vocabulary.reclassify_regfile_as_sram`, which sends any
    regfile-classed component with `mem_banks·mem_depth_per_bank·data_width >
    32768` bits here (the rule moved out of the retired
    `npuwattch_class_mapper` on 2026-08-12).

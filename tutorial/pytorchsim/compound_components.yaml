@@ -1,0 +1,386 @@
+# ============================================================================
+#  Compound components of the PyTorchSim tutorial design (TPU-like NPU)
+# ============================================================================
+# A compound component is a hardware structure that is a group of NPUWattch
+# primitives. Each primitive in a compound is an element. This file is an
+# INPUT of the run: NPUWattch reads `compound_components.yaml` from the run
+# directory, or the file that you give with --compound-components.
+#
+# The file `projection.yaml` in the same directory connects the PyTorchSim
+# actions to the elements of these compounds. If you add or rename an
+# element here, change the projection also.
+#
+# Element config keys are NPUWattch attribute names (data_width,
+# mem_depth_per_bank, ...). A config value can be an expression of the
+# integer keys of the run configuration (for example, core_spad_size_kb).
+
+
+# ============================================================================
+# ============================================================================
+#  systolic_mac: a weight-stationary systolic array made of NPUWattch primitives
+# ============================================================================
+# This file is in the default PyTorchSim bundle of NPUWattch. Use it as the
+# example when you write a compound.
+# This compound has no simulator-specific content. The projections/ directory
+# holds all content that is specific to PyTorchSim or Timeloop.
+#
+# The PE is one MAC primitive. The characterization of the MAC includes the
+# accumulator, thus there is no separate accumulator element.
+# The only other element is the stationary-weight register. A weight load
+# writes this register. The 'hold_b' compute mode assumes that the weight is
+# already latched.
+#
+# Resolution (the harness does this for each kernel):
+#   {mac_primitive}  -> intmac | fpmac | mxfpmac   (selected from the kernel dtype)
+#   {mac_config}     -> the config of that primitive in NPUWattch attribute names
+#   bitwidth, lanes  -> scalars from the MAC config inference and the run config
+# 'count' and the scalar fields are expressions. An expression can use +, *,
+# integers, and symbols such as lanes and bitwidth.
+# Note: put {…} in quotation marks. YAML reads {…} without quotation marks as
+# a flow mapping.
+# See docs/COMPOUND_SCHEMA.md §2.
+
+systolic_mac:
+  select_primitive_by: dtype          # select the PE primitive from the kernel dtype
+  elements:
+
+    pe:                               # processing element = one MAC primitive
+      primitive: "{mac_primitive}"    # intmac / fpmac / mxfpmac
+      config: "{mac_config}"          # its config in NPUWattch names (for each kernel)
+      count: "lanes*lanes"            # number of instances for area and leakage (lanes×lanes grid)
+
+    w_reg:                            # stationary weight register (a weight load writes it)
+      primitive: regfile
+      config:
+        data_width: bitwidth          # the operand bit width
+        mem_depth_per_bank: 1         # one latched weight for each PE
+        mem_banks: 1
+        mem_r_ports: 1
+        mem_w_ports: 1
+      count: "lanes*lanes"
+
+# ============================================================================
+# ============================================================================
+#  vpu: the vector processor datapath of one core (VFU + VRF)
+# ============================================================================
+# This file belongs to the PyTorchSim harness, as do all files in this bundle.
+# It uses the PyTorchSim run-config key `vpu_vector_length_bits` as an
+# expression symbol.
+#
+# The energy scope of the PyTorchSim harness is the vector processor, the
+# VMEM, the systolic array, and the on-chip NoC. This compound completes that
+# scope. The spads compound has the scratchpad of each lane. This compound
+# adds the lane datapath:
+#
+#   vrf   The RVV vector register file of one lane. It has 32 architectural
+#         vector registers, each `vpu_vector_length_bits` wide
+#         (ARCHITECTURE_SPEC §2: one VRF for each lane).
+#   vfu   One representative SIMD function-unit datapath, `lanes` wide. Its
+#         cost is the cost of the MAC primitive of the kernel
+#         ({mac_primitive}). ARCHITECTURE_SPEC §5 maps VecMultiplier ->
+#         intmac/fpmac, which uses most of the VFU energy.
+#
+# Simplifications:
+#   - The FUPool of gem5 has 4 physical FUs of each type in each core
+#     (VecAdder, VecMultiplier, VecDivider, ...). This compound models them
+#     as one datapath that is `lanes` wide (count: lanes).
+#   - The operation mix (add, mul, div, load/store) is not divided. The MAC
+#     primitive represents all operations. The Simd* committed-instruction
+#     classes of gem5 give the mix if a more accurate model is necessary.
+#
+# default_mode: gated. An action charges only the elements that it names. A
+# kernel that has only GEMM does not use the vpu. Then the vpu is clock-gated
+# and §6 charges only its leakage.
+
+vpu:
+  select_primitive_by: dtype          # the kernel dtype selects the vfu primitive (int/fp/mx)
+  default_mode: gated
+  elements:
+
+    vrf:                              # vector register file of one lane (RVV: 32 registers)
+      primitive: regfile
+      config:
+        data_width: vpu_vector_length_bits
+        mem_depth_per_bank: 32
+        mem_banks: 1
+        mem_r_ports: 1
+        mem_w_ports: 1
+      count: lanes
+      per: core
+
+    vfu:                              # representative SIMD datapath, `lanes` wide
+      primitive: "{mac_primitive}"
+      config: "{mac_config}"
+      count: lanes
+      per: core
+
+# ============================================================================
+# ============================================================================
+#  spads: the scratchpads of PyTorchSim, specified by capacity
+# ============================================================================
+# This file belongs to the PyTorchSim harness, as do all files in this bundle.
+# The elements use keys of the PyTorchSim run config as expression symbols
+# (core_spad_size_kb, vpu_spad_size_kb_per_lane). The harness supplies their
+# values at resolution. The bundle of a different harness defines its memories
+# with the config keys of that harness.
+#
+# If the config of an sram element has `capacity_kbit`, the element is
+# capacity-specified. The emitter builds it from the macro templates of the
+# SRAM estimator (sram_64k / sram_256k, banks of <= 16 macros, manual §3.8).
+# The emitter does not use a free geometry for it.
+# `per: core` multiplies the instance count by the number of cores of the run.
+# The default is `per: array`.
+#
+# default_mode: gated. An action charges only the elements that it names. A
+# scratchpad that an action does not use is bank-gated or clock-gated. §6
+# charges its leakage for the time, not for each event. The systolic_mac
+# compound is different: its default mode `idle` charges each cycle.
+
+spads:
+  default_mode: gated
+  elements:
+
+    vmem:                               # vector memory of one core (TPU VMEM)
+      primitive: sram
+      config:
+        capacity_kbit: "core_spad_size_kb * 8"
+      count: 1
+      per: core
+
+    vpu_spad:                           # VPU scratchpad of one lane
+      primitive: sram
+      config:
+        capacity_kbit: "vpu_spad_size_kb_per_lane * 8"
+      count: lanes
+      per: core
+
+# ============================================================================
+# ============================================================================
+#  fpsfu: the SFU (special function unit) of one core
+# ============================================================================
+# This file belongs to the PyTorchSim harness.
+# Design: docs/DESIGN_SFU_DMA.md §2.
+#
+# PyTorchSim has one SFU for each core (ARCHITECTURE_SPEC §2/§3). The SFU does
+# exp, erf, tanh, sin, and cos with a fixed latency of 10 cycles.
+# The SFU maps to the `fpsfu` primitive. This primitive is a piecewise-linear
+# (PWL) evaluator with a shared datapath:
+#
+#   range reduction → segment LUT → slope·x+intercept → reconstruction
+#
+# Elaboration-time flags enable the operation groups of the primitive:
+#
+#   sfu_op_exp   exp + exp2          (one base-2 core + constant premultiply)
+#   sfu_op_trig  sin + cos           (shared mod-2π range reduction + quadrant)
+#   sfu_op_hyp   tanh + sigmoid      (tanh(x) = 2·sigmoid(2x) − 1)
+#   sfu_op_erf   erf                 (own table)
+#
+# PyTorchSim can emit all four groups, thus this file enables all four.
+# The primitive also has sfu_op_relu, but this file does not enable it.
+# PyTorchSim lowers ReLU to a max operation of the VFU, not to the SFU.
+#
+# ASSUMPTIONS (see the design document):
+#   * count: lanes. The SFU is a SIMD unit with one PWL pipe for each vector
+#     lane. The specification gives one fixed latency for all vector lengths,
+#     thus the pipes operate in parallel.
+#   * The table dtype is the operand dtype of the kernel. activity.read_run
+#     supplies the symbols sfu_exponent_bits and sfu_mantissa_bits. If the
+#     operand dtype is integer or unknown, the tables use fp32 and the reader
+#     gives a warning.
+#   * sfu_segments: 64 PWL entries for each table (approximately 2 kbit).
+#     At this size, a table is usually synthesized logic and not a ROM macro.
+#   * pipeline_stages: 10. This agrees with the SFU latency of 10 in
+#     PyTorchSim. It is also the deepest characterized point (the sweep points
+#     are 4, 7, and 10 stages), thus the timing MLP interpolates.
+#     The depth is important for the f_max check of the report. The critical
+#     path becomes shorter with more stages, because the RTL has real stages:
+#     9 segments, with the two multipliers divided. A smaller depth can cause
+#     an incorrect "clock > f_max" message at simulator clocks such as 940 MHz.
+#     The energy of one operation is the energy of the full pipeline. Thus the
+#     depth changes the f_max check. Through the pipeline registers, it also
+#     changes area and leakage by a small quantity. It does not change the
+#     energy of each event.
+#
+# default_mode: gated. An action charges only the operation group that it
+# names. An SFU that does no operation adds only leakage and area (§6).
+
+fpsfu:
+  default_mode: gated
+  elements:
+
+    sfu_pipe:                           # one PWL evaluator pipe for each lane
+      primitive: fpsfu
+      config:
+        exponent_bits: sfu_exponent_bits
+        mantissa_bits: sfu_mantissa_bits
+        sfu_op_exp: 1
+        sfu_op_trig: 1
+        sfu_op_hyp: 1
+        sfu_op_erf: 1
+        sfu_segments: 64
+        pipeline_stages: 10
+      count: lanes
+      per: core
+
+# ============================================================================
+# ============================================================================
+#  dma: the DMA engine of one core, made of existing primitives
+# ============================================================================
+# This file belongs to the PyTorchSim harness.
+# Design: docs/DESIGN_SFU_DMA.md §1.
+#
+# The engine is small. The transactions use most of the DMA energy, and other
+# compounds charge them: the vmem SRAM fill and drain, the NoC flits, and the
+# d2dlink. This compound adds only the engine datapath:
+#
+#   dma_q     The queue of outstanding requests and responses. One entry holds
+#             one DRAM request flit (dram_req_size_byte wide).
+#             ASSUMPTION: the depth is 16. TOGSim has no config key and no
+#             stat for the queue depth.
+#   dma_addr  The address generator. It does one 64-bit add for each request.
+#             This add also represents the burst and length counters of a real
+#             DMA engine. Such a counter does a decrement of approximately
+#             32 bits for each request. That energy is much smaller than the
+#             queue energy, thus a `counter` primitive is not necessary.
+#
+# Not modeled, because they need special-purpose RTL:
+#   - the descriptor and scatter-gather FSMs
+#   - the tile control of the compiler option -dma-fine-grained
+# This compound does not charge the energy of the off-chip DRAM device.
+#
+# default_mode: gated. An action charges only the elements that it names.
+# The §6 time-domain term charges the leakage of the idle time.
+# The reader reads the DMA active and idle cycles of each core. The
+# `dma_responses` counters give the exact split of dram_requests between cores.
+
+dma:
+  default_mode: gated
+  elements:
+
+    dma_q:                              # queue of outstanding requests and responses
+      primitive: fifo
+      config:
+        data_width: "dram_req_size_byte*8"   # one entry holds one 32 B flit
+        mem_depth_per_bank: 16               # ASSUMPTION (no config key or stat)
+      count: 1
+      per: core
+
+    dma_addr:                           # address generator (also represents the counters)
+      primitive: intadd
+      config:
+        data_width_a: 64
+        data_width_b: 64
+        data_width_out: 64
+      count: 1
+      per: core
+
+# ============================================================================
+# dram: the HBM2 DRAM device. These are the off-chip memory dies of the [DRAM]
+# channels in the log.
+#
+# PyTorchSim uses Ramulator 2.0 for the DRAM timing (dram_type: ramulator2).
+# Ramulator writes the controller counters of each channel in the
+# "=== DRAM statistics ===" block at the end of the log. The pytorchsim
+# projection multiplies those command counts by the analytic command energies
+# below.
+# The d2dlink of the NoC uses the same fixed-cost method, because an off-chip
+# part has no characterization flow. energy.unit_cost.HBMCostProvider supplies
+# the cost. The summary shows the label `const`, because the value is not
+# calibrated.
+#
+# ENERGY CONSTANTS. This compound gives only the structure. The constants
+# come from a DRAM energy table (npuwattch_harness/pytorchsim/dram.py):
+#   - the table that the user gives with --energy-table, or
+#   - the default table, energy/dram_tables/hbm2.yml. That file has the values
+#     and their source.
+#
+# Not charged (the projection declares these as out_of_scope):
+#   - the background and standby power
+#   - the memory controller and the PHY on the NPU die
+# The vendor IDD values for HBM are not public. Other compounds charge the
+# on-chip effects of the DRAM traffic: the VMEM fills and drains, the DMA
+# engine, and the NoC flits.
+# data_width comes from dram_req_size_byte in the run config. The reader
+# supplies the default, 32 B. count is dram_channels from the run config.
+# The command counts are totals for the chip, because the statistics block is
+# the sum of all channels. Thus the element uses `per: chip`, as the NoC does.
+
+dram:
+  default_mode: gated
+  elements:
+
+    dram_chan:
+      primitive: hbm
+      config:
+        data_width: "dram_req_size_byte*8"
+      count: dram_channels
+      per: chip
+
+# ============================================================================
+# ============================================================================
+#  noc: the BookSim2 interconnect of PyTorchSim as physical components
+# ============================================================================
+# PyTorchSim uses BookSim2 for the full NoC. The log shows the .icnt [config].
+# For the anynet topology, the log also gives the name of a .net router graph.
+# booksim.py converts the two topologies into three integer symbols and adds
+# them to the run config:
+#
+#   icnt_ports      number of ports (radix) of one switch
+#                     fly n=1  -> k            (one k x k crossbar)
+#                     anynet   -> nodes+links of a real router (sample chiplet: 40)
+#   icnt_routers    number of switches             (fly: 1; sample chiplet: 2)
+#   icnt_channels   number of die-to-die channels  (fly: 0; sample chiplet: 8)
+#
+# booksim.py also adds the raw booksim_* config integers (flit_size,
+# input_buffer_size, ...).
+# If NPUWattch cannot model the NoC of a run, the run config has none of these
+# symbols. Then the count of each element below does not resolve, and the
+# emitter skips the element with a warning. This does not change the systolic
+# array or the scratchpads.
+#
+# default_mode: gated. An action charges only the element that it names. The
+# other NoC structures are clock-gated in that cycle. §6 charges their leakage.
+#
+# Element notes:
+#   icnt_xbar   The switch datapath. It is combinational, thus it has no idle
+#               mode. Each flit is charged dynamic energy. The emitter
+#               normalizes by the valid fraction of the stim_mode
+#               (unit: flits).
+#   icnt_buf    One input buffer for each switch port. Its size is
+#               input_buffer_size flits of flit_size bytes (8-16 KB in the
+#               sample configs). This size needs an SRAM macro. Thus the
+#               emitter uses the capacity->template solver, as it does for the
+#               scratchpads. The vc_buf, ejection, and boundary buffers are
+#               not separate elements.
+#   icnt_d2d    The die-to-die links. In anynet, a pass-through channel (no
+#               attached nodes, 2 links) is one die-to-die link. There is no
+#               characterization flow for it. The d2dlink primitive uses an
+#               analytic constant, net_energy_per_bit_pJ. You can override it
+#               for each component. See energy.unit_cost.D2D_ENERGY_PER_BIT_PJ.
+
+noc:
+  default_mode: gated
+  elements:
+
+    icnt_xbar:
+      primitive: crossbar
+      config:
+        net_inputs: icnt_ports
+        net_outputs: icnt_ports
+        data_width: "booksim_flit_size * 8"    # flit bytes -> bits
+      count: icnt_routers
+      per: chip
+
+    icnt_buf:
+      primitive: sram
+      config:
+        capacity_bit: "booksim_input_buffer_size * booksim_flit_size * 8"
+      count: "icnt_ports * icnt_routers"
+      per: chip
+
+    icnt_d2d:
+      primitive: d2dlink
+      config:
+        data_width: "booksim_flit_size * 8"
+      count: icnt_channels                     # fly: 0, thus not emitted
+      per: chip

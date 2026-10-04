@@ -1,16 +1,22 @@
-"""Report-side views of a run (workstream C / R1).
+"""The report views of a run.
 
-Two layers: ``tree`` (the instance-hierarchy view — the CLI renders it as
-ASCII via ``--tree``) and the HTML/JSON report itself (``html`` + ``svg`` +
-``templates/report.html.j2``, manual §8): ``build_context`` produces one
-plain-data dict from a §6 ``RunEnergy``, ``write_report`` renders it to a
-single self-contained ``report.html`` and mirrors the same dict into
-``report.json`` (§3.6). Charts are pure-function inline SVG (``svg``).
+The package has two parts:
 
-This package holds only the tool-neutral parts (structure, renderers, and the
-builder for the core's own flat native format). Per-source builders are
-harness-owned: ``harness/pytorchsim/hierarchy.py`` (reconstruction) and
-``harness/timeloop/tree.py`` (Accelergy declared hierarchy).
+``tree``
+    The instance hierarchy view. The CLI option ``--tree`` prints it as text.
+``html``, ``svg``, and ``templates/report.html.j2``
+    The HTML and JSON report (manual §8). ``build_context`` makes one dict of
+    plain data from a §6 ``RunEnergy``. ``write_report`` renders the dict to
+    one self-contained ``report.html`` and writes the same dict to
+    ``report.json`` (§3.6). The pure functions of ``svg`` draw the charts as
+    inline SVG.
+
+This package contains only the parts that all harnesses use: the tree
+structure, the renderers, and the tree builder for the flat description
+format of the core. The harnesses own the builders for their formats:
+``npuwattch_harness/pytorchsim/hierarchy.py`` reconstructs the hierarchy, and
+``npuwattch_harness/timeloop/tree.py`` reads the hierarchy that the Accelergy
+YAML declares.
 """
 
 from .html import build_context, render_html, write_report
