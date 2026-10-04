@@ -393,11 +393,15 @@ def _run_harness(args) -> int:
     except ValueError as e:
         print(f"[ERROR] {e}")
         return 1
+    energy_warnings: List[str] = []
     run_energy = aggregate_native(
         emitted.description, emitted.activity_rows, chain.provider, tech,
         default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
         window_labels=emitted.window_labels,
+        warnings=energy_warnings,
     )
+    for w in energy_warnings:
+        print(f"[WARNING] {w}")
     # A harness that synthesizes activity instead of reading it must say so in
     # every output (CLAUDE.md: flag VECTORLESS clearly).
     vectorless = emitted.vectorless_activity
@@ -426,7 +430,7 @@ def _run_harness(args) -> int:
     _maybe_write_report(
         args, run=run_energy, description=emitted.description, tech=tech,
         chain=chain, rows=emitted.activity_rows, hierarchy=emitted.hierarchy,
-        warnings=[*emitted.warnings,
+        warnings=[*emitted.warnings, *energy_warnings,
                   *(node_res.warnings if node_res is not None else ())],
         notes=emitted.notes, node_resolution=node_res,
         design_name=(run_root.name if run_root is not None

@@ -47,6 +47,18 @@ Model inputs the description does not carry:
   and log-log combines the predictions (manual §6.2), so this layer only ever
   sees anchor nodes.
 
+Characterized envelope (``envelope__v2.json``, written by train_logic.py
+from the training CSVs; see ``envelope_warnings``):
+
+- ``pipeline_stages`` outside the characterized depths is **clamped** to the
+  nearest one — a shallower/deeper design does not exist in the RTL (depth =
+  registered latency incl. the input and output registers, so an fpadd/fpmul
+  ps=2 is the single-cycle reg->logic->reg unit and fpmac starts at ps=4),
+  and the MLP's extrapolation along that axis has no physical anchor.
+- other params outside their characterized range, and a clock faster than
+  the fastest implementation of that exact configuration (or outside the
+  node's clock range), are evaluated but reported as extrapolated.
+
 This module is loaded by ``EstimatorHost`` via runpy, so it imports its
 sibling ``logic_mlp.py`` (and torch, transitively) lazily by file path —
 a torch-less environment fails at ``make_unit_cost_provider`` time, which the
@@ -58,7 +70,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 MODULE_DIR = Path(__file__).resolve().parent
 
@@ -279,6 +291,8 @@ class _LogicUnitCostProvider:
         self._fallback = fallback
         self._models: Dict[Tuple[str, str], Any] = {}
         self._memo: Dict[tuple, float] = {}
+        self._env: Any = None               # envelope JSON, loaded on first use
+        self._env_loaded = False
         self.calibrated = (True if fallback is None
                            else bool(getattr(fallback, "calibrated", False)))
 
@@ -300,8 +314,17 @@ class _LogicUnitCostProvider:
             self._models[key] = m
         return m
 
-    def _predict(self, component: str, metric: str,
-                 features: Mapping[str, Any], mode: Optional[str]) -> float:
+    def _envelope_for(self, component: str) -> Optional[Mapping[str, Any]]:
+        if not self._env_loaded:
+            self._env = _mlp().load_envelope(self._model_dir)
+            self._env_loaded = True
+        if self._env is None:
+            return None
+        return self._env.get("components", {}).get(component)
+
+    def _resolve(self, component: str, features: Mapping[str, Any]
+                 ) -> Tuple[int, float, Dict[str, Any], Optional[int]]:
+        """(node nm, clock ns, dataset params, requested depth if clamped)."""
         mlp = _mlp()
         merged = {**self._defaults, **dict(features)}
         node = str(merged.get("node", ""))
@@ -316,6 +339,21 @@ class _LogicUnitCostProvider:
                     if isinstance(clock_mhz, (int, float)) and clock_mhz
                     else DEFAULT_CLOCK_NS)
         params = _params_for(component, merged)
+        requested = None
+        env = self._envelope_for(component)
+        depths = (env or {}).get("pipeline_stages") or []
+        if "pipeline_stages" in params and depths:
+            ps = int(params["pipeline_stages"])
+            clamped = min(max(ps, min(depths)), max(depths))
+            if clamped != ps:
+                requested = ps
+                params["pipeline_stages"] = clamped
+        return nm, clock_ns, params, requested
+
+    def _predict(self, component: str, metric: str,
+                 features: Mapping[str, Any], mode: Optional[str]) -> float:
+        mlp = _mlp()
+        nm, clock_ns, params, _ = self._resolve(component, features)
         if mode is not None and mode not in mlp.STIM_MODES[component]:
             raise ValueError(
                 f"logic/{component}: stim_mode {mode!r} was never "
@@ -376,6 +414,58 @@ class _LogicUnitCostProvider:
             return None
         fb = getattr(self._fallback, "idle_terms", None)
         return fb(primitive, features) if fb is not None else None
+
+    def envelope_warnings(self, primitive: str,
+                          features: Mapping[str, Any]) -> List[str]:
+        """Optional protocol hook: why this query is not a characterized
+        design point (clamped depth, extrapolated params/clock) — one message
+        per issue, empty when the query sits inside the envelope."""
+        if primitive not in self.SERVED:
+            fb = getattr(self._fallback, "envelope_warnings", None)
+            return list(fb(primitive, features)) if fb is not None else []
+        env = self._envelope_for(primitive)
+        if env is None:
+            return []
+        mlp = _mlp()
+        nm, clock_ns, params, requested = self._resolve(primitive, features)
+        out: List[str] = []
+        depths = env.get("pipeline_stages") or []
+        if requested is not None:
+            out.append(
+                f"pipeline_stages={requested} is outside the characterized "
+                f"{min(depths)}-{max(depths)} for {primitive} (depth = "
+                f"registered latency incl. input/output registers) — "
+                f"evaluated at pipeline_stages={params['pipeline_stages']}")
+        for col, (lo, hi) in sorted(env.get("params", {}).items()):
+            if col == "pipeline_stages" or col not in params:
+                continue
+            v = float(params[col])
+            if not lo <= v <= hi:
+                out.append(
+                    f"{col}={v:g} is outside the characterized {lo:g}-{hi:g} "
+                    f"for {primitive} — extrapolated")
+        fastest = (env.get("config_min_clock_ns", {}).get(str(nm), {})
+                   .get(mlp.config_key(primitive, params)))
+        lo_hi = env.get("clock_ns", {}).get(str(nm))
+        mhz = 1000.0 / clock_ns
+        # 0.5% slack: a clock given in rounded MHz (307.7 for 3.25 ns) is the
+        # characterized point, not an extrapolation
+        tol = 0.005
+        if fastest is not None and clock_ns < fastest * (1 - tol):
+            out.append(
+                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is faster than the "
+                f"fastest characterized implementation of this {primitive} "
+                f"configuration at {nm} nm ({fastest:g} ns, "
+                f"{1000.0 / fastest:.0f} MHz) — extrapolated along the clock "
+                f"axis; a deeper pipeline or slower clock is characterized")
+        elif (lo_hi is not None
+              and not lo_hi[0] * (1 - tol) <= clock_ns <= lo_hi[1] * (1 + tol)):
+            side = "faster" if clock_ns < lo_hi[0] else "slower"
+            out.append(
+                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is {side} than any "
+                f"characterized {primitive} at {nm} nm ({lo_hi[0]:g}-"
+                f"{lo_hi[1]:g} ns) — extrapolated along the clock axis")
+        return out
 
 
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,

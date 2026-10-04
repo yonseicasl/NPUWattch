@@ -166,7 +166,7 @@ report files rather than scraping the interleaved tool log.
 | stage | file | supplies |
 |---|---|---|
 | syn | `synthesis.log` (`Report : qor` section) | total/comb/seq cell count + area, SCR/SAR, WNS/TNS |
-| pnr | `qor.rpt` | post-route total/comb/seq cell count + area, WNS/TNS |
+| pnr | `qor.rpt` | post-route total/comb/seq cell count + area; timing over ALL path groups: WNS (worst group), TNS/violators (summed), `pnr_min_period_ns` + `pnr_crit_group`/`pnr_crit_path_ns` (the group that sets it) |
 | pnr | `utilization.rpt` | core area, utilization ratio |
 | pnr | `clock_qor.rpt`, `clock_timing.rpt` | clock-tree insertion delay, skew, repeater count (not yet in the CSV) |
 | pex | `*.star_sum` | StarRC version |
@@ -177,6 +177,17 @@ report files rather than scraping the interleaved tool log.
 
 ICC2 has no `report_area` (unlike DC and PT), so post-route cell areas come from
 `report_qor` and the physical area from `report_utilization`.
+
+ICC2's `report_qor` prints one block per path group and lists the auto
+port-cone groups (`**in2reg_default**`, `**reg2out_default**`,
+`**in2out_default**`) BEFORE the clock group. Collector schema ≤ 2 took the
+first block, so a clocked design's `pnr_crit_path_ns` was the in2reg cone —
+mostly the SDC's T/2 input delay. Schema 3 (2026-09-30) reads every group:
+`pnr_min_period_ns` = max over groups of T − k·slack (k = 2 for a clocked
+design's in2reg/in2out cones, else 1), the logic timing models' target.
+`recollect_timing.py [--write]` re-derives these columns for collected rows
+from `../sweep_reports/*.reports.tar.gz` without re-running any tool (backs
+up each CSV as `*.bak_schema2_<stamp>`).
 
 Every row records the tool version that produced it (`dc_version`,
 `icc2_version`, `starrc_version`, `pt_version`) plus `power_activity_mode`,

@@ -368,6 +368,16 @@ def aggregate_native(
             warnings.extend(notes)
         components[c["name"]] = (primitive, attrs, int(c.get("count", 1)))
 
+    # Queries outside what the estimators characterized (a pipeline depth the
+    # RTL never had, a clock faster than any implementation closed) still get
+    # a number; the provider says why it is not a measured design point.
+    envelope_fn = getattr(provider, "envelope_warnings", None)
+    if envelope_fn is not None and warnings is not None:
+        for name, (primitive, attrs, _) in components.items():
+            for w in envelope_fn(primitive,
+                                 _features(attrs, tech, clock_mhz=float(clock))):
+                warnings.append(f"{name}: {w}")
+
     by_window: Dict[int, List[Mapping[str, Any]]] = {}
     for r in activity_rows:
         if str(r.get("component")) == "__meta__":

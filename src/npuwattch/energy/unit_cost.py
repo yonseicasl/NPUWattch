@@ -78,6 +78,9 @@ class UnitCostProvider(Protocol):
     # (e_idle_per_cycle_pJ, idle_displaced_per_access_pJ) | None`` lets the
     # aggregator book a memory's clocked-idle energy once per cycle instead of
     # inside every access event (see aggregate._book_idle_per_cycle).
+    # Optional ``envelope_warnings(primitive, features) -> List[str]``: why a
+    # query is not a characterized design point (clamped depth, extrapolated
+    # params/clock); aggregate_native reports it once per component.
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,12 @@ class D2DLinkCostProvider:
         fb = getattr(self.fallback, "idle_terms", None)
         return fb(primitive, features) if fb is not None else None
 
+    def envelope_warnings(self, primitive: str, features: Mapping[str, Any]):
+        if primitive == "d2dlink" or self.fallback is None:
+            return []
+        fb = getattr(self.fallback, "envelope_warnings", None)
+        return list(fb(primitive, features)) if fb is not None else []
+
 
 # ---------------------------------------------------------------------------
 # Analytic DRAM device model (per-command constants — no characterization flow)
@@ -337,3 +346,9 @@ class HBMCostProvider:
             return None
         fb = getattr(self.fallback, "idle_terms", None)
         return fb(primitive, features) if fb is not None else None
+
+    def envelope_warnings(self, primitive: str, features: Mapping[str, Any]):
+        if primitive == "hbm" or self.fallback is None:
+            return []
+        fb = getattr(self.fallback, "envelope_warnings", None)
+        return list(fb(primitive, features)) if fb is not None else []

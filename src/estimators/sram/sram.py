@@ -1474,6 +1474,15 @@ class _SramUnitCostProvider:
             return None
         return (c.e_idle_pJ, c.dec_idle_group_pJ)
 
+    def envelope_warnings(self, primitive: str,
+                          features: Mapping[str, Any]) -> List[str]:
+        """Optional protocol hook, forwarded for the primitives this provider
+        does not serve (the logic estimator's range checks sit behind it)."""
+        if primitive == "sram":
+            return []
+        fb = getattr(self._fallback, "envelope_warnings", None)
+        return list(fb(primitive, features)) if fb is not None else []
+
 
 def make_unit_cost_provider(defaults: Optional[Mapping[str, Any]] = None,
                             dataset_dir: Optional[str] = None,

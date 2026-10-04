@@ -22,6 +22,8 @@ checkpoints.  Differences:
 Outputs (to --out-dir, default = this directory):
   <component>_<metric>__<VERSION>.{pt,scalers.json,loss.json,meta.json}
   eval_report.json
+  envelope__<VERSION>.json  (characterized param/clock envelope, all
+                             components — read by logic.py's range checks)
 
 ``VERSION`` is ``logic_mlp.VERSION`` (currently ``v2``) — the same constant the
 inference side loads by, so a bump swaps the whole served set at once. Bump it
@@ -643,6 +645,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
     print(f"wrote {out_dir / 'eval_report.json'}")
+    # the provider's range checks read the SAME data the models were fit on
+    env = lmlp.write_envelope(ddir, out_dir, lmlp.COMPONENTS)
+    print(f"wrote {env}")
     return 0
 
 

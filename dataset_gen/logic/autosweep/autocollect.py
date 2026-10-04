@@ -50,7 +50,12 @@ DATASETS_DIR = NW_LOGIC_DIR / "datasets"
 # Schema version for the emitted CSVs. Bump when columns are added or renamed so a
 # mixed-vintage dataset can be told apart.
 # 2: rows carry stim_mode (power-phase stimulus class; "none" for unvectored)
-COLLECTOR_SCHEMA_VERSION = "2"
+# 3: syn/pnr timing columns span every report_qor path group (WNS = worst
+#    group) and PnR adds pnr_min_period_ns (period the netlist meets, per-group
+#    SDC budgets) + pnr_crit_group; schema-2 rows took the FIRST group, which in
+#    ICC2 is the input-delay-bound **in2reg_default**. recollect_timing.py
+#    upgrades archived rows in place.
+COLLECTOR_SCHEMA_VERSION = "3"
 
 _NUMBER = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
 
@@ -111,6 +116,81 @@ def _version(text: str, *, source: Path) -> str:
     return match.group(1)
 
 
+_QOR_GROUP_RE = re.compile(r"^\s*Timing Path Group\s+'([^']+)'\s*$", re.MULTILINE)
+
+_QOR_GROUP_FIELDS = {
+    "length": "Critical Path Length",
+    "slack": "Critical Path Slack",
+    "tns": "Total Negative Slack",
+    "violating": "No. of Violating Paths",
+}
+
+# ICC2's auto port-cone groups whose STA budget is T/2 on a CLOCKED design:
+# autosynth's SDC sets set_input_delay = T/2 - uncertainty, so their slack is
+# T/2 - L and recovering it takes 2x the slack in period. Register-launched
+# groups (the clock group, reg2out with output delay 0) and a combinational
+# block's in2out (virtual clock, zero I/O delays) see T - uncertainty: 1x.
+_HALF_BUDGET_GROUPS = ("**in2reg_default**", "**in2out_default**")
+_REGISTER_GROUPS = ("**in2reg_default**", "**reg2out_default**")
+
+
+def _qor_timing(qor: str, *, source: Path) -> dict[str, Any]:
+    """Timing summary over ALL report_qor path groups.
+
+    A clocked design reports one block per path group, and ICC2 lists its auto
+    port-cone groups (``**in2reg_default**`` ...) BEFORE the clock group, so
+    the first 'Critical Path Length' in the report is a port cone whose length
+    is mostly the T/2 input delay (collector schema <= 2 read exactly that).
+
+    - ``min_period_ns``: the period this netlist meets, from each group's
+      slack and SDC budget: max over groups of T - k*slack, k = 2 for port
+      cones of a clocked design, else 1 (includes the clock uncertainty, like
+      the manifest clocks). Only when every group prints its clock period
+      (ICC2 does, DC does not) — otherwise None.
+    - ``crit_group`` / ``crit_path_ns``: the group that sets min_period_ns and
+      its path length; without periods, the clock group(s) (reg2reg), else the
+      longest group.
+    - ``wns_ns`` worst slack over groups; ``tns_ns`` and ``violating_paths``
+      summed.
+    """
+    starts = [(m.start(), m.group(1)) for m in _QOR_GROUP_RE.finditer(qor)]
+    if not starts:
+        raise ReportParseError(f"{source}: no 'Timing Path Group' block")
+    groups: list[dict[str, Any]] = []
+    for i, (pos, name) in enumerate(starts):
+        end = starts[i + 1][0] if i + 1 < len(starts) else len(qor)
+        block = qor[pos:end]
+        group: dict[str, Any] = {
+            "name": name,
+            **{key: _field(block, label, source=source)
+               for key, label in _QOR_GROUP_FIELDS.items()},
+        }
+        period = re.search(rf"^\s*Critical Path Clk Period\s*:\s*({_NUMBER})\s*$",
+                           block, re.MULTILINE)
+        group["period"] = float(period.group(1)) if period else None
+        groups.append(group)
+
+    clocked = any(g["name"] in _REGISTER_GROUPS for g in groups)
+    min_period = None
+    if all(g["period"] is not None for g in groups):
+        def need(g: dict[str, Any]) -> float:
+            k = 2.0 if clocked and g["name"] in _HALF_BUDGET_GROUPS else 1.0
+            return g["period"] - k * g["slack"]
+        binding = max(groups, key=need)
+        min_period = round(need(binding), 6)
+    else:
+        clock_groups = [g for g in groups if not g["name"].startswith("**")]
+        binding = max(clock_groups or groups, key=lambda g: g["length"])
+    return {
+        "crit_path_ns": binding["length"],
+        "crit_group": binding["name"].strip("*"),
+        "min_period_ns": min_period,
+        "wns_ns": min(g["slack"] for g in groups),
+        "tns_ns": sum(g["tns"] for g in groups),
+        "violating_paths": int(sum(g["violating"] for g in groups)),
+    }
+
+
 def _ratio(numerator: float, denominator: float) -> float | None:
     if denominator == 0.0:
         return None
@@ -140,10 +220,11 @@ def parse_syn_reports(run_dir: Path) -> dict[str, Any]:
         # SCR/SAR: the sequential-cell count and area ratios NPUWattch trains on.
         "syn_scr": _ratio(seq_cells, total_cells),
         "syn_sar": _ratio(seq_area, total_area),
-        "syn_crit_path_ns": _field(qor, "Critical Path Length", source=source),
-        "syn_wns_ns": _field(qor, "Critical Path Slack", source=source),
-        "syn_tns_ns": _field(qor, "Total Negative Slack", source=source),
-        "syn_violating_paths": int(_field(qor, "No. of Violating Paths", source=source)),
+        **{f"syn_{key}": value
+           for key, value in _qor_timing(qor, source=source).items()
+           # DC's report_qor prints no per-group clock period and lumps the
+           # port cones into the clock group: no min period, one group.
+           if key not in ("min_period_ns", "crit_group")},
     }
 
 
@@ -180,10 +261,8 @@ def parse_pnr_reports(run_dir: Path) -> dict[str, Any]:
         # combinational bucket, so these differ from the synthesis-time SCR/SAR.
         "pnr_scr": _ratio(seq_cells, total_cells),
         "pnr_sar": _ratio(seq_area, total_area),
-        "pnr_crit_path_ns": _field(qor, "Critical Path Length", source=qor_source),
-        "pnr_wns_ns": _field(qor, "Critical Path Slack", source=qor_source),
-        "pnr_tns_ns": _field(qor, "Total Negative Slack", source=qor_source),
-        "pnr_violating_paths": int(_field(qor, "No. of Violating Paths", source=qor_source)),
+        **{f"pnr_{key}": value
+           for key, value in _qor_timing(qor, source=qor_source).items()},
     }
 
 

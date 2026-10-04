@@ -51,7 +51,10 @@ METRICS = ("energy", "leakage", "timing", "area")
 TARGET_COLUMNS = {
     "energy": "dyn_energy_pJ",          # per-cycle dynamic energy at the mode
     "leakage": "leak_power_mW",
-    "timing": "pnr_crit_path_ns",
+    # period the post-route netlist meets (per-group SDC budgets, clock
+    # uncertainty included; collector schema 3) — NOT pnr_crit_path_ns, which
+    # schema <= 2 filled from ICC2's input-delay-bound in2reg group
+    "timing": "pnr_min_period_ns",
     "area": "pnr_total_area_um2",
 }
 TARGET_UNITS = {"energy": "pJ", "leakage": "mW", "timing": "ns", "area": "um2"}
@@ -225,6 +228,95 @@ def dataset_hash(dataset_dir: Path, components: Sequence[str] = COMPONENTS) -> s
     for c in sorted(components):
         h.update(dataset_csv(dataset_dir, c).read_bytes())
     return h.hexdigest()
+
+
+# -- characterized envelope ---------------------------------------------------
+#
+# The MLPs answer any input, including ones no design point was ever built at
+# (a pipeline depth below the shallowest RTL, a clock faster than any
+# implementation closed). The envelope records what the dataset actually
+# covers so the provider can refuse the structurally impossible (depth) and
+# flag the extrapolated (params, clock). Written next to the quartets by
+# train_logic.py from the same CSVs, so it always matches the trained data.
+
+def envelope_path(model_dir: Path) -> Path:
+    return Path(model_dir) / f"envelope__{VERSION}.json"
+
+
+def _param_value(row: Mapping[str, Any], col: str) -> float:
+    # empty numeric param = 1, exactly as train_logic._mk reads it
+    v = row.get(col, "")
+    return float(v) if v not in ("", None) else 1.0
+
+
+def config_key(component: str, params: Mapping[str, Any]) -> str:
+    """Canonical string for one design configuration (params + flags +
+    categoricals) — the key of ``config_min_clock_ns``."""
+    parts = [f"{c}={float(params[c]):g}" for c in PARAM_COLUMNS[component]]
+    parts += [f"{c}={1 if float(params.get(c, 0) or 0) else 0}"
+              for c in FLAG_COLUMNS.get(component, ())]
+    parts += [f"{col}={params[col]}"
+              for col, _ in CATEGORICAL_COLUMNS.get(component, ())]
+    return ";".join(parts)
+
+
+def build_envelope(dataset_dir: Path,
+                   components: Sequence[str] = COMPONENTS) -> Dict[str, Any]:
+    """Per component: numeric param ranges, the distinct pipeline depths,
+    the clock range per node, and the fastest clock each exact configuration
+    was implemented at per node."""
+    import csv
+    out: Dict[str, Any] = {"version": VERSION,
+                           "dataset_sha256": dataset_hash(dataset_dir, components),
+                           "components": {}}
+    for component in components:
+        with open(dataset_csv(dataset_dir, component), newline="") as fp:
+            rows = list(csv.DictReader(fp))
+        ranges: Dict[str, List[float]] = {}
+        stages: set = set()
+        clocks: Dict[str, List[float]] = {}
+        fastest: Dict[str, Dict[str, float]] = {}
+        for row in rows:
+            params: Dict[str, Any] = {c: _param_value(row, c)
+                                      for c in PARAM_COLUMNS[component]}
+            params.update({c: _param_value(row, c)
+                           for c in FLAG_COLUMNS.get(component, ())})
+            params.update({col: row[col]
+                           for col, _ in CATEGORICAL_COLUMNS.get(component, ())})
+            for c in PARAM_COLUMNS[component]:
+                lo_hi = ranges.setdefault(c, [params[c], params[c]])
+                lo_hi[0] = min(lo_hi[0], params[c])
+                lo_hi[1] = max(lo_hi[1], params[c])
+            if "pipeline_stages" in params:
+                stages.add(int(params["pipeline_stages"]))
+            nm = str(node_nm(row["node"]))
+            t = float(row["clock_period_ns"])
+            c_lo_hi = clocks.setdefault(nm, [t, t])
+            c_lo_hi[0] = min(c_lo_hi[0], t)
+            c_lo_hi[1] = max(c_lo_hi[1], t)
+            per_node = fastest.setdefault(nm, {})
+            key = config_key(component, params)
+            per_node[key] = min(per_node.get(key, t), t)
+        out["components"][component] = {
+            "params": ranges,
+            "pipeline_stages": sorted(stages),
+            "clock_ns": clocks,
+            "config_min_clock_ns": fastest,
+        }
+    return out
+
+
+def write_envelope(dataset_dir: Path, out_dir: Path,
+                   components: Sequence[str] = COMPONENTS) -> Path:
+    path = envelope_path(out_dir)
+    path.write_text(json.dumps(build_envelope(dataset_dir, components),
+                               indent=1, sort_keys=True))
+    return path
+
+
+def load_envelope(model_dir: Path) -> Optional[Dict[str, Any]]:
+    path = envelope_path(model_dir)
+    return json.loads(path.read_text()) if path.is_file() else None
 
 
 def quartet_paths(model_dir: Path, component: str, metric: str) -> Dict[str, Path]:

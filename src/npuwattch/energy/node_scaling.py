@@ -237,6 +237,21 @@ class NodeScalingProvider:
 
         return (mix(lo[0], hi[0]), mix(lo[1], hi[1]))
 
+    def envelope_warnings(self, primitive: str, features: Mapping[str, Any]):
+        """The inner provider's envelope findings at the anchor node(s) this
+        layer actually queries (deduplicated, anchor order)."""
+        fn = getattr(self._inner, "envelope_warnings", None)
+        if fn is None:
+            return []
+        res = self._res
+        anchors = [res.lo] if res.kind == "exact" else [res.lo, res.hi]
+        out = []
+        for node in anchors:
+            for w in fn(primitive, {**features, "node": node}):
+                if w not in out:
+                    out.append(w)
+        return out
+
 
 def apply_node_scaling(chain: Any, tech: Any) -> Tuple[Any, Optional[NodeResolution]]:
     """Wrap a ``ProviderChain`` so its provider serves the tech's node continuously.
