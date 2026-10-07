@@ -6,6 +6,7 @@ or GPUs. All you need is NPUWattch.
 
 ```
 tutorial/
+├── npuwattch_basic/   Start here — what NPUWattch is, how it is built, what it reads
 ├── timeloop/      Example 1 — Timeloop / Accelergy input
 │   ├── eyeriss_like/alexnet/      AlexNet, 8 layers (the basic example)
 │   ├── gemmini_like/{resnet50,llama3_8b}/
@@ -14,6 +15,10 @@ tutorial/
     ├── tpu_like_fp32/             fp32 PEs, as the simulator ran the kernel
     └── tpu_like_bf16/             the same run, PEs fixed to bf16 MACs
 ```
+
+`npuwattch_basic/` is a three-part introduction (motivation and method, the
+structure of a run and the files each harness reads, and how to bring your
+own data). Its exercises use the two examples below.
 
 To run an example:
 
