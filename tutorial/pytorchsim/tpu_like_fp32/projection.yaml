@@ -1,0 +1,338 @@
+# ============================================================================
+#  PyTorchSim projection
+# ============================================================================
+# This file maps each PyTorchSim action to { element: stim_mode }. It also
+# gives the source of the event count of each action.
+# 'hold_b' means that operand b is latched one time, which is weight-stationary
+# operation. This is a property of the hardware, not of the simulator. Thus
+# compute maps to hold_b in this file and in the Timeloop projection. The two
+# harnesses can then use the same compound.
+#
+# count_from gives the calibration of the compute action (Option A):
+#   systolic_active_cycles × lanes²  = MACs at 100% utilization
+# Below 100% utilization, the additional active cycles are real reload and
+# stall energy. Thus the charge for each active cycle is intended.
+#
+# CustomMatMuliVpush (input push) and CustomMatMulvpop (partial-sum pop) drive
+# the VPU scratchpad of each lane (the spads compound below). They do not
+# drive more systolic elements. In the array, 'hold_b' already includes them,
+# because hold_b drives operand a and addend c. A second mapping to pe would
+# count that energy two times.
+#
+# Rule: ENERGY uses count_from (events for each cycle). AREA and LEAKAGE use
+# the 'count' of the compound element. Do not multiply the two.
+# See docs/COMPOUND_SCHEMA.md §3.
+
+tool: pytorchsim
+
+# Declared exclusions. NPUWattch shows them as notes (INFO), not as warnings.
+#   waivers       The reader collects the stat, but the projection does not
+#                 charge it. Each waiver gives the reason. This is the same
+#                 meaning as a waiver in a lint or CDC tool.
+#   out_of_scope  Hardware that is outside the model scope. The readers do not
+#                 collect its activity, thus there is no stat to waive.
+# If a stat has activity and is not declared here, NPUWattch gives the
+# coverage warning. That warning then means that a mapping is possibly missing.
+waivers:
+  CustomMatMul: >-
+    compute is charged per systolic active cycle (Option A:
+    systolic_active_cycles x lanes^2 = MACs); this instruction count is a
+    redundant counter of the same work
+  comp_gemm_ops: >-
+    COMP GEMM op counter: the same GEMM work is charged per systolic active
+    cycle (CustomMatMul action); charging both would double-count
+  comp_vector_ops: >-
+    COMP vector op counter: the same vector work is charged per vector-unit
+    active cycle (vpu compound actions); charging both would double-count
+
+out_of_scope:
+  - >-
+    scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is
+    excluded from the energy model per PyTorchSim author guidance (2026-07-25,
+    negligible area/power vs the systolic/vector datapath); gem5 stats are read
+    only for numCycles and the instruction counts matching
+    CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)
+  - >-
+    CustomVlaneIdx instruction counts are deliberately not collected: it is
+    lane-index generation, not an SFU op, and its energy is negligible
+  - >-
+    BAR / MEMORY_BAR (barrier) instruction counters are not collected:
+    synchronization is control-side work (scalar-core scope) and the stall
+    time it causes is already inside total_exec_cycles, so it is charged as
+    leakage over the window
+  - >-
+    VCIX serializer/deserializer (the vector <-> systolic-array interface) is
+    not modeled as a separate component: its push/pop events are already
+    charged at both endpoints (w_reg writes, vpu_spad reads/writes), and
+    PyTorchSim exposes no serdes size parameters — the remaining mux/wire
+    datapath is second-order
+  - >-
+    DRAM background/standby power and the NPU-side memory controller / HBM PHY
+    are not charged: vendor IDD/standby currents for HBM are not public (no
+    open HBM power tool exists), so the dram compound charges command energies
+    only (activate / read / write / refresh, constants cited from O'Connor &
+    Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic
+    (VMEM fills/drains, DMA engine, NoC flits) are charged by their own
+    compounds
+
+# Planned integrations of external power models that are not implemented.
+# Each entry gives a warning in each run, because it is a temporary gap. An
+# out_of_scope entry is permanent. Delete an entry when its integration is
+# complete.
+# The list is empty. The `dram` compound below charges the DRAM device energy
+# from the controller counters in the "=== DRAM statistics ===" block of
+# Ramulator2. An external tool is not necessary: the log gives the measured
+# row hit/miss/conflict split, and no public power tool models HBM.
+third_party_pending: []
+
+compounds:
+
+  systolic_mac:
+
+    CustomMatMul:                     # weight-stationary compute
+      count_from:
+        stat: systolic_active_cycles
+        scale: "lanes*lanes"          # cycles × lanes² = MACs (Option A)
+      elements:
+        pe: hold_b                    # PE computes with b latched
+        w_reg: idle                   # the weight stays, this action has no write
+
+    CustomMatMulwVpush:               # weight load (push of a new weight)
+      count_from:
+        stat: CustomMatMulwVpush
+        scale: lanes
+      elements:
+        pe: idle                      # the PE does not compute during a load
+        w_reg: write                  # the weight-register write = weight-load energy
+
+    # Sparsity variant: if the log gives the activation sparsity, map
+    # CustomMatMul.pe -> sparse50 and not hold_b.
+
+  # --------------------------------------------------------------------------
+  # spads (default_mode: gated)
+  # --------------------------------------------------------------------------
+  # An action charges only the element that it names. A scratchpad that an
+  # action does not use is clock-gated, and §6 charges only its leakage.
+  # First-order traffic model (the emitter gives a warning):
+  #   VMEM fills from DRAM and drains back to DRAM.
+  #     DRAM read bytes  ~ VMEM writes
+  #     DRAM write bytes ~ VMEM reads
+  #     (bytes = request count x dram_req_size_byte)
+  #   One iVpush or vpop instruction moves one vector through the VPU
+  #   scratchpad of each lane. The vector has `lanes` elements of the operand
+  #   dtype.
+  # `unit` converts a stat count into words of the capacity-resolved macro:
+  #   bytes:    bytes / word bytes
+  #   vectors:  vectors x lanes x bitwidth / word bits
+
+  spads:
+
+    vmem_fill:                        # DRAM -> VMEM (MOVIN traffic)
+      count_from:
+        stat: dram_read_bytes
+        unit: bytes
+      elements:
+        vmem: write
+
+    vmem_drain:                       # VMEM -> DRAM (MOVOUT traffic)
+      count_from:
+        stat: dram_write_bytes
+        unit: bytes
+      elements:
+        vmem: read
+
+    input_push:                       # read of the activations from the lane scratchpad
+      count_from:
+        stat: CustomMatMuliVpush
+        unit: vectors
+      elements:
+        vpu_spad: read
+
+    psum_pop:                         # write of the partial sums to the lane scratchpad
+      count_from:
+        stat: CustomMatMulvpop
+        unit: vectors
+      elements:
+        vpu_spad: write
+
+  # --------------------------------------------------------------------------
+  # vpu (vector datapath of one core: VRF + representative VFU, the `vpu` compound)
+  # --------------------------------------------------------------------------
+  # One active cycle of the vector unit is one vector operation in `lanes`
+  # SIMD slots. This is a first-order model, because the log does not divide
+  # the cycles by operation type.
+  # Each slot operation has 2 VRF operand reads, 1 VRF result write, and 1 FU
+  # operation.
+  # All three actions use the same stat, and that stat is exact for each core.
+  # Thus the split between instances is exact (instances.py).
+
+  vpu:
+
+    vfu_op:                           # one slot operation for each lane in each active cycle
+      count_from:
+        stat: vector_active_cycles
+        scale: lanes
+      elements:
+        vfu: random
+
+    vrf_operand_read:                 # two operand reads for each slot operation
+      count_from:
+        stat: vector_active_cycles
+        scale: "lanes*2"
+      elements:
+        vrf: read
+
+    vrf_result_write:                 # one result write for each slot operation
+      count_from:
+        stat: vector_active_cycles
+        scale: lanes
+      elements:
+        vrf: write
+
+  # --------------------------------------------------------------------------
+  # dma (DMA engine of one core, docs/DESIGN_SFU_DMA.md §1)
+  # --------------------------------------------------------------------------
+  # One DRAM request is one queue transit and one address add. The fifo mode
+  # 'stream' is one push and one pop for each event.
+  # dram_requests = [DRAM] reads + writes (activity.read_run). The DMA response
+  # counters of each core in the log give the exact split between cores
+  # (instances.py).
+  # The vmem traffic and the NoC flits already charge the energy of the moved
+  # data. This compound charges only the engine datapath.
+
+  dma:
+
+    dma_request:                      # queue transit + address generation
+      count_from:
+        stat: dram_requests
+      elements:
+        dma_q: stream
+        dma_addr: random
+
+  # --------------------------------------------------------------------------
+  # fpsfu (SFU of one core, docs/DESIGN_SFU_DMA.md §2)
+  # --------------------------------------------------------------------------
+  # One committed CustomV* instruction is one vector of `lanes` elements. Thus
+  # it is one operation on each of the `lanes` pipes of the SFU:
+  #   events = count × lanes
+  # CustomMatMulwVpush uses the same scale.
+  # Each gem5 class maps to the stim_mode of the operation group that does it.
+  # `CustomVlaneIdx` generates lane indexes and is not an SFU operation. The
+  # reader does not collect it.
+
+  fpsfu:
+
+    vexp:
+      count_from: { stat: CustomVexp, scale: lanes }
+      elements: { sfu_pipe: exp }
+
+    vexp2:
+      count_from: { stat: CustomVexp2, scale: lanes }
+      elements: { sfu_pipe: exp }
+
+    verf:
+      count_from: { stat: CustomVerf, scale: lanes }
+      elements: { sfu_pipe: erf }
+
+    vtanh:
+      count_from: { stat: CustomVtanh, scale: lanes }
+      elements: { sfu_pipe: hyp }
+
+    vsin:
+      count_from: { stat: CustomVsin, scale: lanes }
+      elements: { sfu_pipe: trig }
+
+    vcos:
+      count_from: { stat: CustomVcos, scale: lanes }
+      elements: { sfu_pipe: trig }
+
+  # --------------------------------------------------------------------------
+  # noc (BookSim2 interconnect. booksim.py calculates the stats and the topology symbols)
+  # --------------------------------------------------------------------------
+  # Each BookSim packet in these runs is one flit of flit_size bytes (average
+  # packet length = 1). Each DRAM request goes through the network two times,
+  # as a request and as a response:
+  #   total flits = 2 x (DRAM reads + DRAM writes)
+  # This agrees with the log value: injected rate x nodes x cycles.
+  # icnt_xbar_flits includes the second switch traversal of the inter-chiplet
+  # flits. This applies to anynet and assumes uniform traffic, and the reader
+  # gives a warning.
+  # icnt_d2d_flits counts only the die-to-die crossings.
+  #
+  # `unit: flits`: the emitter converts for each element type (§3.9):
+  #   sram buffer -> flit_bits / word_bits word accesses (write in, read out)
+  #   crossbar    -> flits / (valid_fraction(mode) x ports) active cycles
+  #                  valid25 is the characterized partial-activity point that
+  #                  is nearest to the 5-10% utilization of the sample logs.
+  #                  The division by its 25% keeps the energy proportional to
+  #                  the flits.
+  #   d2dlink     -> one crossing for each flit
+
+  noc:
+
+    xbar_traverse:                    # a flit goes through the switch datapath
+      count_from:
+        stat: icnt_xbar_flits
+        unit: flits
+      elements:
+        icnt_xbar: valid25
+
+    buf_ingress:                      # a flit goes into the input buffer
+      count_from:
+        stat: icnt_xbar_flits
+        unit: flits
+      elements:
+        icnt_buf: write
+
+    buf_egress:                       # a flit goes out of the input buffer
+      count_from:
+        stat: icnt_xbar_flits
+        unit: flits
+      elements:
+        icnt_buf: read
+
+    d2d_cross:                        # an inter-chiplet flit crosses one channel
+      count_from:
+        stat: icnt_d2d_flits
+        unit: flits
+      elements:
+        icnt_d2d: random
+
+  # --------------------------------------------------------------------------
+  # dram (HBM device energy. The constants come from a DRAM energy table, see npuwattch_harness/pytorchsim/dram.py)
+  # --------------------------------------------------------------------------
+  # The command counts come from the "=== DRAM statistics ===" controller
+  # block of Ramulator2 (activity.py). The block gives the measured row
+  # hit/miss/conflict split. Thus the ACT command count is exact and is not an
+  # assumption.
+  # The stats are totals for the chip (the sum of all channels). This agrees
+  # with the `per: chip` element.
+  # If a log does not have the block, the reader uses the [DRAM] request
+  # totals for read and write only, and gives a warning. Then dram_act_cmds
+  # and dram_ref_cmds are absent, and those actions are not bound.
+
+  dram:
+
+    dram_activate:                    # ACT+PRE for each row miss or conflict
+      count_from:
+        stat: dram_act_cmds
+      elements:
+        dram_chan: activate
+
+    dram_read:                        # one read command = data_width bits out
+      count_from:
+        stat: dram_read_cmds
+      elements:
+        dram_chan: read
+
+    dram_write:                       # one write command = data_width bits in
+      count_from:
+        stat: dram_write_cmds
+      elements:
+        dram_chan: write
+
+    dram_refresh:                     # REFab maintenance command
+      count_from:
+        stat: dram_ref_cmds
+      elements:
+        dram_chan: refresh

@@ -206,6 +206,7 @@ def _run_native_estimator(args, description) -> int:
             description, rows, chain.provider, tech,
             default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
             warnings=naming_warnings,
+            clock_check=args.show_fmax,
         )
     except ValueError as e:
         print(f"[ERROR] {e}")
@@ -400,6 +401,7 @@ def _run_harness(args) -> int:
             default_clock_mhz=DEFAULT_HARNESS_CLOCK_MHZ,
             window_labels=emitted.window_labels,
             warnings=energy_warnings,
+            clock_check=args.show_fmax,
         )
     except ValueError as e:
         print(f"[ERROR] {e}")
@@ -472,7 +474,7 @@ def _maybe_write_report(args, *, run, description, tech, chain, rows,
             activity_source=activity_source, chain=chain, hierarchy=hierarchy,
             warnings=warnings, notes=notes, activity_rows=rows, inputs=inputs,
             vectorless=vectorless, window_provenance=window_provenance,
-            node_resolution=node_resolution,
+            node_resolution=node_resolution, timing=args.show_fmax,
         )
         html_path, json_path = write_report(ctx, args.report_dir)
         print(f"[INFO] Wrote report:      {html_path}")

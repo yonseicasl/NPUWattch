@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Tutorial example — Timeloop/Accelergy input, NVDLA-like design, Llama-3-8B.
+#
+# Feeds NPUWattch the NVDLA-like architecture description (../arch.yaml)
+# and the fourteen per-layer stats files Timeloop produced for one
+# Llama-3-8B decoder block (prefill and decode), and
+# writes an HTML report to out/.
+#
+# Usage: ./run [extra npuwattch flags...]
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if ! command -v npuwattch > /dev/null; then
+    echo "npuwattch not found on PATH — install it first:" >&2
+    echo "    cd ../../../.. && pip install -e ." >&2
+    exit 1
+fi
+
+npuwattch --harness timeloop \
+          --arch-yaml ../arch.yaml \
+          --stats     stats/ \
+          --stats-map ../stats_map.yaml \
+          --node 7nm \
+          --clock-mhz 1000 \
+          --tree \
+          --report out/ \
+          "$@"
+
+echo
+echo "Open the report:  $(pwd)/out/report.html"

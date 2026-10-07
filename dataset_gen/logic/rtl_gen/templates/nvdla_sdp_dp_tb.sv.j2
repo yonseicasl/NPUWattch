@@ -1,0 +1,269 @@
+{% import "_power_stim.sv.j2" as pwr %}
+// Testbench of nvdla_sdp_dp (NVDLA SDP datapath, nv_small).
+//
+// Functional phase: NUM_CASES elements go through the configuration below
+// (golden values from nvdla_sdp_model.py). The outputs are compared in order;
+// one output word holds 8 int8 results, element 8*w+k in bits [8k+7:8k].
+//
+// Power phase modes (+nw_power_mode):
+//   random   one element per cycle, uniform-random int32 data; a new
+//            uniform-random operand beat after each beat handshake.
+//   process  one element per cycle, the epilogue of an int8 convolution:
+//            int32 data drawn from a signed 18-bit range; per-channel
+//            operands (one beat = 8 channels) that stay the same for
+//            {{ group_beats }} beats, then change (the next channel group).
+//   idle     clock running, configuration loaded, no valid input.
+// The TB logs the number of elements that the DUT accepted in the measured
+// window ("power phase elements=N"); energy per element = power x window / N.
+module nvdla_sdp_dp_tb;
+    localparam int NUM_CASES = {{ test_vectors|length }};
+    localparam int NUM_BEATS = NUM_CASES / 8;
+    localparam int GROUP_BEATS = {{ group_beats }};
+    localparam int TIMEOUT_CYCLES = 20 * NUM_CASES + 400;
+
+    logic          i_clk;
+    logic          i_rst_n;
+    logic          i_cacc_valid;
+    logic          o_cacc_ready;
+    logic [31:0]   i_cacc_data;
+    logic          o_mrdma_ready;
+    logic          i_bs_alu_valid, i_bs_mul_valid, i_bn_alu_valid, i_bn_mul_valid;
+    logic          o_bs_alu_ready, o_bs_mul_ready, o_bn_alu_ready, o_bn_mul_ready;
+    logic [127:0]  i_bs_alu_data, i_bs_mul_data, i_bn_alu_data, i_bn_mul_data;
+    logic          o_out_valid;
+    logic [63:0]   o_out_data;
+    logic          o_pdp_valid;
+    logic [7:0]    o_pdp_data;
+    logic [31:0]   o_sat_count;
+    logic          i_op_en;
+
+    logic [31:0]   vec_data   [0:NUM_CASES-1];
+    logic [15:0]   vec_bs_alu [0:NUM_CASES-1];
+    logic [15:0]   vec_bs_mul [0:NUM_CASES-1];
+    logic [15:0]   vec_bn_alu [0:NUM_CASES-1];
+    logic [15:0]   vec_bn_mul [0:NUM_CASES-1];
+    logic [7:0]    vec_expected [0:NUM_CASES-1];
+    logic [63:0]   got_words  [0:NUM_BEATS-1];
+
+    bit            func_active;
+    int            n_in, n_bs_alu, n_bs_mul, n_bn_alu, n_bn_mul, n_out;
+    int            last_bs_alu, last_bs_mul, last_bn_alu, last_bn_mul;
+    int            errors;
+    int            x_errors;
+    int            window_in_start;
+    logic [15:0]   tab_bs_alu [0:7];
+    logic [15:0]   tab_bs_mul [0:7];
+    logic [15:0]   tab_bn_alu [0:7];
+    logic [15:0]   tab_bn_mul [0:7];
+
+    nvdla_sdp_dp dut (
+        .i_clk(i_clk), .i_rst_n(i_rst_n),
+        .i_cacc_valid(i_cacc_valid), .o_cacc_ready(o_cacc_ready), .i_cacc_data(i_cacc_data),
+        .i_mrdma_valid(1'b0), .o_mrdma_ready(o_mrdma_ready), .i_mrdma_data(258'd0),
+        .i_bs_alu_valid(i_bs_alu_valid), .o_bs_alu_ready(o_bs_alu_ready), .i_bs_alu_data(i_bs_alu_data),
+        .i_bs_mul_valid(i_bs_mul_valid), .o_bs_mul_ready(o_bs_mul_ready), .i_bs_mul_data(i_bs_mul_data),
+        .i_bn_alu_valid(i_bn_alu_valid), .o_bn_alu_ready(o_bn_alu_ready), .i_bn_alu_data(i_bn_alu_data),
+        .i_bn_mul_valid(i_bn_mul_valid), .o_bn_mul_ready(o_bn_mul_ready), .i_bn_mul_data(i_bn_mul_data),
+        .o_out_valid(o_out_valid), .i_out_ready(1'b1), .o_out_data(o_out_data),
+        .o_pdp_valid(o_pdp_valid), .i_pdp_ready(1'b1), .o_pdp_data(o_pdp_data),
+        .o_sat_count(o_sat_count),
+        .i_op_en(i_op_en), .i_layer_done(1'b0), .i_flying_mode(1'b1), .i_output_dst(1'b0),
+        .i_proc_precision(2'd0), .i_out_precision(2'd0), .i_nan_to_zero(1'b0),
+        .i_perf_sat_en(1'b0), .i_perf_lut_en(1'b0),
+        .i_bcore_slcg_en(1'b1), .i_ncore_slcg_en(1'b1), .i_ecore_slcg_en(1'b1),
+{% for st in ("bs", "bn") %}
+{% set c = config[st] %}
+        .i_{{ st }}_bypass(1'b{{ c.bypass }}), .i_{{ st }}_alu_bypass(1'b{{ c.alu_bypass }}),
+        .i_{{ st }}_alu_algo(2'd{{ c.alu_algo }}), .i_{{ st }}_alu_src(1'b{{ c.alu_src }}),
+        .i_{{ st }}_alu_shift(6'd{{ c.alu_shift }}), .i_{{ st }}_alu_operand(16'd{{ c.alu_operand }}),
+        .i_{{ st }}_mul_bypass(1'b{{ c.mul_bypass }}), .i_{{ st }}_mul_src(1'b{{ c.mul_src }}),
+        .i_{{ st }}_mul_prelu(1'b{{ c.mul_prelu }}), .i_{{ st }}_mul_shift(8'd{{ c.mul_shift }}),
+        .i_{{ st }}_mul_operand(16'd{{ c.mul_operand }}), .i_{{ st }}_relu_bypass(1'b{{ c.relu_bypass }}),
+{% endfor %}
+        .i_cvt_offset(32'd{{ config.cvt_offset }}), .i_cvt_scale(16'd{{ config.cvt_scale }}),
+        .i_cvt_shift(6'd{{ config.cvt_shift }})
+    );
+
+{{ pwr.decls("128") }}
+    // Handshakes are sampled at the rising edge (pre-edge values; in a gate
+    // sim the flops change only after their clock-to-Q delay).
+    always @(posedge i_clk) begin
+        if (i_rst_n === 1'b1) begin
+            if (i_cacc_valid && o_cacc_ready) n_in = n_in + 1;
+            if (i_bs_alu_valid && o_bs_alu_ready) n_bs_alu = n_bs_alu + 1;
+            if (i_bs_mul_valid && o_bs_mul_ready) n_bs_mul = n_bs_mul + 1;
+            if (i_bn_alu_valid && o_bn_alu_ready) n_bn_alu = n_bn_alu + 1;
+            if (i_bn_mul_valid && o_bn_mul_ready) n_bn_mul = n_bn_mul + 1;
+            if (o_out_valid === 1'b1) begin
+                if (func_active && n_out < NUM_BEATS) got_words[n_out] = o_out_data;
+                n_out = n_out + 1;
+            end
+        end
+    end
+
+    function automatic logic [127:0] beat_from_vectors(input int beat, input int which);
+        logic [127:0] word;
+        word = '0;
+        for (int k = 0; k < 8; k = k + 1) begin
+            if (8 * beat + k < NUM_CASES) begin
+                case (which)
+                    0: word[16*k +: 16] = vec_bs_alu[8 * beat + k];
+                    1: word[16*k +: 16] = vec_bs_mul[8 * beat + k];
+                    2: word[16*k +: 16] = vec_bn_alu[8 * beat + k];
+                    default: word[16*k +: 16] = vec_bn_mul[8 * beat + k];
+                endcase
+            end
+        end
+        return word;
+    endfunction
+
+    // Functional-phase driver: inputs change at the falling edge.
+    always @(negedge i_clk) begin
+        if (func_active) begin
+            i_cacc_valid = (n_in < NUM_CASES);
+            i_cacc_data = (n_in < NUM_CASES) ? vec_data[n_in] : 32'd0;
+            i_bs_alu_valid = (n_bs_alu < NUM_BEATS);
+            i_bs_mul_valid = 1'b0;
+            i_bn_alu_valid = (n_bn_alu < NUM_BEATS);
+            i_bn_mul_valid = (n_bn_mul < NUM_BEATS);
+            i_bs_alu_data = beat_from_vectors(n_bs_alu, 0);
+            i_bs_mul_data = beat_from_vectors(n_bs_mul, 1);
+            i_bn_alu_data = beat_from_vectors(n_bn_alu, 2);
+            i_bn_mul_data = beat_from_vectors(n_bn_mul, 3);
+        end
+    end
+
+    function automatic logic [127:0] beat_from_table(input int which);
+        logic [127:0] word;
+        for (int k = 0; k < 8; k = k + 1) begin
+            case (which)
+                0: word[16*k +: 16] = tab_bs_alu[k];
+                1: word[16*k +: 16] = tab_bs_mul[k];
+                2: word[16*k +: 16] = tab_bn_alu[k];
+                default: word[16*k +: 16] = tab_bn_mul[k];
+            endcase
+        end
+        return word;
+    endfunction
+
+    // Per-channel operands of one channel group (the ranges of the golden
+    // vectors: bias int12, BN offset int13, BN scale Q14 in [0.5, 1.5)).
+    task automatic new_channel_group();
+        for (int k = 0; k < 8; k = k + 1) begin
+            tab_bs_alu[k] = 16'($signed($urandom_range(0, 4095)) - 2048);
+            tab_bs_mul[k] = 16'($urandom_range(0, 65535));
+            tab_bn_alu[k] = 16'($signed($urandom_range(0, 8191)) - 4096);
+            tab_bn_mul[k] = 16'($urandom_range(8192, 24575));
+        end
+    endtask
+
+    task automatic nw_drive_random();
+        if (nw_power_mode == "random") begin
+            i_cacc_valid = 1'b1;
+            i_cacc_data = 32'(nw_rand_bits(32));
+            i_bs_alu_valid = 1'b1;
+            i_bs_mul_valid = 1'b0;
+            i_bn_alu_valid = 1'b1;
+            i_bn_mul_valid = 1'b1;
+            if (n_bs_alu != last_bs_alu) i_bs_alu_data = nw_rand_bits(128);
+            if (n_bn_alu != last_bn_alu) i_bn_alu_data = nw_rand_bits(128);
+            if (n_bn_mul != last_bn_mul) i_bn_mul_data = nw_rand_bits(128);
+        end else if (nw_power_mode == "process") begin
+            i_cacc_valid = 1'b1;
+            i_cacc_data = 32'($signed(18'(nw_rand_bits(18))));
+            i_bs_alu_valid = 1'b1;
+            i_bs_mul_valid = 1'b0;
+            i_bn_alu_valid = 1'b1;
+            i_bn_mul_valid = 1'b1;
+            if (n_bs_alu != last_bs_alu && (n_bs_alu % GROUP_BEATS) == 0) new_channel_group();
+            i_bs_alu_data = beat_from_table(0);
+            i_bn_alu_data = beat_from_table(2);
+            i_bn_mul_data = beat_from_table(3);
+        end else if (nw_power_mode == "idle") begin
+            i_cacc_valid = 1'b0;
+            i_bs_alu_valid = 1'b0;
+            i_bs_mul_valid = 1'b0;
+            i_bn_alu_valid = 1'b0;
+            i_bn_mul_valid = 1'b0;
+        end else begin
+            $fatal(1, "unsupported nw_power_mode for nvdla_sdp_dp: %s", nw_power_mode);
+        end
+        last_bs_alu = n_bs_alu;
+        last_bs_mul = n_bs_mul;
+        last_bn_alu = n_bn_alu;
+        last_bn_mul = n_bn_mul;
+    endtask
+
+{{ pwr.clock_gen("i_clk") }}
+    initial begin
+        int cycles;
+        i_rst_n = 1'b0;
+        i_op_en = 1'b0;
+        func_active = 1'b0;
+        i_cacc_valid = 1'b0;
+        i_cacc_data = '0;
+        i_bs_alu_valid = 1'b0; i_bs_mul_valid = 1'b0; i_bn_alu_valid = 1'b0; i_bn_mul_valid = 1'b0;
+        i_bs_alu_data = '0; i_bs_mul_data = '0; i_bn_alu_data = '0; i_bn_mul_data = '0;
+        n_in = 0; n_bs_alu = 0; n_bs_mul = 0; n_bn_alu = 0; n_bn_mul = 0; n_out = 0;
+        last_bs_alu = 0; last_bs_mul = 0; last_bn_alu = 0; last_bn_mul = 0;
+        errors = 0;
+        x_errors = 0;
+{% for vec in test_vectors %}
+        vec_data[{{ vec.index }}] = 32'h{{ vec.data_hex }}; vec_bs_alu[{{ vec.index }}] = 16'h{{ vec.bs_alu_hex }}; vec_bs_mul[{{ vec.index }}] = 16'h{{ vec.bs_mul_hex }}; vec_bn_alu[{{ vec.index }}] = 16'h{{ vec.bn_alu_hex }}; vec_bn_mul[{{ vec.index }}] = 16'h{{ vec.bn_mul_hex }}; vec_expected[{{ vec.index }}] = 8'h{{ vec.expected_hex }};
+{% endfor %}
+        repeat (4) @(posedge i_clk);
+        // Release reset at a falling edge (see intadd_tb).
+        @(negedge i_clk);
+        i_rst_n = 1'b1;
+        repeat (2) @(negedge i_clk);
+        // The SDP loads its configuration when op_en rises.
+        i_op_en = 1'b1;
+        repeat (2) @(negedge i_clk);
+        func_active = 1'b1;
+        cycles = 0;
+        while (n_out < NUM_BEATS && cycles < TIMEOUT_CYCLES) begin
+            @(posedge i_clk);
+            cycles = cycles + 1;
+        end
+        @(negedge i_clk);
+        func_active = 1'b0;
+        if (n_out < NUM_BEATS) begin
+            $display("nvdla_sdp_dp_tb FAIL timeout: %0d of %0d output words after %0d cycles",
+                n_out, NUM_BEATS, cycles);
+            $fatal(1);
+        end
+        for (int n = 0; n < NUM_CASES; n = n + 1) begin
+            logic [7:0] got;
+            got = got_words[n / 8][8 * (n % 8) +: 8];
+            if (got !== vec_expected[n]) begin
+                errors = errors + 1;
+                if ($isunknown(got)) x_errors = x_errors + 1;
+                $display("nvdla_sdp_dp mismatch at element %0d: data=%0d got=%0d exp=%0d",
+                    n, $signed(vec_data[n]), $signed(got), $signed(vec_expected[n]));
+            end
+        end
+        $display("nvdla_sdp_dp functional phase: %0d elements, %0d cycles", NUM_CASES, cycles);
+        if (x_errors != 0) begin
+            $display("nvdla_sdp_dp_tb FAIL unknown_outputs=%0d errors=%0d", x_errors, errors);
+            $fatal(1);
+        end else if (errors == 0) begin
+            $display("nvdla_sdp_dp_tb PASS");
+        end else begin
+            $display("nvdla_sdp_dp_tb PASS marginal_errors=%0d", errors);
+        end
+        new_channel_group();
+        fork
+            begin
+                @(posedge nw_power_phase);
+                window_in_start = n_in;
+                @(negedge nw_power_phase);
+                $display("nvdla_sdp_dp_tb power phase elements=%0d mode=%s",
+                    n_in - window_in_start, nw_power_mode);
+            end
+        join_none
+{{ pwr.run_clocked("nvdla_sdp_dp_tb", "i_clk", power_cycles) }}
+        $finish;
+    end
+
+{{ pwr.saif_hook("nvdla_sdp_dp_tb") }}
+endmodule

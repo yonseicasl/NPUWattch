@@ -210,9 +210,13 @@ def build_context(
     vectorless: Optional[float] = None,         # activity fraction of a vectorless run
     window_provenance: Sequence[Mapping[str, Any]] = (),  # one harness record per kernel
     node_resolution: Any = None,                # energy.NodeResolution (or None)
+    timing: bool = True,                        # show f_max and the critical paths
 ) -> Dict[str, Any]:
     """Make the one dict of plain data that is the source of ``report.html``
-    and ``report.json``."""
+    and ``report.json``.
+
+    ``timing`` False removes f_max, the clock check, and the critical path of
+    each component from the report (CLI: no ``--fmax``)."""
     from .tree import to_dict as tree_to_dict
 
     nw = description.get("npuwattch", {})
@@ -275,8 +279,8 @@ def build_context(
             "area_um2": c0.area_um2,
             "unit_area_um2": c0.area_um2 / max(1, c0.instances),
             "area_str": _fmt_or_na(c0.area_um2 / max(1, c0.instances)),
-            "crit_path_ns": c0.crit_path_ns,
-            "crit_path_str": _fmt_or_na(c0.crit_path_ns),
+            "crit_path_ns": c0.crit_path_ns if timing else None,
+            "crit_path_str": _fmt_or_na(c0.crit_path_ns) if timing else None,
             "activity_events": activity_by_comp.get(name, 0.0),
             "activity_str": _fmt_or_na(activity_by_comp.get(name, 0.0)),
             "vectorless": vectorless is not None,
@@ -403,8 +407,10 @@ def build_context(
         }
     power_density = ((run.avg_power_mW * 1e-3) / (area_um2 / 1e6)
                      if area_um2 > 0 else None)
-    f_max = run.f_max_MHz
-    if not f_max:
+    f_max = run.f_max_MHz if timing else None
+    if not timing:
+        check_text, check_color, banner = "not shown (no --fmax)", "muted", None
+    elif not f_max:
         check_text, check_color, banner = "no timing model", "muted", None
     elif clock > f_max:
         check_text, check_color = f"FAIL — clock {clock:.0f} MHz > f_max", "err-ink"
@@ -526,6 +532,7 @@ def build_context(
                               else f"{run.exec_time_s * 1e3:.3g} ms"),
         },
         "timing": {
+            "enabled": timing,
             "f_max_MHz": f_max,
             "f_max_str": f"{f_max:.0f} MHz" if f_max else "n/a",
             "check_text": check_text, "check_color": check_color,

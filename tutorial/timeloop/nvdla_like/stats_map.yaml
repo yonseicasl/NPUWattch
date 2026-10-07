@@ -1,0 +1,16 @@
+# ============================================================================
+#  Stats map of the NVDLA-like design (--stats-map)
+# ============================================================================
+# Timeloop does not model the SDP: in arch.yaml it is a zero-cost level that
+# bypasses all data, so its stats level has no activity. In NVDLA every output
+# goes from CACC through the SDP to DRAM. Thus each DRAM write is also SDP
+# work: one DRAM write event is one block of 8 int8 outputs (Block size 8),
+# and the SDP processes one element per action.
+#
+#   write: [DRAM, {sdp: {count: 8, action: process}}]
+#     each DRAM write event charges DRAM one write, and charges the user
+#     component `sdp` 8 actions `process` (see user_components.yaml).
+levels:
+  DRAM:
+    read: DRAM
+    write: [DRAM, {sdp: {count: 8, action: process}}]

@@ -105,9 +105,11 @@
     <div class="card kpi"><div class="v">{{ totals.area_mm2 }} mm²</div>
       <div class="l">Total area — modeled components only (no IO/PHY,
         controllers, scalar core or whitespace)</div></div>
+    {% if timing.enabled %}
     <div class="card kpi"><div class="v">{{ timing.f_max_str }}</div>
       <div class="l">f_max — clock check:
         <span style="color:var(--{{ timing.check_color }})">{{ timing.check_text }}</span></div></div>
+    {% endif %}
     <div class="card kpi"><div class="v">{{ totals.cycles }}</div>
       <div class="l">Cycles ({{ totals.exec_time_str }})</div></div>
   </div>
@@ -243,7 +245,11 @@
         <th>Component</th><th>Class</th><th>Model</th><th>Count</th>
         <th>E/op [pJ]</th><th>P_leak/inst [mW]</th>
         <th>Area/inst [µm²]</th>
+        {% if timing.enabled %}
         <th>t_crit [ns]</th><th>Activity [events]</th>
+        {% else %}
+        <th>Activity [events]</th>
+        {% endif %}
         <th>E_dyn</th><th>E_leak</th><th>E_total</th><th>Share</th>
       </tr></thead>
       <tbody>
@@ -256,7 +262,11 @@
           <td><span class="chip {{ c.model }}">{{ c.model }}</span></td>
           <td>{{ c.count }}</td>
           <td>{{ c.unit_energy_str }}</td><td>{{ c.leak_power_str }}</td>
+          {% if timing.enabled %}
           <td>{{ c.area_str }}</td><td>{{ c.crit_path_str }}</td>
+          {% else %}
+          <td>{{ c.area_str }}</td>
+          {% endif %}
           <td>{{ c.activity_str }}</td>
           <td>{{ c.dyn_str }}</td><td>{{ c.leak_str }}</td>
           <td>{{ c.energy_str }}</td><td>{{ c.energy_pct }}%</td>

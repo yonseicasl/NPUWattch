@@ -1,0 +1,615 @@
+{
+ "schema": "npuwattch-report/1",
+ "design_name": "arch",
+ "timestamp": "2026-10-05 23:53:04",
+ "version": "0.9",
+ "git_commit": "n/a",
+ "tech": {
+  "node": "7nm",
+  "transistor": "hp",
+  "corner": "TT",
+  "voltage_offset_V": 0.0,
+  "temperature_C": 25.0
+ },
+ "clock": {
+  "frequency_MHz": 1000.0
+ },
+ "activity_source": "timeloop harness (simulator logs)",
+ "model_tag": "PARTIAL calibration",
+ "banners": [],
+ "totals": {
+  "energy_pJ": 1322804046.6636648,
+  "energy_str": "1.32e+03 \u00b5J",
+  "dyn_pJ": 1314913574.265667,
+  "dyn_str": "1.31e+03 \u00b5J",
+  "leak_pJ": 7890472.397997864,
+  "leak_str": "7.89 \u00b5J",
+  "dyn_pct": 99.4,
+  "leak_pct": 0.6,
+  "avg_power_mW": 315.52549734558306,
+  "avg_power_str": "316 mW",
+  "power_density_W_per_mm2": 0.7452921519361141,
+  "power_density_str": "0.745 W/mm\u00b2",
+  "area_um2": 423358.13751146226,
+  "area_mm2": 0.423,
+  "cycles": 4192384,
+  "exec_time_s": 0.0041923839999999995,
+  "exec_time_str": "4.19 ms"
+ },
+ "timing": {
+  "enabled": false,
+  "f_max_MHz": null,
+  "f_max_str": "n/a",
+  "check_text": "not shown (no --fmax)",
+  "check_color": "muted"
+ },
+ "windows": [
+  {
+   "index": 0,
+   "label": "01_conv1",
+   "kind": null,
+   "cycles": 2458624,
+   "dyn_pJ": 273444628.57404757,
+   "dyn_str": "273 \u00b5J",
+   "leak_pJ": 4627368.296667267,
+   "leak_str": "4.63 \u00b5J",
+   "total_pJ": 278071996.87071484,
+   "total_str": "278 \u00b5J",
+   "avg_power_mW": 113.10065991006145,
+   "power_str": "113 mW"
+  },
+  {
+   "index": 1,
+   "label": "02_res2_1x1",
+   "kind": null,
+   "cycles": 50176,
+   "dyn_pJ": 43315374.92784645,
+   "dyn_str": "43.3 \u00b5J",
+   "leak_pJ": 94436.08768708709,
+   "leak_str": "94.4 nJ",
+   "total_pJ": 43409811.01553354,
+   "total_str": "43.4 \u00b5J",
+   "avg_power_mW": 865.1508891807546,
+   "power_str": "865 mW"
+  },
+  {
+   "index": 2,
+   "label": "03_res2_3x3",
+   "kind": null,
+   "cycles": 451584,
+   "dyn_pJ": 209137641.14971703,
+   "dyn_str": "209 \u00b5J",
+   "leak_pJ": 849924.7891837837,
+   "leak_str": "850 nJ",
+   "total_pJ": 209987565.93890083,
+   "total_str": "210 \u00b5J",
+   "avg_power_mW": 465.0022275787027,
+   "power_str": "465 mW"
+  },
+  {
+   "index": 3,
+   "label": "04_res3_3x3",
+   "kind": null,
+   "cycles": 451584,
+   "dyn_pJ": 222787661.37380847,
+   "dyn_str": "223 \u00b5J",
+   "leak_pJ": 849924.7891837837,
+   "leak_str": "850 nJ",
+   "total_pJ": 223637586.16299227,
+   "total_str": "224 \u00b5J",
+   "avg_power_mW": 495.2292068872952,
+   "power_str": "495 mW"
+  },
+  {
+   "index": 4,
+   "label": "05_res4_1x1_exp",
+   "kind": null,
+   "cycles": 200704,
+   "dyn_pJ": 105693129.97645083,
+   "dyn_str": "106 \u00b5J",
+   "leak_pJ": 377744.35074834834,
+   "leak_str": "378 nJ",
+   "total_pJ": 106070874.32719918,
+   "total_str": "106 \u00b5J",
+   "avg_power_mW": 528.4940725007932,
+   "power_str": "528 mW"
+  },
+  {
+   "index": 5,
+   "label": "06_res5_3x3",
+   "kind": null,
+   "cycles": 451584,
+   "dyn_pJ": 325346984.7949978,
+   "dyn_str": "325 \u00b5J",
+   "leak_pJ": 849924.7891837837,
+   "leak_str": "850 nJ",
+   "total_pJ": 326196909.5841816,
+   "total_str": "326 \u00b5J",
+   "avg_power_mW": 722.3393866571483,
+   "power_str": "722 mW"
+  },
+  {
+   "index": 6,
+   "label": "07_fc",
+   "kind": null,
+   "cycles": 128128,
+   "dyn_pJ": 135188153.46879885,
+   "dyn_str": "135 \u00b5J",
+   "leak_pJ": 241149.29534381162,
+   "leak_str": "241 nJ",
+   "total_pJ": 135429302.76414266,
+   "total_str": "135 \u00b5J",
+   "avg_power_mW": 1056.9844434014633,
+   "power_str": "1.06 W"
+  }
+ ],
+ "kernel_split": null,
+ "dram_breakdown": {
+  "components": [
+   "system_top_level.DRAM"
+  ],
+  "rows": [
+   {
+    "mode": "activate",
+    "label": "Row activation (ACT+PRE)",
+    "energy_pJ": 0.0,
+    "energy_str": "0 pJ",
+    "pct": 0.0
+   },
+   {
+    "mode": "read",
+    "label": "Transfer \u2014 read",
+    "energy_pJ": 412472000.0,
+    "energy_str": "412 \u00b5J",
+    "pct": 80.8
+   },
+   {
+    "mode": "write",
+    "label": "Transfer \u2014 write",
+    "energy_pJ": 98007552.0,
+    "energy_str": "98 \u00b5J",
+    "pct": 19.2
+   },
+   {
+    "mode": "refresh",
+    "label": "Refresh",
+    "energy_pJ": 0.0,
+    "energy_str": "0 pJ",
+    "pct": 0.0
+   }
+  ],
+  "total_pJ": 510479552.0,
+  "total_str": "510 \u00b5J",
+  "share_of_run_pct": 38.6,
+  "constants": {
+   "act_pJ": null,
+   "access_pJ_per_bit": 8.0,
+   "ref_pJ": null,
+   "data_width_bits": 64
+  }
+ },
+ "npu_dram_split": {
+  "npu_pJ": 812324494.6636648,
+  "npu_str": "812 \u00b5J",
+  "npu_pct": 61.4,
+  "dram_pJ": 510479552.0,
+  "dram_str": "510 \u00b5J",
+  "dram_pct": 38.6
+ },
+ "efficiency": {
+  "mac_ops": 531103744.0,
+  "pJ_per_mac": 2.490669782707585,
+  "pJ_per_flop": 1.2453348913537925,
+  "pJ_per_flop_str": "1.25 pJ/FLOP",
+  "tflops": 0.25336598174213054,
+  "tflops_str": "0.253",
+  "dtype": "int8",
+  "fp32_equivalent": null
+ },
+ "window_term": "window",
+ "matrix": {
+  "rows": [
+   {
+    "name": "system_top_level.DRAM",
+    "cells": [
+     "62.1 \u00b5J",
+     "26 \u00b5J",
+     "43.7 \u00b5J",
+     "56.8 \u00b5J",
+     "32.8 \u00b5J",
+     "158 \u00b5J",
+     "131 \u00b5J"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.scratchpad",
+    "cells": [
+     "892 nJ",
+     "175 nJ",
+     "963 nJ",
+     "974 nJ",
+     "451 nJ",
+     "1.78 \u00b5J",
+     "892 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.accumulator",
+    "cells": [
+     "52 \u00b5J",
+     "950 nJ",
+     "9.53 \u00b5J",
+     "9.59 \u00b5J",
+     "4.17 \u00b5J",
+     "9.63 \u00b5J",
+     "170 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.PE_column.PE.weight_reg",
+    "cells": [
+     "5.84 \u00b5J",
+     "647 nJ",
+     "5.73 \u00b5J",
+     "5.71 \u00b5J",
+     "2.55 \u00b5J",
+     "5.85 \u00b5J",
+     "238 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.PE_column.PE.input_reg",
+    "cells": [
+     "4.97 \u00b5J",
+     "541 nJ",
+     "4.87 \u00b5J",
+     "4.87 \u00b5J",
+     "2.16 \u00b5J",
+     "4.87 \u00b5J",
+     "49.2 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.PE_column.PE.psum_reg",
+    "cells": [
+     "64.1 \u00b5J",
+     "5.95 \u00b5J",
+     "62.5 \u00b5J",
+     "63 \u00b5J",
+     "27.1 \u00b5J",
+     "63.4 \u00b5J",
+     "1.12 \u00b5J"
+    ]
+   },
+   {
+    "name": "system_top_level.gemmini.PE_column.PE.mac",
+    "cells": [
+     "83.6 \u00b5J",
+     "9.1 \u00b5J",
+     "81.9 \u00b5J",
+     "81.9 \u00b5J",
+     "36.4 \u00b5J",
+     "81.9 \u00b5J",
+     "1.45 \u00b5J"
+    ]
+   }
+  ]
+ },
+ "components": [
+  {
+   "name": "system_top_level.DRAM",
+   "cls": "hbm",
+   "dyn_by_mode": {
+    "read": 412472000.0,
+    "write": 98007552.0
+   },
+   "model": "const",
+   "count": 1,
+   "dyn_energy_pJ": 510479552.0,
+   "dyn_str": "510 \u00b5J",
+   "leak_energy_pJ": 0.0,
+   "leak_str": "0 pJ",
+   "energy_pJ": 510479552.0,
+   "energy_str": "510 \u00b5J",
+   "energy_pct": 38.6,
+   "unit_energy_str": "512 / 512",
+   "leak_power_mW": 0.0,
+   "unit_leak_power_mW": 0.0,
+   "leak_power_str": "n/a",
+   "area_um2": 0.0,
+   "unit_area_um2": 0.0,
+   "area_str": "n/a",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 997030.375,
+   "activity_str": "9.97e+05",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.scratchpad",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "read": 4621806.8259159895,
+    "write": 1501260.790688424
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 6123067.616604413,
+   "dyn_str": "6.12 \u00b5J",
+   "leak_energy_pJ": 5793375.421610149,
+   "leak_str": "5.79 \u00b5J",
+   "energy_pJ": 11916443.03821456,
+   "energy_str": "11.9 \u00b5J",
+   "energy_pct": 0.9,
+   "unit_energy_str": "3.24 / 3.73",
+   "leak_power_mW": 1.3818809111021675,
+   "unit_leak_power_mW": 1.3818809111021675,
+   "leak_power_str": "1.38",
+   "area_um2": 318661.28148475697,
+   "unit_area_um2": 318661.28148475697,
+   "area_str": "3.19e+05",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 1830644.6875,
+   "activity_str": "1.83e+06",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.accumulator",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "read": 38581872.44024001,
+    "write": 47493693.24993024
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 86075565.69017026,
+   "dyn_str": "86.1 \u00b5J",
+   "leak_energy_pJ": 1448343.8554025372,
+   "leak_str": "1.45 \u00b5J",
+   "energy_pJ": 87523909.5455728,
+   "energy_str": "87.5 \u00b5J",
+   "energy_pct": 6.6,
+   "unit_energy_str": "9.7 / 11.7",
+   "leak_power_mW": 0.3454702277755418,
+   "unit_leak_power_mW": 0.3454702277755418,
+   "leak_power_str": "0.345",
+   "area_um2": 79665.32037118926,
+   "unit_area_um2": 79665.32037118926,
+   "area_str": "7.97e+04",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 8048801.5,
+   "activity_str": "8.05e+06",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.PE_column.PE.weight_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 26130526.576078318,
+    "write": 423210.88368311885
+   },
+   "model": "cal",
+   "count": 256,
+   "dyn_energy_pJ": 26553737.459761433,
+   "dyn_str": "26.6 \u00b5J",
+   "leak_energy_pJ": 60045.75319790387,
+   "leak_str": "60 nJ",
+   "energy_pJ": 26613783.212959338,
+   "energy_str": "26.6 \u00b5J",
+   "energy_pct": 2.0,
+   "unit_energy_str": "0.0492 / 0.0671",
+   "leak_power_mW": 0.014322579515116908,
+   "unit_leak_power_mW": 5.594757623092542e-05,
+   "leak_power_str": "5.59e-05",
+   "area_um2": 2045.7616623541655,
+   "unit_area_um2": 7.991256493570959,
+   "area_str": "7.99",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 537414144.0,
+   "activity_str": "5.37e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.PE_column.PE.input_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 12731065.861913081,
+    "write": 9597816.194638934
+   },
+   "model": "cal",
+   "count": 256,
+   "dyn_energy_pJ": 22328882.056552015,
+   "dyn_str": "22.3 \u00b5J",
+   "leak_energy_pJ": 30399.345940892235,
+   "leak_str": "30.4 nJ",
+   "energy_pJ": 22359281.402492907,
+   "energy_str": "22.4 \u00b5J",
+   "energy_pct": 1.7,
+   "unit_energy_str": "0.024 / 0.0363",
+   "leak_power_mW": 0.007251088149580821,
+   "unit_leak_power_mW": 2.8324563084300082e-05,
+   "leak_power_str": "2.83e-05",
+   "area_um2": 1040.0459708571898,
+   "unit_area_um2": 4.062679573660898,
+   "area_str": "4.06",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 795633664.0,
+   "activity_str": "7.96e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.PE_column.PE.psum_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 73766521.61249451,
+    "write": 213478168.4782497
+   },
+   "model": "cal",
+   "count": 256,
+   "dyn_energy_pJ": 287244690.0907442,
+   "dyn_str": "287 \u00b5J",
+   "leak_energy_pJ": 140851.23371747707,
+   "leak_str": "141 nJ",
+   "energy_pJ": 287385541.3244617,
+   "energy_str": "287 \u00b5J",
+   "energy_pct": 21.7,
+   "unit_energy_str": "0.143 / 0.204",
+   "leak_power_mW": 0.03359693046187494,
+   "unit_leak_power_mW": 0.00013123800961669898,
+   "leak_power_str": "0.000131",
+   "area_um2": 3932.501254557992,
+   "unit_area_um2": 15.361333025617157,
+   "area_str": "15.4",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 1565180672.0,
+   "activity_str": "1.57e+09",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.gemmini.PE_column.PE.mac",
+   "cls": "intmac",
+   "dyn_by_mode": {
+    "hold_b": 376108079.35183465
+   },
+   "model": "cal",
+   "count": 256,
+   "dyn_energy_pJ": 376108079.35183465,
+   "dyn_str": "376 \u00b5J",
+   "leak_energy_pJ": 417456.7881289067,
+   "leak_str": "417 nJ",
+   "energy_pJ": 376525536.13996357,
+   "energy_str": "377 \u00b5J",
+   "energy_pct": 28.5,
+   "unit_energy_str": "0.708",
+   "leak_power_mW": 0.09957503609614643,
+   "unit_leak_power_mW": 0.000388964984750572,
+   "leak_power_str": "0.000389",
+   "area_um2": 18013.226767746673,
+   "unit_area_um2": 70.36416706151044,
+   "area_str": "70.4",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 531103744.0,
+   "activity_str": "5.31e+08",
+   "vectorless": false,
+   "user_defined": false
+  }
+ ],
+ "tree": {
+  "name": "architecture",
+  "children": [
+   {
+    "name": "system_top_level",
+    "label": "container",
+    "children": [
+     {
+      "name": "DRAM",
+      "label": "class: DRAM"
+     },
+     {
+      "name": "gemmini",
+      "label": "container",
+      "children": [
+       {
+        "name": "(parallel)",
+        "children": [
+         {
+          "name": "scratchpad",
+          "label": "class: smartbuffer_SRAM = 256 KB"
+         },
+         {
+          "name": "accumulator",
+          "label": "class: smartbuffer_SRAM = 64 KB"
+         }
+        ]
+       },
+       {
+        "name": "PE_column",
+        "label": "container, meshY=16",
+        "children": [
+         {
+          "name": "PE",
+          "label": "container, meshX=16",
+          "children": [
+           {
+            "name": "(parallel)",
+            "children": [
+             {
+              "name": "weight_reg",
+              "count": 256,
+              "label": "class: regfile = 2 B"
+             },
+             {
+              "name": "input_reg",
+              "count": 256,
+              "label": "class: regfile = 1 B"
+             },
+             {
+              "name": "psum_reg",
+              "count": 256,
+              "label": "class: regfile = 4 B"
+             }
+            ]
+           },
+           {
+            "name": "mac",
+            "count": 256,
+            "label": "class: intmac"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "models": [],
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "inputs": [
+   {
+    "name": "arch.yaml",
+    "sha": "eabfe4ab3b73d5be9fbb740de5809151172d7dfb466f930c4b9d6ec1fe48b060"
+   },
+   {
+    "name": "stats: stats",
+    "sha": null
+   }
+  ],
+  "warnings": [],
+  "notes": [
+   "system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml (override with --energy-table)",
+   "system_top_level.DRAM (hbm): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.gemmini.scratchpad (sram): depth 16384 is the Accelergy total over 4 banks \u2192 mem_depth_per_bank 4096 (256 KB total)",
+   "system_top_level.gemmini.scratchpad (sram): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.gemmini.scratchpad (sram): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.gemmini.accumulator (sram): depth 1024 is the Accelergy total over 2 banks \u2192 mem_depth_per_bank 512 (64 KB total)",
+   "system_top_level.gemmini.accumulator (sram): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.gemmini.accumulator (sram): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.gemmini.PE_column.PE.weight_reg (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.gemmini.PE_column.PE.weight_reg (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.gemmini.PE_column.PE.input_reg (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.gemmini.PE_column.PE.input_reg (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.gemmini.PE_column.PE.psum_reg (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.gemmini.PE_column.PE.psum_reg (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "user component 'example_68000_cpu_core' (user_components.yaml): parsed, but not used",
+   "compound component 'counter' (compound_components.yaml): parsed, but not used",
+   "Timeloop stats: 7 file(s), 4192384 cycles, 7/7 description component(s) charged (windows mode); compute charged in the weight-stationary mode (Computes -> hold_b)"
+  ],
+  "windows": []
+ }
+}

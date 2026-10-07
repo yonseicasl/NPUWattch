@@ -1,0 +1,626 @@
+{
+ "schema": "npuwattch-report/1",
+ "design_name": "arch",
+ "timestamp": "2026-10-05 23:53:07",
+ "version": "0.9",
+ "git_commit": "n/a",
+ "tech": {
+  "node": "7nm",
+  "transistor": "hp",
+  "corner": "TT",
+  "voltage_offset_V": 0.0,
+  "temperature_C": 25.0
+ },
+ "clock": {
+  "frequency_MHz": 1000.0
+ },
+ "activity_source": "timeloop harness (simulator logs)",
+ "model_tag": "PARTIAL calibration",
+ "banners": [
+  {
+   "level": "warn",
+   "text": "User component library values for: nvdla_sdp \u2014 these are the user's numbers at their reference technology, not model predictions."
+  }
+ ],
+ "totals": {
+  "energy_pJ": 1219434669.525532,
+  "energy_str": "1.22e+03 \u00b5J",
+  "dyn_pJ": 1214201063.0284438,
+  "dyn_str": "1.21e+03 \u00b5J",
+  "leak_pJ": 5233606.497088093,
+  "leak_str": "5.23 \u00b5J",
+  "dyn_pct": 99.6,
+  "leak_pct": 0.4,
+  "avg_power_mW": 91.1728491718813,
+  "avg_power_str": "91.2 mW",
+  "power_density_W_per_mm2": 1.038735485878112,
+  "power_density_str": "1.04 W/mm\u00b2",
+  "area_um2": 87772.92237667885,
+  "area_mm2": 0.088,
+  "cycles": 13374976,
+  "exec_time_s": 0.013374975999999998,
+  "exec_time_str": "13.4 ms"
+ },
+ "timing": {
+  "enabled": false,
+  "f_max_MHz": null,
+  "f_max_str": "n/a",
+  "check_text": "not shown (no --fmax)",
+  "check_color": "muted"
+ },
+ "windows": [
+  {
+   "index": 0,
+   "label": "01_conv1",
+   "kind": null,
+   "cycles": 4917248,
+   "dyn_pJ": 205604983.90467113,
+   "dyn_str": "206 \u00b5J",
+   "leak_pJ": 1924111.19695418,
+   "leak_str": "1.92 \u00b5J",
+   "total_pJ": 207529095.10162532,
+   "total_str": "208 \u00b5J",
+   "avg_power_mW": 42.20431735426511,
+   "power_str": "42.2 mW"
+  },
+  {
+   "index": 1,
+   "label": "02_res2_1x1",
+   "kind": null,
+   "cycles": 301056,
+   "dyn_pJ": 40802365.9915386,
+   "dyn_str": "40.8 \u00b5J",
+   "leak_pJ": 117802.72634413347,
+   "leak_str": "118 nJ",
+   "total_pJ": 40920168.71788273,
+   "total_str": "40.9 \u00b5J",
+   "avg_power_mW": 135.9221165427121,
+   "power_str": "136 mW"
+  },
+  {
+   "index": 2,
+   "label": "03_res2_3x3",
+   "kind": null,
+   "cycles": 1806336,
+   "dyn_pJ": 191764310.4835915,
+   "dyn_str": "192 \u00b5J",
+   "leak_pJ": 706816.3580648009,
+   "leak_str": "707 nJ",
+   "total_pJ": 192471126.8416563,
+   "total_str": "192 \u00b5J",
+   "avg_power_mW": 106.55333605799605,
+   "power_str": "107 mW"
+  },
+  {
+   "index": 3,
+   "label": "04_res3_3x3",
+   "kind": null,
+   "cycles": 1806336,
+   "dyn_pJ": 201557668.66157365,
+   "dyn_str": "202 \u00b5J",
+   "leak_pJ": 706816.3580648009,
+   "leak_str": "707 nJ",
+   "total_pJ": 202264485.01963845,
+   "total_str": "202 \u00b5J",
+   "avg_power_mW": 111.9750063219902,
+   "power_str": "112 mW"
+  },
+  {
+   "index": 4,
+   "label": "05_res4_1x1_exp",
+   "kind": null,
+   "cycles": 802816,
+   "dyn_pJ": 181711656.54407918,
+   "dyn_str": "182 \u00b5J",
+   "leak_pJ": 314140.60358435597,
+   "leak_str": "314 nJ",
+   "total_pJ": 182025797.14766353,
+   "total_str": "182 \u00b5J",
+   "avg_power_mW": 226.7341422538459,
+   "power_str": "227 mW"
+  },
+  {
+   "index": 5,
+   "label": "06_res5_3x3",
+   "kind": null,
+   "cycles": 3612672,
+   "dyn_pJ": 258665444.24511263,
+   "dyn_str": "259 \u00b5J",
+   "leak_pJ": 1413632.7161296017,
+   "leak_str": "1.41 \u00b5J",
+   "total_pJ": 260079076.96124223,
+   "total_str": "260 \u00b5J",
+   "avg_power_mW": 71.99078049743855,
+   "power_str": "72 mW"
+  },
+  {
+   "index": 6,
+   "label": "07_fc",
+   "kind": null,
+   "cycles": 128512,
+   "dyn_pJ": 134094633.19787729,
+   "dyn_str": "134 \u00b5J",
+   "leak_pJ": 50286.53794622023,
+   "leak_str": "50.3 nJ",
+   "total_pJ": 134144919.73582351,
+   "total_str": "134 \u00b5J",
+   "avg_power_mW": 1043.831858004105,
+   "power_str": "1.04 W"
+  }
+ ],
+ "kernel_split": null,
+ "dram_breakdown": {
+  "components": [
+   "system_top_level.DRAM"
+  ],
+  "rows": [
+   {
+    "mode": "activate",
+    "label": "Row activation (ACT+PRE)",
+    "energy_pJ": 0.0,
+    "energy_str": "0 pJ",
+    "pct": 0.0
+   },
+   {
+    "mode": "read",
+    "label": "Transfer \u2014 read",
+    "energy_pJ": 610413824.0,
+    "energy_str": "610 \u00b5J",
+    "pct": 86.2
+   },
+   {
+    "mode": "write",
+    "label": "Transfer \u2014 write",
+    "energy_pJ": 98007552.0,
+    "energy_str": "98 \u00b5J",
+    "pct": 13.8
+   },
+   {
+    "mode": "refresh",
+    "label": "Refresh",
+    "energy_pJ": 0.0,
+    "energy_str": "0 pJ",
+    "pct": 0.0
+   }
+  ],
+  "total_pJ": 708421376.0,
+  "total_str": "708 \u00b5J",
+  "share_of_run_pct": 58.1,
+  "constants": {
+   "act_pJ": null,
+   "access_pJ_per_bit": 8.0,
+   "ref_pJ": null,
+   "data_width_bits": 64
+  }
+ },
+ "npu_dram_split": {
+  "npu_pJ": 511013293.525532,
+  "npu_str": "511 \u00b5J",
+  "npu_pct": 41.9,
+  "dram_pJ": 708421376.0,
+  "dram_str": "708 \u00b5J",
+  "dram_pct": 58.1
+ },
+ "efficiency": {
+  "mac_ops": 531103744.0,
+  "pJ_per_mac": 2.2960385485919903,
+  "pJ_per_flop": 1.1480192742959952,
+  "pJ_per_flop_str": "1.15 pJ/FLOP",
+  "tflops": 0.07941752478658655,
+  "tflops_str": "0.0794",
+  "dtype": "int8",
+  "fp32_equivalent": null
+ },
+ "window_term": "window",
+ "matrix": {
+  "rows": [
+   {
+    "name": "system_top_level.DRAM",
+    "cells": [
+     "77.8 \u00b5J",
+     "26 \u00b5J",
+     "85.8 \u00b5J",
+     "98.4 \u00b5J",
+     "133 \u00b5J",
+     "155 \u00b5J",
+     "132 \u00b5J"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.sdp",
+    "cells": [
+     "12.6 \u00b5J",
+     "3.14 \u00b5J",
+     "3.14 \u00b5J",
+     "1.57 \u00b5J",
+     "3.14 \u00b5J",
+     "393 nJ",
+     "15.7 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.cbuf",
+    "cells": [
+     "4.55 \u00b5J",
+     "768 nJ",
+     "4.59 \u00b5J",
+     "3.55 \u00b5J",
+     "1.6 \u00b5J",
+     "5.18 \u00b5J",
+     "686 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.cacc",
+    "cells": [
+     "16.6 \u00b5J",
+     "647 nJ",
+     "6.12 \u00b5J",
+     "6.14 \u00b5J",
+     "2.7 \u00b5J",
+     "6.15 \u00b5J",
+     "109 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.mac_cell.lane.weight_reg",
+    "cells": [
+     "3.36 \u00b5J",
+     "424 nJ",
+     "3.3 \u00b5J",
+     "3.03 \u00b5J",
+     "1.3 \u00b5J",
+     "2.86 \u00b5J",
+     "123 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.mac_cell.lane.input_reg",
+    "cells": [
+     "7.11 \u00b5J",
+     "774 nJ",
+     "6.97 \u00b5J",
+     "6.97 \u00b5J",
+     "3.1 \u00b5J",
+     "6.97 \u00b5J",
+     "49.7 nJ"
+    ]
+   },
+   {
+    "name": "system_top_level.nvdla.mac_cell.lane.mac",
+    "cells": [
+     "83.6 \u00b5J",
+     "9.1 \u00b5J",
+     "81.9 \u00b5J",
+     "81.9 \u00b5J",
+     "36.4 \u00b5J",
+     "81.9 \u00b5J",
+     "1.45 \u00b5J"
+    ]
+   }
+  ]
+ },
+ "components": [
+  {
+   "name": "system_top_level.DRAM",
+   "cls": "hbm",
+   "dyn_by_mode": {
+    "read": 610413824.0,
+    "write": 98007552.0
+   },
+   "model": "const",
+   "count": 1,
+   "dyn_energy_pJ": 708421376.0,
+   "dyn_str": "708 \u00b5J",
+   "leak_energy_pJ": 0.0,
+   "leak_str": "0 pJ",
+   "energy_pJ": 708421376.0,
+   "energy_str": "708 \u00b5J",
+   "energy_pct": 58.1,
+   "unit_energy_str": "512 / 512",
+   "leak_power_mW": 0.0,
+   "unit_leak_power_mW": 0.0,
+   "leak_power_str": "n/a",
+   "area_um2": 0.0,
+   "unit_area_um2": 0.0,
+   "area_str": "n/a",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 1383635.5,
+   "activity_str": "1.38e+06",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.nvdla.sdp",
+   "cls": "nvdla_sdp",
+   "dyn_by_mode": {
+    "process": 23965909.200000003
+   },
+   "model": "user",
+   "count": 1,
+   "dyn_energy_pJ": 23965909.200000003,
+   "dyn_str": "24 \u00b5J",
+   "leak_energy_pJ": 155015.97183999995,
+   "leak_str": "155 nJ",
+   "energy_pJ": 24120925.171840005,
+   "energy_str": "24.1 \u00b5J",
+   "energy_pct": 2.0,
+   "unit_energy_str": "15.7",
+   "leak_power_mW": 0.01159,
+   "unit_leak_power_mW": 0.01159,
+   "leak_power_str": "0.0116",
+   "area_um2": 1942.0,
+   "unit_area_um2": 1942.0,
+   "area_str": "1.94e+03",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 1531368.0,
+   "activity_str": "1.53e+06",
+   "vectorless": false,
+   "user_defined": true
+  },
+  {
+   "name": "system_top_level.nvdla.cbuf",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "read": 19173103.494373858,
+    "write": 1738062.076374833
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 20911165.570748687,
+   "dyn_str": "20.9 \u00b5J",
+   "leak_energy_pJ": 4620656.005212406,
+   "leak_str": "4.62 \u00b5J",
+   "energy_pJ": 25531821.57596109,
+   "energy_str": "25.5 \u00b5J",
+   "energy_pct": 2.1,
+   "unit_energy_str": "1.21 / 1.46",
+   "leak_power_mW": 0.34547022777554187,
+   "unit_leak_power_mW": 0.34547022777554187,
+   "leak_power_str": "0.345",
+   "area_um2": 79665.32037118924,
+   "unit_area_um2": 79665.32037118924,
+   "area_str": "7.97e+04",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 17001238.5,
+   "activity_str": "1.7e+07",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.nvdla.cacc",
+   "cls": "sram",
+   "dyn_by_mode": {
+    "read": 16603468.131426336,
+    "write": 21868163.332288675
+   },
+   "model": "cal",
+   "count": 1,
+   "dyn_energy_pJ": 38471631.46371502,
+   "dyn_str": "38.5 \u00b5J",
+   "leak_energy_pJ": 76489.5255521509,
+   "leak_str": "76.5 nJ",
+   "energy_pJ": 38548120.98926717,
+   "energy_str": "38.5 \u00b5J",
+   "energy_pct": 3.2,
+   "unit_energy_str": "1.49 / 1.92",
+   "leak_power_mW": 0.005718853293804109,
+   "unit_leak_power_mW": 0.005718853293804109,
+   "leak_power_str": "0.00572",
+   "area_um2": 1142.2723281243404,
+   "unit_area_um2": 1142.2723281243404,
+   "area_str": "1.14e+03",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 22552131.0,
+   "activity_str": "2.26e+07",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.nvdla.mac_cell.lane.weight_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 12731065.861913081,
+    "write": 1664691.4892462823
+   },
+   "model": "cal",
+   "count": 64,
+   "dyn_energy_pJ": 14395757.351159364,
+   "dyn_str": "14.4 \u00b5J",
+   "leak_energy_pJ": 24245.782493631967,
+   "leak_str": "24.2 nJ",
+   "energy_pJ": 14420003.133652996,
+   "energy_str": "14.4 \u00b5J",
+   "energy_pct": 1.2,
+   "unit_energy_str": "0.024 / 0.0363",
+   "leak_power_mW": 0.0018127720373952052,
+   "unit_leak_power_mW": 2.8324563084300082e-05,
+   "leak_power_str": "2.83e-05",
+   "area_um2": 260.01149271429745,
+   "unit_area_um2": 4.062679573660898,
+   "area_str": "4.06",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 576985088.0,
+   "activity_str": "5.77e+08",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.nvdla.mac_cell.lane.input_reg",
+   "cls": "regfile",
+   "dyn_by_mode": {
+    "read": 12731065.861913081,
+    "write": 19196078.22907323
+   },
+   "model": "cal",
+   "count": 64,
+   "dyn_energy_pJ": 31927144.09098631,
+   "dyn_str": "31.9 \u00b5J",
+   "leak_energy_pJ": 24245.782493631967,
+   "leak_str": "24.2 nJ",
+   "energy_pJ": 31951389.873479944,
+   "energy_str": "32 \u00b5J",
+   "energy_pct": 2.6,
+   "unit_energy_str": "0.024 / 0.0363",
+   "leak_power_mW": 0.0018127720373952052,
+   "unit_leak_power_mW": 2.8324563084300082e-05,
+   "leak_power_str": "2.83e-05",
+   "area_um2": 260.01149271429745,
+   "unit_area_um2": 4.062679573660898,
+   "area_str": "4.06",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 1060175872.0,
+   "activity_str": "1.06e+09",
+   "vectorless": false,
+   "user_defined": false
+  },
+  {
+   "name": "system_top_level.nvdla.mac_cell.lane.mac",
+   "cls": "intmac",
+   "dyn_by_mode": {
+    "hold_b": 376108079.35183465
+   },
+   "model": "cal",
+   "count": 64,
+   "dyn_energy_pJ": 376108079.35183465,
+   "dyn_str": "376 \u00b5J",
+   "leak_energy_pJ": 332953.42949627305,
+   "leak_str": "333 nJ",
+   "energy_pJ": 376441032.78133094,
+   "energy_str": "376 \u00b5J",
+   "energy_pct": 30.9,
+   "unit_energy_str": "0.708",
+   "leak_power_mW": 0.024893759024036607,
+   "unit_leak_power_mW": 0.000388964984750572,
+   "leak_power_str": "0.000389",
+   "area_um2": 4503.306691936668,
+   "unit_area_um2": 70.36416706151044,
+   "area_str": "70.4",
+   "crit_path_ns": null,
+   "crit_path_str": null,
+   "activity_events": 531103744.0,
+   "activity_str": "5.31e+08",
+   "vectorless": false,
+   "user_defined": false
+  }
+ ],
+ "tree": {
+  "name": "architecture",
+  "children": [
+   {
+    "name": "system_top_level",
+    "label": "container",
+    "children": [
+     {
+      "name": "DRAM",
+      "label": "class: DRAM"
+     },
+     {
+      "name": "nvdla",
+      "label": "container",
+      "children": [
+       {
+        "name": "sdp",
+        "label": "class: dummy_storage"
+       },
+       {
+        "name": "(parallel)",
+        "children": [
+         {
+          "name": "cbuf",
+          "label": "class: smartbuffer_SRAM = 64 KB"
+         },
+         {
+          "name": "cacc",
+          "label": "class: smartbuffer_SRAM = 1 KB"
+         }
+        ]
+       },
+       {
+        "name": "mac_cell",
+        "label": "container, meshY=8",
+        "children": [
+         {
+          "name": "lane",
+          "label": "container, meshX=8",
+          "children": [
+           {
+            "name": "(parallel)",
+            "children": [
+             {
+              "name": "weight_reg",
+              "count": 64,
+              "label": "class: regfile = 1 B"
+             },
+             {
+              "name": "input_reg",
+              "count": 64,
+              "label": "class: regfile = 1 B"
+             },
+             {
+              "name": "nothing",
+              "label": "nothing"
+             }
+            ]
+           },
+           {
+            "name": "mac",
+            "count": 64,
+            "label": "class: intmac"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "models": [],
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "inputs": [
+   {
+    "name": "arch.yaml",
+    "sha": "d83a975a7370068de8567eb2f361a372f6d594080f70d99dd04615ffc8494962"
+   },
+   {
+    "name": "stats: stats",
+    "sha": null
+   },
+   {
+    "name": "stats_map.yaml",
+    "sha": "e36b4fa7760b48c4f04baac416da5552bde8cd6a83ad26a9e53f6bae97ed4098"
+   }
+  ],
+  "warnings": [],
+  "notes": [
+   "system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml (override with --energy-table)",
+   "system_top_level.DRAM (hbm): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.nvdla.sdp: attribute user_component 'nvdla_sdp' \u2014 the user component library entry gives its cost (the class 'dummy_storage' is for Timeloop only)",
+   "system_top_level.nvdla.cbuf (sram): depth 8192 is the Accelergy total over 16 banks \u2192 mem_depth_per_bank 512 (64 KB total)",
+   "system_top_level.nvdla.cbuf (sram): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.nvdla.cbuf (sram): bandwidth 16 words/cycle (8 words per access) \u2192 up to 2 bank accesses per cycle; each is charged as one access event",
+   "system_top_level.nvdla.cbuf (sram): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.nvdla.cacc (sram): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.nvdla.cacc (sram): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "system_top_level.nvdla.mac_cell.lane.input_reg (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
+   "system_top_level.nvdla.mac_cell.lane.input_reg (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
+   "user component 'example_68000_cpu_core' (user_components.yaml): parsed, but not used",
+   "compound component 'counter' (compound_components.yaml): parsed, but not used",
+   "Timeloop stats: 7 file(s), 13374976 cycles, 7/7 description component(s) charged (windows mode); compute charged in the weight-stationary mode (Computes -> hold_b)",
+   "stats level 'DRAM' fans out per --stats-map: read \u2192 system_top_level.DRAM; write \u2192 system_top_level.DRAM, system_top_level.nvdla.sdp \u00d78 as 'process' (the same access count charges each listed component)"
+  ],
+  "windows": []
+ }
+}

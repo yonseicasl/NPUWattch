@@ -16,7 +16,14 @@ CLOCKED_MODULES = {
     "intadd", "intmul", "intmac",
     "fpadd", "fpmul", "fpmac", "mxfpmac", "fpsfu",
     "regfile", "fifo",
+    "nvdla_sdp_dp",
 }
+
+# Modules that the logic flow characterizes but that are NOT NPUWattch
+# primitives: third-party blocks whose CSV rows become user_components.yaml
+# values. They have POWER_MODES entries but no primitive_modes.json entry and
+# no trained model.
+USER_COMPONENT_MODULES = frozenset({"nvdla_sdp_dp"})
 
 # Power-phase stimulus classes per module (+nw_power_mode; see
 # activity_modes.md).  Each mode is one extra gate-level sim + one vectored
@@ -37,6 +44,8 @@ POWER_MODES = {
     "crossbar": ("random", "fixed_route", "valid25"),
     "fattree": ("random", "fixed_route"),
     "foldedclos": ("random", "fixed_route"),
+    # user component (third-party RTL): conv-epilogue stream, no valid input
+    "nvdla_sdp_dp": ("random", "process", "idle"),
 }
 
 
@@ -395,6 +404,9 @@ _GENERATORS = {
     "crossbar": _crossbar,
     "fattree": _fattree,
     "foldedclos": _foldedclos,
+    # NVDLA SDP datapath (rtl_gen/third_party/nvdla_sdp): a user component,
+    # not a training primitive -- its CSV gives user_components.yaml values.
+    "nvdla_sdp_dp": lambda: ["config=nv_small"],
 }
 
 SWEEP_NODES = ("20", "16", "10", "7", "5")
@@ -407,6 +419,8 @@ SWEEP_NODES = ("20", "16", "10", "7", "5")
 # Modules specced here but excluded from sweep_configs() until their RTL
 # generation lands. fpsfu graduated 2026-07-23 (sfu_model.py + templates +
 # gen_fpsfu complete and validated).
+# nvdla_sdp_dp graduated 2026-10-05 (Icarus + VCS RTL smoke: functional PASS,
+# random/process/idle power phases).
 DEFERRED_MODULES: frozenset[str] = frozenset()
 
 

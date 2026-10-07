@@ -17,6 +17,14 @@ File format::
         actions:                     # action name -> energy of one action
           idle:    {energy_pJ: 2.1}
           process: {energy_pJ: 48.0}
+        characterized:               # optional: values measured at other
+          45nm:                      #   nodes, the same keys as above
+            clock_MHz: 500.0         #   (clock_MHz and run_id optional)
+            area_um2: 98000.0
+            leak_power_mW: 0.0
+            actions:
+              idle:    {energy_pJ: 1.0}
+              process: {energy_pJ: 25.0}
 
 How the library is used:
 
@@ -33,6 +41,10 @@ How the library is used:
   run.
 
 An action name is the ``mode`` of an activity row (manual §3.3).
+
+``characterized`` keeps the values that were measured at other nodes (for
+example, a block run through the logic flow at every node). The run does not
+use them: it uses the reference values. They are data for the scaler.
 """
 
 from __future__ import annotations
@@ -55,6 +67,7 @@ __all__ = [
 ]
 
 _NAME_RE = re.compile(r"[a-z][a-z0-9_]*$")
+_NODE_RE = re.compile(r"\d+(\.\d+)?nm$")
 
 #: The design classes that the scaler knows. Each class is a preset of the
 #: sequential cell ratios (SCR, SAR) of the component.
@@ -77,6 +90,8 @@ class UserComponent:
     #: The technology of the values (``node`` and optional PVT keys).
     reference: Dict[str, Any] = field(default_factory=dict)
     design_class: Optional[str] = None
+    #: node -> {clock_MHz?, area_um2, leak_power_mW, actions, run_id?}
+    characterized: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Return the entry in the file format."""
@@ -86,6 +101,12 @@ class UserComponent:
         out["area_um2"] = self.area_um2
         out["leak_power_mW"] = self.leak_power_mW
         out["actions"] = {k: {"energy_pJ": v} for k, v in self.actions.items()}
+        if self.characterized:
+            out["characterized"] = {
+                node: {**{k: v for k, v in row.items() if k != "actions"},
+                       "actions": {a: {"energy_pJ": e}
+                                   for a, e in row["actions"].items()}}
+                for node, row in self.characterized.items()}
         return out
 
 
@@ -119,7 +140,7 @@ def parse_user_components(table: Any, where: str) -> Dict[str, UserComponent]:
             raise UserComponentError(f"{where}: {name}: must be a mapping")
         unknown = sorted(set(entry) - {"reference", "design_class", "area_um2",
                                        "leak_power_mW", "actions",
-                                       "description"})
+                                       "description", "characterized"})
         if unknown:
             raise UserComponentError(
                 f"{where}: {name}: unknown key(s) {', '.join(unknown)}")
@@ -133,20 +154,54 @@ def parse_user_components(table: Any, where: str) -> Dict[str, UserComponent]:
             raise UserComponentError(
                 f"{where}: {name}: design_class must be one of "
                 f"{', '.join(DESIGN_CLASSES)}, got {design_class!r}")
-        actions_raw = entry.get("actions")
-        if not isinstance(actions_raw, Mapping) or not actions_raw:
-            raise UserComponentError(
-                f"{where}: {name}: actions must be a mapping with one action "
-                f"or more")
-        actions: Dict[str, float] = {}
-        for action, spec in actions_raw.items():
-            if not isinstance(spec, Mapping) or "energy_pJ" not in spec:
+        def parse_actions(actions_raw: Any, what: str) -> Dict[str, float]:
+            if not isinstance(actions_raw, Mapping) or not actions_raw:
                 raise UserComponentError(
-                    f"{where}: {name}.actions.{action}: give "
-                    f"{{energy_pJ: <number>}}")
-            actions[str(action)] = number(
-                spec["energy_pJ"], f"{name}.actions.{action}.energy_pJ",
-                positive=False)
+                    f"{where}: {what}: actions must be a mapping with one "
+                    f"action or more")
+            parsed: Dict[str, float] = {}
+            for action, spec in actions_raw.items():
+                if not isinstance(spec, Mapping) or "energy_pJ" not in spec:
+                    raise UserComponentError(
+                        f"{where}: {what}.actions.{action}: give "
+                        f"{{energy_pJ: <number>}}")
+                parsed[str(action)] = number(
+                    spec["energy_pJ"], f"{what}.actions.{action}.energy_pJ",
+                    positive=False)
+            return parsed
+
+        actions = parse_actions(entry.get("actions"), name)
+        characterized: Dict[str, Dict[str, Any]] = {}
+        table = entry.get("characterized") or {}
+        if not isinstance(table, Mapping):
+            raise UserComponentError(
+                f"{where}: {name}.characterized must map a node to its values")
+        for node, row in table.items():
+            node = str(node).strip().lower()
+            what = f"{name}.characterized.{node}"
+            if not _NODE_RE.match(node) or not isinstance(row, Mapping):
+                raise UserComponentError(
+                    f"{where}: {what}: give a node such as 7nm and a mapping")
+            unknown_row = sorted(set(row) - {"clock_MHz", "area_um2",
+                                             "leak_power_mW", "actions",
+                                             "run_id"})
+            if unknown_row:
+                raise UserComponentError(
+                    f"{where}: {what}: unknown key(s) {', '.join(unknown_row)}")
+            parsed_row: Dict[str, Any] = {}
+            if "clock_MHz" in row:
+                parsed_row["clock_MHz"] = number(row["clock_MHz"],
+                                                 f"{what}.clock_MHz",
+                                                 positive=True)
+            parsed_row["area_um2"] = number(row.get("area_um2"),
+                                            f"{what}.area_um2", positive=True)
+            parsed_row["leak_power_mW"] = number(row.get("leak_power_mW", 0.0),
+                                                 f"{what}.leak_power_mW",
+                                                 positive=False)
+            parsed_row["actions"] = parse_actions(row.get("actions"), what)
+            if "run_id" in row:
+                parsed_row["run_id"] = str(row["run_id"])
+            characterized[node] = parsed_row
         out[name] = UserComponent(
             name=name,
             area_um2=number(entry.get("area_um2"), f"{name}.area_um2",
@@ -156,6 +211,7 @@ def parse_user_components(table: Any, where: str) -> Dict[str, UserComponent]:
                                  f"{name}.leak_power_mW", positive=False),
             reference={str(k): v for k, v in reference.items()},
             design_class=design_class,
+            characterized=characterized,
         )
     return out
 

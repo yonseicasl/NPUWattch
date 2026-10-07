@@ -282,6 +282,7 @@ def aggregate_native(
     default_clock_mhz: Optional[float] = None,
     warnings: Optional[List[str]] = None,
     window_labels: Optional[Sequence[str]] = None,
+    clock_check: bool = True,
 ) -> RunEnergy:
     """Calculate the energy of a run from a description and its activity rows.
 
@@ -296,6 +297,9 @@ def aggregate_native(
 
     The windows are consecutive in time. Thus the cycle count of a window
     comes from ``cycle_start`` and ``cycle_end`` of its rows.
+
+    ``clock_check`` False removes the clock-range checks from the envelope
+    warnings. The energy does not change.
 
     ``window_labels`` is optional. It gives the name of each window, and its
     index is the window number. A harness supplies
@@ -342,8 +346,9 @@ def aggregate_native(
     envelope_fn = getattr(provider, "envelope_warnings", None)
     if envelope_fn is not None and warnings is not None:
         for name, (primitive, attrs, _) in components.items():
-            for w in envelope_fn(primitive,
-                                 _features(attrs, tech, clock_mhz=float(clock))):
+            feats = _features(attrs, tech, clock_mhz=float(clock))
+            feats["clock_check"] = clock_check
+            for w in envelope_fn(primitive, feats):
                 warnings.append(f"{name}: {w}")
 
     by_window: Dict[int, List[Mapping[str, Any]]] = {}

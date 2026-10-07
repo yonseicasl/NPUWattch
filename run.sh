@@ -14,7 +14,7 @@
 #   <root_dir>   directory containing togsim_results/ AND outputs/|gem5_outputs/
 #                NPUWattch also reads the definition files of the design from
 #                this directory: compound_components.yaml, projection.yaml,
-#                and user_components.yaml (copy them from tutorial/pytorchsim/).
+#                and user_components.yaml (copy them from tutorial/pytorchsim/tpu_like_fp32/).
 #   -n           dry-run: print the resolved npuwattch command, don't run it
 #
 # Everything after <root_dir> is passed through to npuwattch

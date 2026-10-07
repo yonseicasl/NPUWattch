@@ -20,9 +20,20 @@ Model (the dataset has no column mux and no wordline stitching):
 - One access selects one vertical tile group. All horizontal tiles of the
   group fire together.
 - The array has no clock. Thus an array without an access has leakage only.
-- A decoder that has a clock but does not fire uses ``dec_idle`` energy each
-  cycle. This energy is charged by default. ``tile_clock_gating`` sets it to
-  zero.
+- Only the accessed bank has a clock. The other banks are clock-gated, as a
+  compiler macro with its chip enable off, and have leakage only. A cycle
+  without an access has leakage only.
+- In the accessed bank, a decoder that has a clock but does not fire uses
+  ``dec_idle`` energy. The energy of one access includes this energy of the
+  other tile groups of the bank. ``tile_clock_gating`` sets it to zero.
+- The solver selects the tiling with the fewest tiles in a bank, thus the
+  largest measured tiles. The datasets do not model the composition of tiles
+  in either direction: the glue between vertical groups (address and enable
+  fanout, data-out mux) is not in them, and each horizontal tile has its own
+  decoder where a real macro shares one decoder across a wide wordline. If
+  the objective alone selected the tiling, it would use these errors: many
+  short groups would look cheap and fast. The objective (``optimize``)
+  selects between tilings with the same number of tiles.
 
 Dataset energies are integrals across a 10 ns window. Each integral includes
 the leakage of its window. The loader subtracts
@@ -1053,9 +1064,9 @@ class SramStructure:
 class SramUnitCosts:
     """The unit costs of the full instance, with all banks and all ports."""
 
-    e_read_pJ: float             # one access, plus the idle energy of all other enabled decoders
+    e_read_pJ: float             # one access, plus the idle energy of the other decoders of its bank
     e_write_pJ: float
-    e_idle_pJ: float             # for each cycle with the instance enabled and no access
+    e_idle_pJ: float             # for each cycle with no access (0: all banks are clock-gated)
     leak_power_mW: float
     area_um2: float
     t_read_ns: float
@@ -1066,7 +1077,7 @@ class SramUnitCosts:
     wr_array_pJ: float
     dec_access_pJ: float
     idle_overhead_pJ: float      # the (N_dec - fired) * dec_idle term of one access
-    bank_idle_pJ: float          # for each cycle, one bank
+    bank_idle_pJ: float          # for each cycle, one clocked bank with no access
     leak_array_mW: float
     leak_dec_mW: float
     structure: SramStructure
@@ -1074,21 +1085,17 @@ class SramUnitCosts:
     warnings: Tuple[str, ...] = ()
     source: str = "table"                        # the source of the tile costs
     model_meta: Optional[Dict[str, Any]] = None  # summary of the MLP bundle (mlp source only)
-    # Idle accounting for each cycle.
-    # ``e_read_pJ`` above is the cost of the full instance for ONE access in
-    # a cycle with no other access. It is the array and decoder energy of the
-    # accessed group, plus the idle energy of all other clocked decoder
-    # groups.
-    # If the energy aggregation knows the cycle count of the window, it
-    # charges the idle part one time for each cycle, not for each access.
-    # Then N parallel bank accesses in one cycle cost N x e_access, plus the
-    # idle energy of the (n_dec_groups - N) groups that did not fire.
+    # Idle accounting.
+    # ``e_read_pJ`` above is the cost of ONE access. It is the array and
+    # decoder energy of the accessed group, plus the idle energy of the other
+    # decoder groups of the same bank. The other banks are clock-gated. Thus
+    # N parallel accesses to N banks cost N x e_read_pJ, and a cycle without
+    # an access costs leakage only (e_idle_pJ == 0).
     #   e_read_pJ == e_access_read_pJ + (n_dec_groups - 1) * dec_idle_group_pJ
-    #   e_idle_pJ == n_dec_groups * dec_idle_group_pJ
     e_access_read_pJ: float = 0.0    # the accessed group only (array + decoder)
     e_access_write_pJ: float = 0.0
     dec_idle_group_pJ: float = 0.0   # one clocked decoder group that does not fire, for one cycle
-    n_dec_groups: int = 0            # clocked decoder groups (one bank active)
+    n_dec_groups: int = 0            # clocked decoder groups of the accessed bank
 
 
 def _horz_tiling(cfg: SramConfig, shapes: Sequence[Tuple[int, int]],
@@ -1135,17 +1142,17 @@ def _compose(cfg: SramConfig, src: TableTilePointSource, k: PvtScale,
         t_read = max(t_read, t.t_read_ns)
         t_write = max(t_write, t.t_write_ns)
 
-    # Decoders in the instance = banks * n_vert * n_horz * P. One access fires
-    # the n_horz decoders of the selected group of one port. The other
-    # decoders are idle. With tile clock gating, they use no idle energy.
+    # Decoders in one bank = n_vert * n_horz * P. One access fires the n_horz
+    # decoders of the selected group of one port. The other decoders of the
+    # bank have a clock and are idle. The other banks are clock-gated. With
+    # tile clock gating, the idle decoders of the bank also use no energy.
     if cfg.tile_clock_gating:
         idle_overhead = 0.0
         bank_idle = 0.0
-        e_idle = 0.0
     else:
-        idle_overhead = (cfg.banks * n_vert * P - 1) * dec_idle_horz
+        idle_overhead = (n_vert * P - 1) * dec_idle_horz
         bank_idle = n_vert * P * dec_idle_horz
-        e_idle = cfg.banks * bank_idle
+    e_idle = 0.0                         # no access: all banks are clock-gated
 
     e_read = rd_array + dec_access + idle_overhead
     e_write = wr_array + dec_access + idle_overhead
@@ -1191,20 +1198,24 @@ def _compose(cfg: SramConfig, src: TableTilePointSource, k: PvtScale,
         e_access_read_pJ=rd_array + dec_access,
         e_access_write_pJ=wr_array + dec_access,
         dec_idle_group_pJ=(0.0 if cfg.tile_clock_gating else dec_idle_horz),
-        n_dec_groups=cfg.banks * n_vert * P,
+        n_dec_groups=n_vert * P,
     )
 
 
 def _rank_key(cfg: SramConfig, c: SramUnitCosts) -> Tuple:
+    # The first key is the number of tiles in a bank (see the module
+    # docstring). The objective selects between tilings with the same number
+    # of tiles.
     e = round(c.e_read_pJ, 9)
     ar = round(c.area_um2, 6)
     t = round(c.t_read_ns, 6)
     s = c.structure
+    n = s.tiles_per_bank
     if cfg.optimize == "area":
-        return (ar, e, t, s.tile_rows, s.tile_cols)
+        return (n, ar, e, t, s.tile_rows, s.tile_cols)
     if cfg.optimize == "delay":
-        return (t, e, ar, s.tile_rows, s.tile_cols)
-    return (e, ar, t, s.tile_rows, s.tile_cols)
+        return (n, t, e, ar, s.tile_rows, s.tile_cols)
+    return (n, e, ar, t, s.tile_rows, s.tile_cols)
 
 
 def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
@@ -1241,7 +1252,7 @@ def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
         replace(cfg, template=None, depth_words=t["depth_words"], banks=1),
         ds, extra_warnings,
     )
-    sibling_idle = (s_per_bank - 1) * macro.e_idle_pJ
+    sibling_idle = (s_per_bank - 1) * macro.bank_idle_pJ
 
     st = macro.structure
     structure = replace(
@@ -1256,15 +1267,15 @@ def _bank_hierarchy_costs(cfg: SramConfig, ds: SramDataset,
         macro,
         e_read_pJ=macro.e_read_pJ + sibling_idle,
         e_write_pJ=macro.e_write_pJ + sibling_idle,
-        e_idle_pJ=s_per_bank * macro.e_idle_pJ,   # one bank is active
+        e_idle_pJ=0.0,                       # no access: all banks are clock-gated
         idle_overhead_pJ=macro.idle_overhead_pJ + sibling_idle,
-        bank_idle_pJ=s_per_bank * macro.e_idle_pJ,
+        bank_idle_pJ=s_per_bank * macro.bank_idle_pJ,
         leak_power_mW=n_macros * macro.leak_power_mW,
         leak_array_mW=n_macros * macro.leak_array_mW,
         leak_dec_mW=n_macros * macro.leak_dec_mW,
         area_um2=n_macros * macro.area_um2,
         structure=structure,
-        # Idle terms for each cycle: the S macros of the active bank have a clock.
+        # Idle terms: the S macros of the accessed bank have a clock.
         e_access_read_pJ=macro.e_access_read_pJ,
         e_access_write_pJ=macro.e_access_write_pJ,
         dec_idle_group_pJ=macro.dec_idle_group_pJ,

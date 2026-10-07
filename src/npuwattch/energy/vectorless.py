@@ -15,8 +15,10 @@ The value of 25 % has two reasons:
 
 The module makes one window of one cycle. Thus the dynamic values are
 **energies for one cycle**, and the §6 average power is the steady-state
-power. The leakage and area calculations of §6 do not change. The rows of
-each component are:
+power. The leakage and area calculations of §6 do not change. A §3.3 count
+is the total for all the instances of a component, thus each count below is
+multiplied by the ``count`` of the component. The rows of each component
+are:
 
 * The primitive has ``valid25``: the full cycle in ``valid25``.
 * The primitive has ``idle``: the fraction ``activity`` of a cycle in
@@ -89,24 +91,25 @@ def vectorless_activity_rows(
 
     for comp in (description.get("npuwattch") or {}).get("components", []):
         name = str(comp.get("name", "?"))
+        instances = int(comp.get("count", 1))
         if name.endswith(".tail"):         # a capacity tail: leakage and area only
             tails += 1
             continue
         if str(comp.get("class", "")) in user:
             # A user component has only the actions that the user gives.
             if "random" in user[str(comp["class"])].actions:
-                rows.append(_row(name, "random", activity))
+                rows.append(_row(name, "random", activity * instances))
             else:
                 user_skipped.append(name)
             continue
         prim = primitive_of(comp.get("class", ""))
         modes = modes_by_prim.get(prim, ["random"])
         if "valid25" in modes:
-            rows.append(_row(name, "valid25", 1.0))
+            rows.append(_row(name, "valid25", 1.0 * instances))
         else:
-            rows.append(_row(name, "random", activity))
+            rows.append(_row(name, "random", activity * instances))
             if "idle" in modes and activity < 1.0:
-                rows.append(_row(name, "idle", 1.0 - activity))
+                rows.append(_row(name, "idle", (1.0 - activity) * instances))
     if user_skipped:
         notes.append(
             f"user component(s) {', '.join(user_skipped)}: no `random` action "
