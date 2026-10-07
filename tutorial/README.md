@@ -1,72 +1,81 @@
 # NPUWattch Tutorial
 
-This folder contains two complete, ready-to-run examples. Each one is a real
-simulator run with real activity counts. You do not need any EDA tool, PDK, or
-GPU — just NPUWattch.
+This folder has ready-to-run examples for two simulators. The examples use
+activity counts from real simulator runs. You don't need any EDA tools, PDKs,
+or GPUs. All you need is NPUWattch.
 
 ```
 tutorial/
-├── timeloop/      Example 1 — Timeloop / Accelergy input (AlexNet, 8 layers)
+├── timeloop/      Example 1 — Timeloop / Accelergy input
+│   ├── eyeriss_like/alexnet/      AlexNet, 8 layers (the basic example)
+│   ├── gemmini_like/{resnet50,llama3_8b}/
+│   └── nvdla_like/{resnet50,llama3_8b}/
 └── pytorchsim/    Example 2 — PyTorchSim input (one 1024³ matmul)
+    ├── tpu_like_fp32/             fp32 PEs, as the simulator ran the kernel
+    └── tpu_like_bf16/             the same run, PEs fixed to bf16 MACs
 ```
 
-Run either one with:
+To run an example:
 
 ```bash
-cd tutorial/timeloop && ./run
-cd tutorial/pytorchsim && ./run
+cd tutorial/timeloop/eyeriss_like/alexnet && ./run
+cd tutorial/pytorchsim/tpu_like_fp32 && ./run
 ```
 
 Each script writes `out/report.html` (open it in a browser) and
-`out/report.json` next to it. Both folders already contain the reports from a
-7nm run, so you can look at the output before running anything.
+`out/report.json`. Every example folder already includes the reports from a
+7nm run, so you can look at the output before you run anything.
 
 ---
 
 ## 1. What NPUWattch does
 
-NPUWattch answers one question: **how much energy, area, and timing does this
-accelerator design need to run this workload?**
+NPUWattch estimates the **energy, area, and timing** of an accelerator design
+when it runs a given workload.
 
-It needs two things:
+It takes two inputs:
 
 | Input | What it is | Where it comes from |
 | --- | --- | --- |
-| **Architecture description** | What hardware exists: how many MACs, how big each buffer is, what the NoC looks like | An Accelergy/Timeloop `arch.yaml`, a PyTorchSim `config.yml`, or NPUWattch's own YAML |
+| **Architecture description** | The hardware in the design: how many MACs, the size of each buffer, and the NoC layout | An Accelergy/Timeloop `arch.yaml`, a PyTorchSim `config.yml`, or NPUWattch's own YAML |
 | **Activity counts** | How many times each part was used, and for how many cycles | Timeloop's `*.stats.txt`, a PyTorchSim run directory, or NPUWattch's own CSV |
 
-NPUWattch maps every component in your description onto one of its **calibrated
-primitives** (`fpmac`, `intmac`, `sram`, `regfile`, `crossbar`, `fifo`, …), asks
-the trained model for that primitive's per-access energy, leakage, area, and
-critical path at your technology node, then multiplies by the activity counts.
+NPUWattch maps each component in your description to one of its **calibrated
+primitives** (`fpmac`, `intmac`, `sram`, `regfile`, `crossbar`, `fifo`, …).
+For each primitive, a trained model predicts the per-access energy, leakage,
+area, and critical-path delay at your technology node. NPUWattch then
+multiplies these values by the activity counts.
 
-Each example folder also holds three **definition files** that NPUWattch reads
-by their fixed names (or from `--compound-components`, `--projection`,
-`--user-components`):
+Each example folder also has three **definition files**. NPUWattch looks for
+them by name, or you can choose other files with `--compound-components`,
+`--projection`, and `--user-components`:
 
 | File | What it is |
 | --- | --- |
-| `compound_components.yaml` | Hardware structures built from several primitives (a systolic array = MACs + weight registers; an Accelergy class = several primitives) |
+| `compound_components.yaml` | Hardware structures built from several primitives. For example, a systolic array is a set of MACs plus weight registers, and one Accelergy class can map to several primitives. |
 | `projection.yaml` | Which simulator counter drives which part of a compound, and in which activity mode |
-| `user_components.yaml` | Area and per-action energy of blocks NPUWattch has **no** model for — you supply the numbers |
+| `user_components.yaml` | Area and per-action energy for your own custom blocks. You supply the numbers. |
 
-They are inputs, not part of NPUWattch: a run without them stops with an
-error. NPUWattch never invents a number for a block it cannot model.
+These files are part of your input, and a run stops with an error if they
+are missing. This way, every number in the report comes from a trained model
+or from data you provided.
 
-The models are small MLPs trained on **post-layout measurements** — RTL through
-synthesis, place-and-route, parasitic extraction, and power sign-off for logic;
-SPICE on extracted layout for SRAM. That is why the answer is a prediction of
-silicon, not a scaled lookup table.
+The models are small MLPs trained on **post-layout data**. For logic, the RTL
+goes through synthesis, place and route, parasitic extraction, and power
+sign-off. For SRAM, the data comes from SPICE simulations of extracted
+layouts. So the estimates are based on real layouts, not on scaled lookup
+tables.
 
-The activity half is optional. Without it you still get area, timing, and a
-first-order **vectorless** energy estimate (25% switching assumed). The report
-labels that clearly, so you never mistake it for a measured number.
+The activity input is optional. Without it, you still get the area and a
+first-order **vectorless** energy estimate that assumes 25% switching
+activity. The report labels this estimate clearly, so you won't confuse it
+with a result based on activity counts.
 
 ---
 
 ## 2. Install
 
-NPUWattch needs Python 3.10 or newer.
+NPUWattch requires Python 3.10 or newer.
 
 ```bash
 cd NPUWattch
@@ -74,33 +83,36 @@ pip install -e .
 npuwattch --version
 ```
 
-That puts the `npuwattch` command on your PATH. The two `./run` scripts check
-for it and tell you if it is missing.
+This adds the `npuwattch` command to your PATH. The `./run` scripts check for
+it and let you know if it's missing.
 
 ---
 
-## 3. The two examples
+## 3. The examples
 
-|  | `timeloop/` | `pytorchsim/` |
+|  | `timeloop/eyeriss_like/` | `pytorchsim/tpu_like_fp32/` |
 | --- | --- | --- |
 | Design | Eyeriss-like, 14×12 int8 PE array | TPUv3-like, 2× 128×128 fp32 systolic arrays |
 | Workload | AlexNet, all 8 layers | one 1024×1024×1024 `torch.matmul` |
-| Architecture from | `arch.yaml` (Accelergy v0.4) | `config.yml` + the simulator's own log header |
-| Activity from | 8 × `*.stats.txt` (one per layer) | TOGSim log + gem5 `stats.txt` |
+| Architecture source | `arch.yaml` (Accelergy v0.4) | `config.yml` + the simulator's own log header |
+| Activity source | 8 × `*.stats.txt` (one per layer) | TOGSim log + gem5 `stats.txt` |
 | Report shows | 8 energy windows, one per layer | 1 window (the kernel) |
 | Runtime | a few seconds | a few seconds |
 
-Both are run at **7nm** (`--node 7nm`). Try other nodes — see §7.
+All examples run at **7nm**. To try other nodes, see §7.
 
-Read `timeloop/README.md` and `pytorchsim/README.md` for a file-by-file
-explanation of each example, including how the sample data was produced.
+For a file-by-file walkthrough of each example, including how the sample data
+was produced, see `timeloop/eyeriss_like/README.md` and
+`pytorchsim/README.md`. `timeloop/README.md` covers two more
+Timeloop designs, Gemmini-like and NVDLA-like, each with ResNet-50 and
+Llama-3-8B.
 
 ---
 
 ## 4. Example 1 — Timeloop
 
 ```bash
-cd tutorial/timeloop
+cd tutorial/timeloop/eyeriss_like/alexnet
 ./run
 ```
 
@@ -108,41 +120,42 @@ The script runs:
 
 ```bash
 npuwattch --harness timeloop \
-          --arch-yaml arch.yaml \
+          --arch-yaml ../arch.yaml \
           --stats     stats/ \
           --node 7nm --clock-mhz 1000 \
           --tree --report out/
 ```
 
-- `--arch-yaml` is the architecture you gave Timeloop, unmodified.
-- `--stats` is a **directory**, so each `*.stats.txt` inside becomes one report
-  window, in filename order. Pass a single file instead and you get one window.
-  Add `--stats-mode aggregate` to sum all layers into one instead.
+- `--arch-yaml` is the same architecture file you give Timeloop. NPUWattch
+  doesn't need any other description.
+- `--stats` points to a **directory**, so each `*.stats.txt` file in it becomes
+  one report window, in filename order. If you pass a single file, you get one
+  window. To combine all layers into one window, add `--stats-mode aggregate`.
 - `--clock-mhz 1000` matches Timeloop's default 1 ns cycle, so NPUWattch's
-  seconds agree with Timeloop's cycles.
+  times line up with Timeloop's cycle counts.
 
-Result — the per-layer table, straight from the console:
+Here is the per-layer table from the console:
 
 ```
 ┏━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
 ┃ # ┃ window   ┃  cycles ┃  dyn (pJ) ┃ leak (pJ) ┃ total (pJ) ┃ avg power (mW) ┃
 ┡━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
-│ 0 │ 01_conv1 │  638880 │ 6.925e+08 │ 1.557e+07 │   7.08e+08 │           1108 │
-│ 1 │ 02_conv2 │ 2332800 │ 2.439e+09 │ 5.686e+07 │  2.496e+09 │           1070 │
-│ 2 │ 03_conv3 │  718848 │ 1.158e+09 │ 1.752e+07 │  1.175e+09 │           1635 │
-│ 3 │ 04_conv4 │ 1437696 │ 1.546e+09 │ 3.504e+07 │  1.581e+09 │           1099 │
-│ 4 │ 05_conv5 │  638976 │ 1.031e+09 │ 1.557e+07 │  1.046e+09 │           1637 │
-│ 5 │ 06_fc6   │  393216 │ 1.606e+09 │ 9.584e+06 │  1.616e+09 │           4109 │
-│ 6 │ 07_fc7   │  262144 │ 7.125e+08 │ 6.389e+06 │  7.189e+08 │           2742 │
-│ 7 │ 08_fc8   │   40960 │ 1.739e+08 │ 9.983e+05 │  1.749e+08 │           4270 │
+│ 0 │ 01_conv1 │  638880 │ 6.627e+08 │ 1.873e+06 │  6.646e+08 │           1040 │
+│ 1 │ 02_conv2 │ 2332800 │ 2.688e+09 │  6.84e+06 │  2.695e+09 │           1155 │
+│ 2 │ 03_conv3 │  718848 │ 1.134e+09 │ 2.108e+06 │  1.136e+09 │           1581 │
+│ 3 │ 04_conv4 │ 1437696 │ 1.472e+09 │ 4.215e+06 │  1.476e+09 │           1027 │
+│ 4 │ 05_conv5 │  638976 │ 9.741e+08 │ 1.873e+06 │  9.759e+08 │           1527 │
+│ 5 │ 06_fc6   │  393216 │ 2.968e+09 │ 1.153e+06 │  2.969e+09 │           7550 │
+│ 6 │ 07_fc7   │  262144 │ 1.318e+09 │ 7.686e+05 │  1.318e+09 │           5029 │
+│ 7 │ 08_fc8   │   40960 │ 3.219e+08 │ 1.201e+05 │   3.22e+08 │           7862 │
 └───┴──────────┴─────────┴───────────┴───────────┴────────────┴────────────────┘
 ```
 
-Total: **9.52 mJ**, 1.47 W average, 5.40 mm² area, 13.3 pJ per MAC.
+Total: **11.6 mJ**, 1.79 W average power, 0.459 mm² area, and 16.2 pJ per MAC.
 
-The per-component table underneath shows *why*. Component names there are
-printed relative to the hierarchy prefix they all share, which is noted above
-the table:
+The per-component table below it shows *where* the energy goes. The component
+names are shown relative to the hierarchy prefix they all share, which is
+printed above the table:
 
 ```
 [INFO] Per-window component energy (dynamic, pJ)
@@ -150,26 +163,26 @@ the table:
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ component                         ┃  01_conv1 ┃  02_conv2 ┃    06_fc6 ┃    08_fc8 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ DRAM                              │ 1.286e+07 │ 2.754e+08 │ 1.052e+09 │ 1.142e+08 │
-│ eyeriss.shared_glb                │ 4.367e+07 │ 9.942e+07 │ 2.424e+06 │ 6.967e+04 │
+│ DRAM                              │ 2.956e+07 │  6.33e+08 │ 2.417e+09 │ 2.625e+08 │
+│ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 4.925e+04 │      1550 │
 │ eyeriss.PE_column.PE.weights_spad │ 4.042e+08 │ 1.312e+09 │ 4.273e+08 │ 4.637e+07 │
-│ eyeriss.PE_column.PE.mac          │ 4.977e+07 │ 1.586e+08 │ 2.673e+07 │ 2.901e+06 │
+│ eyeriss.PE_column.PE.mac          │ 4.609e+07 │ 1.469e+08 │ 2.475e+07 │ 2.686e+06 │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┘
 ```
 
-(Four of the eight columns and four of the six rows shown here.) In the conv
-layers the weight scratchpads dominate; in the fully-connected layers DRAM
-traffic takes over — fc6 alone reads 1.05e+09 pJ from DRAM, because its weights
-are used once and thrown away. That split is the kind of thing NPUWattch exists
-to make visible.
+(Only four of the eight columns and four of the six rows are shown here.) In
+the conv layers, the weight scratchpads use the most energy. In the fully
+connected layers, DRAM traffic takes over. The fc6 layer alone spends
+2.42e+09 pJ in DRAM, because each weight is used only once. This kind of
+breakdown is exactly what NPUWattch is designed to show.
 
-Tables are sized from the data and chunked to fit your console, so nothing is
-ever truncated or knocked out of alignment. Set `COLUMNS` to force a width.
+Tables are sized to the data and split to fit your console window, so nothing
+gets cut off or misaligned. To force a specific width, set `COLUMNS`.
 
 ## 5. Example 2 — PyTorchSim
 
 ```bash
-cd tutorial/pytorchsim
+cd tutorial/pytorchsim/tpu_like_fp32
 ./run
 ```
 
@@ -184,16 +197,17 @@ npuwattch --harness pytorchsim \
           --node 7nm --tree --report out/
 ```
 
-PyTorchSim splits its results across folders, so each one gets a flag. The
-repository's `run.sh` finds them for you when they share a root:
+PyTorchSim stores its results in several folders, so each one has its own
+flag. If they are all under one root folder, the repository's `run.sh` finds
+them for you:
 
 ```bash
-../../run.sh . --node 7nm --report out/     # same thing, one argument
+../../../run.sh . --node 7nm --report out/  # same thing, one argument
 ```
 
-Here NPUWattch does **not** read an architecture file. It reconstructs the
-hardware from the simulator's own configuration and `compound_components.yaml` — that is what `--tree` prints
-(abridged here):
+This example has **no** architecture file. NPUWattch rebuilds the hardware
+from the simulator's own configuration and `compound_components.yaml`. Here is
+what `--tree` prints (shortened):
 
 ```
 chip
@@ -213,43 +227,60 @@ chip
     └── dram_chan [×16]  (class: hbm)
 ```
 
-Result: **6.13 mJ** over 52 022 cycles, 111 W average, 88.7 mm², 2.85 pJ/FLOP,
-38.8 TFLOP/s. The two systolic arrays account for 91% of the dynamic energy and
-DRAM for 8%, which is what you want from a matmul.
+Result: **6.13 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
+2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
+dynamic energy and DRAM for 8%, which is what you'd expect from a matmul.
 
-Two messages in this run are worth understanding:
+The long `[INFO]` block in this run is worth a look. It lists the parts that
+are *not* included in the totals (the scalar core and its caches, the VCIX
+serializer, and DRAM standby power), so you always know what the numbers
+cover.
 
-- `Configured clock (940 MHz) is within 20% of the estimated f_max (992 MHz)`
-  — the timing model says this design barely closes at 940 MHz. NPUWattch
-  predicts a critical path, not just energy.
-- The long `[INFO]` block listing what is *not* charged (the scalar core, its
-  caches, the VCIX serializer, DRAM standby power). NPUWattch states its scope
-  explicitly instead of silently leaving things out.
+### The bf16 variant
+
+```bash
+cd tutorial/pytorchsim/tpu_like_bf16
+./run
+```
+
+<!-- Internal note: PyTorchSim cannot simulate bf16 kernels, so this example
+reuses the float32 run and fixes the PE type in the hardware model. DRAM and
+NoC energy keep the float32 byte counts, so they are high for a bf16 kernel. -->
+A real TPU multiplies in bf16. This example uses the same simulator files as
+`tpu_like_fp32` and changes only `compound_components.yaml`: the `pe` element
+uses a fixed bf16 `fpmac` instead of the `{mac_primitive}` / `{mac_config}`
+templates. The PE energy drops from 5.05 to 1.56 pJ per MAC, and the total is
+**2.29 mJ, 1.07 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
+float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
 
 ---
 
 ## 6. Reading the output
 
-**Console**, top to bottom:
+**Console output**, from top to bottom:
 
-1. `--tree` — the hardware NPUWattch thinks you described. Check this first. If
-   a component is missing or has the wrong size, everything downstream is wrong.
-2. `[WARNING]` / `[INFO]` — every assumption made on your behalf: defaults
-   filled in, attributes ignored, activity counters deliberately not charged.
-3. **Per-window energy** — one row per layer (Timeloop) or kernel (PyTorchSim).
-4. **Per-window component energy** — where the energy went, per window.
-5. **Energy summary** — the whole run per component, with area and leakage.
-   `model` says `cal` for a calibrated MLP prediction, `const` for a table
-   constant (DRAM devices, die-to-die links), and `user` for a block priced
-   from your `user_components.yaml`.
-6. Totals, and which primitives were available.
+1. `--tree`: the hardware as NPUWattch read it from your input. Check this
+   first. If a component is missing or has the wrong size, all the numbers
+   after it will be off.
+2. `[WARNING]` / `[INFO]`: every assumption NPUWattch made for you, such as
+   default values, ignored attributes, and activity counters that are left out
+   on purpose.
+3. **Per-window energy**: one row per layer (Timeloop) or per kernel
+   (PyTorchSim).
+4. **Per-window component energy**: where the energy went in each window.
+5. **Energy summary**: totals per component for the whole run, with area and
+   leakage. The `model` column shows `cal` for a calibrated MLP prediction,
+   `const` for a table constant (DRAM devices, die-to-die links), and `user`
+   for a block priced from your `user_components.yaml`.
+6. The run totals, and the list of available primitives.
 
-**`out/report.html`** is the same information, self-contained (no internet, no
-external files) with charts: energy and area breakdowns, the DRAM split, a
-cycle-level energy plot across windows, the component table, the instance tree,
-and a provenance section listing every input file, warning, and note.
+**`out/report.html`** shows the same information as a self-contained page (no
+internet connection or extra files needed). It includes charts for the energy
+and area breakdowns and the DRAM breakdown, a cycle-level energy plot across
+windows, the component table, the instance tree, and a provenance section that
+lists every input file, warning, and note.
 
-**`out/report.json`** is the same data for scripts — same numbers, no styling.
+**`out/report.json`** has the same numbers in plain JSON, for use in scripts.
 
 ---
 
@@ -264,38 +295,39 @@ and a provenance section listing every input file, warning, and note.
 # A different operating point.
 ./run --node 7nm --corner SS --temperature 85 --voltage-offset -0.05
 
-# No activity at all: area + timing + a vectorless energy estimate.
-cd timeloop && npuwattch --harness timeloop --arch-yaml arch.yaml --node 7nm
+# No activity at all: area + a vectorless energy estimate.
+cd timeloop/eyeriss_like && npuwattch --harness timeloop --arch-yaml arch.yaml --node 7nm
 
 # One number for the whole network instead of eight windows.
-cd timeloop && ./run --stats-mode aggregate
+cd timeloop/eyeriss_like/alexnet && ./run --stats-mode aggregate
 ```
 
 ## 8. Using your own data
 
-- **You use Timeloop or Accelergy** → point `--arch-yaml` at your architecture
-  and `--stats` at your `timeloop-model.stats.txt` (or a directory of per-layer
-  files). If a stats level name does not match a component name, pass a
-  `--stats-map` YAML with `levels:` renames and `ignore:` drops. Copy the
-  three definition files from `timeloop/` next to your `arch.yaml`.
-- **You use PyTorchSim** → copy your run root (the folder holding
+- **If you use Timeloop or Accelergy**: point `--arch-yaml` to your
+  architecture file and `--stats` to your `timeloop-model.stats.txt` (or to a
+  directory of per-layer files). If a stats level name doesn't match a
+  component name, pass a `--stats-map` YAML file. Use `levels:` in it to rename
+  levels and `ignore:` to skip them. Copy the three definition files from
+  `timeloop/eyeriss_like/` into the folder with your `arch.yaml`.
+- **If you use PyTorchSim**: copy your run root (the folder with
   `togsim_results/` and `outputs/`), copy the three definition files from
-  `pytorchsim/` into it, and run `run.sh <root>`.
-- **Your design has a block NPUWattch cannot model** → add it to
-  `user_components.yaml` (name, area, energy per action), or describe an
-  Accelergy class as several primitives in `compound_components.yaml`.
-- **You use something else** → write NPUWattch's native description YAML and an
-  activity CSV, then `npuwattch -d description.yaml -l activity.csv`. The
-  quickest way to learn those two formats is to have a harness write them for
-  you and edit the result:
+  `pytorchsim/tpu_like_fp32/` into it, and run `run.sh <root>`.
+- **If your design has a custom block**: add it to `user_components.yaml`
+  (name, area, and energy per action), or describe an Accelergy class as a set
+  of primitives in `compound_components.yaml`.
+- **If you use another simulator**: write an NPUWattch native description YAML
+  and an activity CSV, then run `npuwattch -d description.yaml -l activity.csv`.
+  The easiest way to learn the two formats is to let a harness write them for
+  you and then edit the result:
 
   ```bash
-  cd timeloop
-  npuwattch --harness timeloop --arch-yaml arch.yaml --stats stats/ \
+  cd timeloop/eyeriss_like/alexnet
+  npuwattch --harness timeloop --arch-yaml ../arch.yaml --stats stats/ \
             --node 7nm --clock-mhz 1000 -o native/
   # native/description.yaml — every component, class, count and attribute
   # native/activity.csv     — window,cycle_start,cycle_end,component,event,mode,count
   npuwattch -d native/description.yaml -l native/activity.csv
   ```
 
-Every flag: `npuwattch --help`.
+To see all the options, run `npuwattch --help`.

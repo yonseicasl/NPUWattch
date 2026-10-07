@@ -1,0 +1,34 @@
+# ============================================================================
+#  Timeloop projection
+# ============================================================================
+# The projection connects the Timeloop events of a component to the elements
+# of its compound (compound_components.yaml). This file is an INPUT of the
+# run: NPUWattch reads `projection.yaml` from the directory of the
+# architecture file, or the file that you give with --projection.
+#
+# The Timeloop stats give three events for a level:
+#   read      one read access (scalar reads / block size)
+#   write     one write access (fills + updates, / block size)
+#   compute   one compute operation (Computes)
+#
+# For each event, `elements` gives the stim_mode of each element that the
+# event drives. An element that the action does not name follows the
+# `default_mode` of the compound: `gated` charges nothing, `idle` charges one
+# idle. `count_from.scale` multiplies the event count. `count_from.stat` is
+# the name of the Timeloop counter. It is information only.
+#
+# A component gets these events if a stats level has its name, or if
+# --stats-map connects a level to it.
+
+tool: timeloop
+
+compounds:
+
+  counter:
+    compute:                          # one count step
+      count_from:
+        stat: computes
+        scale: 1
+      elements:
+        increment: random
+        state: write

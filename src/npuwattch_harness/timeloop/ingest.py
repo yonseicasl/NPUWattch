@@ -266,6 +266,13 @@ def description_from_accelergy(
     3. ``user_components``: the user component library entry with the name of
        the class.
 
+    A component with the attribute ``user_component: <entry>`` uses that
+    library entry, whatever its class. Timeloop accepts only storage,
+    compute, and network classes, so a block that Timeloop does not model
+    (for example, a post-processing unit) is declared as a zero-cost
+    Accelergy class (``dummy_storage``) that bypasses all data, and the
+    attribute gives its NPUWattch cost.
+
     A component whose class is in none of these is not in the description,
     and the run gives a warning.
     """
@@ -296,6 +303,23 @@ def description_from_accelergy(
                 declared_nodes.add(text if text.endswith("nm") else f"{text}nm")
                 break
         class_name = str(entry.comp_class or "").strip().lower()
+        linked = next((str(v).strip().lower()
+                       for k, v in (entry.attributes or {}).items()
+                       if str(k).strip().lower() == "user_component"), None)
+        if linked is not None:
+            if linked in (user_components or {}):
+                components.append({
+                    "name": name, "class": linked,
+                    "count": int(entry.instance_count), "attributes": {}})
+                notes.append(
+                    f"{name}: attribute user_component {linked!r} — the user "
+                    f"component library entry gives its cost (the class "
+                    f"{entry.comp_class!r} is for Timeloop only)")
+            else:
+                unmapped.append(
+                    f"{name} (user_component {linked!r} is not in the user "
+                    f"component library)")
+            continue
         if class_name in (compounds or {}):
             symbols = _expand_compound(
                 compounds[class_name], name, entry, components, warnings)

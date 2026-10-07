@@ -278,37 +278,64 @@ def read_stats_input(path: Path) -> List[TimeloopStats]:
 _EVENTS = ("read", "write", "op")
 _ANY = "*"
 _MULT = "multiplicity"      # reserved key: {component: events for each access}
+_ACT = "action"             # reserved key: {event: {component: stim mode}}
+_TARGET_KEYS = {"count", "action"}
 
 
-def _targets(level: str, where: str, tgt: Any) -> Tuple[List[str], Dict[str, int]]:
-    """One target entry -> (names, {name: events for each access}).
+def _is_count(n: Any) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool) and n >= 1
 
-    A target is a component name or ``{name: N}``. Use ``{name: N}`` if one
-    access of the level is N events of that component. For example, a unit
-    that has 8 lanes gets one block of 8 elements for each access.
+
+def _is_target_spec(value: Any) -> bool:
+    """True for the value of ``{name: N}`` or ``{name: {count:, action:}}``."""
+    if _is_count(value):
+        return True
+    return isinstance(value, Mapping) and bool(value) \
+        and set(map(str, value)) <= _TARGET_KEYS
+
+
+def _targets(level: str, where: str, tgt: Any
+             ) -> Tuple[List[str], Dict[str, int], Dict[str, str]]:
+    """One target entry -> (names, {name: events per access}, {name: action}).
+
+    A target is one of:
+
+    * ``name``: one event of the component for each access of the level;
+    * ``{name: N}``: N events of the component for each access. For example,
+      a unit that has 8 lanes gets one block of 8 elements for each access;
+    * ``{name: {count: N, action: A}}``: N events (default 1), charged as
+      the action A of the component. Without an action, the event name of the
+      level (read, write, op) selects the action.
     """
     items = tgt if isinstance(tgt, (list, tuple)) else [tgt]
     names: List[str] = []
     mult: Dict[str, int] = {}
+    actions: Dict[str, str] = {}
     for item in items:
         if isinstance(item, str):
             names.append(item)
             continue
         if isinstance(item, Mapping) and len(item) == 1:
-            (name, n), = item.items()
-            if isinstance(name, str) and isinstance(n, int) \
-                    and not isinstance(n, bool) and n >= 1:
-                names.append(name)
-                if n > 1:
-                    mult[name] = n
-                continue
+            (name, spec), = item.items()
+            if isinstance(name, str) and _is_target_spec(spec):
+                n = spec if _is_count(spec) else spec.get("count", 1)
+                action = None if _is_count(spec) else spec.get("action")
+                if _is_count(n) and (action is None
+                                     or (isinstance(action, str) and action)):
+                    names.append(name)
+                    if n > 1:
+                        mult[name] = n
+                    if action is not None:
+                        actions[name] = action
+                    continue
         raise ValueError(
             f"stats map: level '{level}'{where} must name components "
-            f"(a name, or {{name: N}} for N events per access)")
+            f"(a name, {{name: N}} for N events per access, or "
+            f"{{name: {{count: N, action: A}}}})")
     if not names:
         raise ValueError(
             f"stats map: level '{level}'{where} must list component names")
-    return names, mult
+    return names, mult, actions
 
 
 def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
@@ -329,9 +356,15 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
     of that component. For example, a post-processing unit that has 8 lanes
     gets blocks of 8 elements. The reserved key ``_MULT`` contains these
     multipliers.
+
+    A target can also be ``{name: {count: N, action: A}}``. Then the events
+    are charged as the action A of the component (for example, ``process``
+    of a user component), not as the event name. The reserved key ``_ACT``
+    contains these actions for each event.
     """
     per_event = isinstance(value, Mapping) and not (
-        len(value) == 1 and isinstance(next(iter(value.values())), int))
+        len(value) == 1 and _is_target_spec(next(iter(value.values()))))
+    acts: Dict[str, Dict[str, str]] = {}
     if per_event:                            # {read: ..., write: ..., op: ...}
         unknown = [str(ev) for ev in value if str(ev) not in _EVENTS]
         if unknown:
@@ -343,17 +376,23 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         mult: Dict[str, int] = {}
         for ev, tgt in value.items():
-            out[str(ev)], m = _targets(level, f", event '{ev}'", tgt)
+            out[str(ev)], m, a = _targets(level, f", event '{ev}'", tgt)
             mult.update(m)
+            if a:
+                acts[str(ev)] = a
     elif isinstance(value, (str, list, tuple, Mapping)):   # all events
-        names, mult = _targets(level, "", value)
+        names, mult, a = _targets(level, "", value)
         out = {_ANY: names}
+        if a:
+            acts[_ANY] = a
     else:
         raise ValueError(
             f"stats map: level '{level}' must be a component name, a list of "
             f"names, or {{read|write|op: names}}")
     if mult:
         out[_MULT] = mult
+    if acts:
+        out[_ACT] = acts
     return out
 
 
@@ -482,11 +521,12 @@ def activity_from_stats(
     missing_targets: List[str] = []
     resolved_map: Dict[str, Dict[str, List[str]]] = {}
     level_mult: Dict[str, Dict[str, int]] = {}   # level -> {component: events for each access}
+    level_act: Dict[str, Dict[Tuple[str, str], str]] = {}  # level -> {(event, component): action}
     for level, binding in level_map.items():
         rb: Dict[str, List[str]] = {}
         resolved: Dict[str, str] = {}
         for ev, targets in binding.items():
-            if ev == _MULT:
+            if ev in (_MULT, _ACT):
                 continue
             rt = []
             for t in targets:
@@ -503,6 +543,9 @@ def activity_from_stats(
         level_mult[level] = {resolved[t]: n
                              for t, n in binding.get(_MULT, {}).items()
                              if t in resolved}
+        level_act[level] = {(ev, resolved[t]): a
+                            for ev, per_t in binding.get(_ACT, {}).items()
+                            for t, a in per_t.items() if t in resolved}
     level_map = resolved_map
     if missing_targets:
         raise ValueError(
@@ -558,6 +601,7 @@ def activity_from_stats(
                 binding = {_ANY: [target]}
             all_targets = sorted({t for ts in binding.values() for t in ts})
             mult = level_mult.get(lv.name, {})
+            acts = level_act.get(lv.name, {})
             # Compare the instance counts only for the component that is the
             # level itself. That is the renamed target or the target whose
             # name matches the level. The other targets (a mux, a
@@ -583,14 +627,22 @@ def activity_from_stats(
                         f"instance(s) but the description has {declared} for "
                         f"'{target}' — are the stats from this architecture?")
                 covered.add(target)
-            if len(all_targets) > 1 or set(binding) != {_ANY} or mult:
+            if len(all_targets) > 1 or set(binding) != {_ANY} or mult or acts:
                 fanout.setdefault(lv.name, binding)
 
             def _add(event: str, wanted_mode: str, count: float) -> None:
                 if count <= 0:
                     return
                 for target in binding.get(event, binding.get(_ANY, [])):
+                    action = acts.get((event, target),
+                                      acts.get((_ANY, target)))
                     if target in compound_bindings:
+                        if action is not None:
+                            raise ValueError(
+                                f"stats map: level '{lv.name}' names the action "
+                                f"'{action}' for the compound component "
+                                f"'{target}' — a compound takes its actions "
+                                f"from projection.yaml")
                         for element, stim, scale in compound_bindings[
                                 target].get(event, ()):
                             key = (element, event, stim)
@@ -598,9 +650,19 @@ def activity_from_stats(
                                            * mult.get(target, 1))
                         continue
                     primitive = prim_of[target]
-                    charged = _mode_for(primitive, wanted_mode, modes_by_prim)
-                    if charged != wanted_mode:
-                        mode_fallbacks[target] = charged
+                    if action is not None:
+                        # The user named the action: use it or stop.
+                        known = modes_by_prim.get(primitive, ["random"])
+                        if action not in known:
+                            raise ValueError(
+                                f"stats map: level '{lv.name}' charges "
+                                f"'{target}' with the action '{action}', but "
+                                f"its actions are {', '.join(known)}")
+                        charged = action
+                    else:
+                        charged = _mode_for(primitive, wanted_mode, modes_by_prim)
+                        if charged != wanted_mode:
+                            mode_fallbacks[target] = charged
                     key = (target, event, charged)
                     counts[key] = (counts.get(key, 0.0)
                                    + count * mult.get(target, 1))
@@ -663,12 +725,17 @@ def activity_from_stats(
             f"them): {', '.join(uncovered)}")
     for level, binding in sorted(fanout.items()):
         mult = level_mult.get(level, {})
+        acts = level_act.get(level, {})
         parts = []
         for ev in list(_EVENTS) + [_ANY]:
             if ev in binding:
-                parts.append(f"{'all events' if ev == _ANY else ev} → "
-                             + ", ".join(t + (f" ×{mult[t]}" if t in mult else "")
-                                         for t in binding[ev]))
+                parts.append(
+                    f"{'all events' if ev == _ANY else ev} → "
+                    + ", ".join(
+                        t + (f" ×{mult[t]}" if t in mult else "")
+                        + (f" as '{acts.get((ev, t), acts.get((_ANY, t)))}'"
+                           if (ev, t) in acts or (_ANY, t) in acts else "")
+                        for t in binding[ev]))
         notes.append(
             f"stats level '{level}' fans out per --stats-map: "
             + "; ".join(parts)

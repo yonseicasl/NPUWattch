@@ -50,7 +50,8 @@
     "timing": {
       "type": "object",
       "required": ["f_max_MHz", "check_text"],
-      "properties": {"f_max_MHz": {"type": ["number", "null"]},
+      "properties": {"enabled": {"type": "boolean"},
+                     "f_max_MHz": {"type": ["number", "null"]},
                      "check_text": {"type": "string"}}
     },
     "windows": {"type": "array", "items": {
@@ -75,7 +76,7 @@
         "count": {"type": "integer"}, "dyn_energy_pJ": {"type": "number"},
         "leak_energy_pJ": {"type": "number"}, "energy_pJ": {"type": "number"},
         "energy_pct": {"type": "number"}, "leak_power_mW": {"type": "number"},
-        "area_um2": {"type": "number"}, "crit_path_ns": {"type": "number"},
+        "area_um2": {"type": "number"}, "crit_path_ns": {"type": ["number", "null"]},
         "activity_events": {"type": "number"},
         "vectorless": {"type": "boolean"}, "user_defined": {"type": "boolean"},
         "dyn_by_mode": {"type": "object",

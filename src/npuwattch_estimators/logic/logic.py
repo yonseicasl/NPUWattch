@@ -437,7 +437,8 @@ class _LogicUnitCostProvider:
         (optional protocol method).
 
         The reasons are a changed depth, an extrapolated parameter, or an
-        extrapolated clock. There is one message for each reason. The list is
+        extrapolated clock. The feature ``clock_check: False`` removes the
+        clock check. There is one message for each reason. The list is
         empty if the query is in the envelope.
         """
         if primitive not in self.SERVED:
@@ -464,6 +465,8 @@ class _LogicUnitCostProvider:
                 out.append(
                     f"{col}={v:g} is outside the characterized {lo:g}-{hi:g} "
                     f"for {primitive} — extrapolated")
+        if features.get("clock_check") is False:
+            return out
         fastest = (env.get("config_min_clock_ns", {}).get(str(nm), {})
                    .get(mlp.config_key(primitive, params)))
         lo_hi = env.get("clock_ns", {}).get(str(nm))

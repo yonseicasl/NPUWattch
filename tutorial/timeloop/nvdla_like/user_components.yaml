@@ -1,0 +1,125 @@
+# ============================================================================
+#  User component library of the NVDLA-like design
+# ============================================================================
+# A user component is a block that NPUWattch has no model for. You give its
+# cost in this file: the area, and the energy of each action. NPUWattch does
+# not calculate these values.
+#
+# This file is an INPUT of the run. NPUWattch reads `user_components.yaml`
+# from the directory of the architecture file, or the file that you give with
+# --user-components.
+#
+# This file has two entries:
+#   nvdla_sdp               USED by arch.yaml (component `sdp`). Measured
+#                           values, see below.
+#   example_68000_cpu_core  AN EXAMPLE. No design uses it, thus each run shows
+#                           the message "parsed, but not used".
+#
+# How a design uses an entry:
+#   - The entry name is the class of the component in the design, or the
+#     value of its `user_component` attribute (arch.yaml uses this for `sdp`,
+#     because Timeloop accepts only storage, compute, and network classes).
+#   - Each action name is a `mode` of the activity (manual §3.3). The energy
+#     of the component is the sum of (action count x energy_pJ). The stats
+#     map (../stats_map.yaml) selects the action of the sdp events.
+#
+# Keys of an entry:
+#   reference      The technology of the values. `node` is necessary.
+#   design_class   Optional: register | compute. The custom component scaler
+#                  uses it.
+#   area_um2       The area of one instance.
+#   leak_power_mW  Optional. The leakage power of one instance. Default: 0.
+#   actions        action name -> {energy_pJ: energy of one action}
+#   characterized  Optional: the same values, measured at other nodes. The run
+#                  does not use them; they are data for the scaler.
+#
+# The custom component scaler changes the values from the reference technology
+# to the technology of the run. THE SCALER IS NOT IMPLEMENTED. NPUWattch uses
+# the reference values as they are and gives a warning if the nodes are
+# different.
+
+user_components:
+
+  # The NVDLA Single Data Point processor (SDP), datapath of the nv_small
+  # configuration: bias (BS), batch norm (BN), ReLU, and requantization to
+  # int8, one element per cycle. The values are post-layout measurements of
+  # the NVDLA RTL (github.com/nvdla/hw, nv_small) through the NPUWattch logic
+  # flow (synthesis, place and route, extraction, gate-level simulation,
+  # PrimeTime power), at the five nodes of the flow
+  # (dataset_gen/logic/rtl_gen/third_party/nvdla_sdp,
+  # dataset_gen/logic/datasets/logic_nvdla_sdp_dp.csv).
+  #   process  one element of a conv epilogue: int32 accumulator in, int8 out
+  #            (dynamic energy of one cycle at full rate)
+  #   idle     one clock cycle with no input (clock and registers only)
+  #   random   one element with uniform-random data and operands (upper bound)
+  # Made with: dataset_gen/logic/autosweep/to_user_component.py nvdla_sdp_dp
+  #            --name nvdla_sdp --reference-node 7nm
+  nvdla_sdp:
+    reference: {node: 7nm, corner: TT, voltage_V: 0.75, temperature_C: 25.0, clock_MHz: 800.0}
+    design_class: compute
+    area_um2: 1942.0
+    leak_power_mW: 0.01159
+    actions:
+      idle: {energy_pJ: 9.09}
+      process: {energy_pJ: 15.65}
+      random: {energy_pJ: 16.91}
+    characterized:
+      20nm:
+        clock_MHz: 400.0
+        area_um2: 13970.0
+        leak_power_mW: 0.01427
+        actions:
+          idle: {energy_pJ: 19.38}
+          process: {energy_pJ: 31.74}
+          random: {energy_pJ: 34.79}
+        run_id: nvdla_sdp_dp_nv_small_20nm_TT_0V9_25C_400MHz
+      16nm:
+        clock_MHz: 571.4
+        area_um2: 8245.0
+        leak_power_mW: 0.01086
+        actions:
+          idle: {energy_pJ: 15.69}
+          process: {energy_pJ: 27.6}
+          random: {energy_pJ: 30.87}
+        run_id: nvdla_sdp_dp_nv_small_16nm_TT_0V85_25C_571p429MHz
+      10nm:
+        clock_MHz: 800.0
+        area_um2: 3871.0
+        leak_power_mW: 0.01059
+        actions:
+          idle: {energy_pJ: 12.65}
+          process: {energy_pJ: 21.21}
+          random: {energy_pJ: 22.65}
+        run_id: nvdla_sdp_dp_nv_small_10nm_TT_0V8_25C_800MHz
+      7nm:
+        clock_MHz: 800.0
+        area_um2: 1942.0
+        leak_power_mW: 0.01159
+        actions:
+          idle: {energy_pJ: 9.09}
+          process: {energy_pJ: 15.65}
+          random: {energy_pJ: 16.91}
+        run_id: nvdla_sdp_dp_nv_small_7nm_TT_0V75_25C_800MHz
+      5nm:
+        clock_MHz: 800.0
+        area_um2: 1075.0
+        leak_power_mW: 0.008322
+        actions:
+          idle: {energy_pJ: 7.51}
+          process: {energy_pJ: 14.49}
+          random: {energy_pJ: 15.53}
+        run_id: nvdla_sdp_dp_nv_small_5nm_TT_0V7_25C_800MHz
+
+  # A Motorola 68000 microprocessor core. The values are approximate numbers
+  # for the original part (3.5 um NMOS, 44 mm2 die, 8 MHz, about 1.5 W).
+  example_68000_cpu_core:
+    reference:
+      node: 3500nm
+    design_class: compute
+    area_um2: 44000000.0
+    leak_power_mW: 0.0
+    actions:
+      idle:                 # one clock cycle with no instruction
+        energy_pJ: 90000.0
+      process:              # one clock cycle of instruction execution
+        energy_pJ: 190000.0

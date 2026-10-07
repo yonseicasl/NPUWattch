@@ -1,5 +1,5 @@
 # NPUWattch
-![Version: 0.9](https://img.shields.io/badge/Version-0.9-blue.svg)
+![Version: 0.9](https://img.shields.io/badge/Version-1.0-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 NPUWattch is an ML-based power, area, and timing (PAT) modeling tool. Given an accelerator
@@ -18,8 +18,8 @@ AlexNet on an Eyeriss-like array (Timeloop input) and a 1024³ matmul on a TPUv3
 NPU (PyTorchSim input). Each is one command:
 
 ```bash
-cd tutorial/timeloop   && ./run
-cd tutorial/pytorchsim && ./run
+cd tutorial/timeloop/eyeriss_like/alexnet && ./run
+cd tutorial/pytorchsim/tpu_like_fp32 && ./run
 ```
 
 ## Run
@@ -59,7 +59,8 @@ npuwattch -d description.yaml -l activity.csv
 ```
 
 Useful flags:
-- `--report DIR` writes `report.html` + `report.json`; `--tree` shows how the run was interpreted.
+- `--report DIR` writes `report.html` + `report.json`; `--tree` shows how the run was interpreted;
+  `--fmax` adds the timing output (f_max check, critical paths, clock-range warnings), which is off by default.
 - Technology and operating point (harness modes only — a native description carries its own):
   `--node`, `--transistor`, `--corner`, `--voltage-offset`, `--temperature`, `--clock-mhz`.
 - DRAM: a Timeloop `DRAM` is priced by its Accelergy `type` (LPDDR4, LPDDR, DDR3, GDDR5,
@@ -113,4 +114,4 @@ NPUWattch is released under the MIT license. See [LICENSE](LICENSE) for addition
 Thanks to the [I3D VLSI Laboratory](https://i3dvlsi.wordpress.com/).   
 
 ## Questions
-Leave github issues or please contact ikamusume@yonsei.ac.kr
+Leave github issues or please contact ikamusume(at)yonsei.ac.kr

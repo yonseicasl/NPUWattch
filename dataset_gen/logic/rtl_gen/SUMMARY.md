@@ -28,6 +28,12 @@ Implemented generator targets:
 | `crossbar` | `gen_crossbar` | `crossbar.sv`, `crossbar_tb.sv` | `data_width`, `num_inputs`, `num_outputs` |
 | `fattree` | `gen_fattree` | `fattree.sv`, `fattree_tb.sv` | `data_width`, `radix`, `num_levels`, `oversubscription` |
 | `foldedclos` | `gen_foldedclos` | `foldedclos.sv`, `foldedclos_tb.sv` | `data_width`, `terminals_per_leaf`, `num_leaves`, `num_spines`, `switch_radix`, `oversubscription` |
+| `nvdla_sdp_dp` | `gen_nvdla_sdp_dp` | `nvdla_sdp_dp.sv`, `nvdla_sdp_dp_tb.sv` | `config` (only `nv_small`) |
+
+`nvdla_sdp_dp` is not a primitive. It is the NVDLA SDP datapath (third-party
+RTL in `third_party/nvdla_sdp/`, see its README), characterized by the same
+flow so that its rows give the values of a user component
+(`user_components.yaml`). Its golden model is `nvdla_sdp_model.py`.
 
 ## Parameter Reference
 

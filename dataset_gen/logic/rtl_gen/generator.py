@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from .float_model import FloatFormat, emit_add_vectors, emit_mac_vectors, emit_mul_vectors
 from .int_model import emit_intadd_vectors, emit_intmac_vectors, emit_intmul_vectors
 from .mxfp_model import acc_width_from_format, emit_mxfpmac_vectors, get_mxfp_format
+from .nvdla_sdp_model import SDP_CONFIG, emit_nvdla_sdp_vectors
 from .pipeline_plan import (
     FPADD_SEGMENTS,
     FPMUL_SEGMENTS,
@@ -707,4 +708,51 @@ def gen_fifo(
     return {
         "rtl": _write_text(unit_dir / "fifo.sv", _render("fifo.sv.j2", context)),
         "tb": _write_text(unit_dir / "fifo_tb.sv", _render("fifo_tb.sv.j2", context)),
+    }
+
+
+# NVDLA SDP datapath (third-party RTL, a user component -- not a primitive).
+NVDLA_SDP_DIR = RTL_GEN_DIR / "third_party" / "nvdla_sdp"
+NVDLA_SDP_COMMIT = "771f20cc9e69759d7277978eb41e8d47f1547374"
+#: Operand beats per channel group in the "process" power mode.
+NVDLA_SDP_GROUP_BEATS = 64
+
+
+def _nvdla_sdp_sources() -> str:
+    """The NVDLA sources in sources.f order, with the one include inlined."""
+    vmod = NVDLA_SDP_DIR / "vmod"
+    include = (vmod / "simulate_x_tick.vh").read_text(encoding="utf-8")
+    parts = []
+    for name in (NVDLA_SDP_DIR / "sources.f").read_text(encoding="utf-8").split():
+        text = (vmod / name).read_text(encoding="utf-8")
+        text = text.replace('`include "simulate_x_tick.vh"', include)
+        parts.append(f"// ---- {name} ----\n{text.rstrip()}\n")
+    return "\n".join(parts)
+
+
+def gen_nvdla_sdp_dp(
+    *,
+    config: str = "nv_small",
+    output_root: Path | None = None,
+) -> dict[str, Path]:
+    """The NVDLA SDP datapath (nv_small) and its testbench.
+
+    The RTL is the NVDLA source; only the nv_small configuration exists.
+    The testbench uses the fixed epilogue configuration of nvdla_sdp_model.
+    """
+    if config != "nv_small":
+        raise ValueError(f"nvdla_sdp_dp: unsupported config {config!r} (only nv_small)")
+    context = {
+        "module_name": "nvdla_sdp_dp",
+        "source_commit": NVDLA_SDP_COMMIT,
+        "nvdla_sources": _nvdla_sdp_sources(),
+        "config": SDP_CONFIG,
+        "test_vectors": emit_nvdla_sdp_vectors(),
+        "group_beats": NVDLA_SDP_GROUP_BEATS,
+        "power_cycles": DEFAULT_POWER_CYCLES,
+    }
+    unit_dir = _unit_dir("nvdla_sdp_dp", output_root)
+    return {
+        "rtl": _write_text(unit_dir / "nvdla_sdp_dp.sv", _render("nvdla_sdp_dp.sv.j2", context)),
+        "tb": _write_text(unit_dir / "nvdla_sdp_dp_tb.sv", _render("nvdla_sdp_dp_tb.sv.j2", context)),
     }

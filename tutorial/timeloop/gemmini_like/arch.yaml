@@ -1,0 +1,120 @@
+architecture:
+  # ============================================================
+  # Gemmini-like accelerator (default Gemmini configuration)
+  #   int8 inputs/weights, int32 accumulation
+  #   16 x 16 weight-stationary systolic array
+  #   256 KB scratchpad (4 banks) + 64 KB accumulator (2 banks) = 320 KB
+  # Matches Table IV of the NPUWattch HPCA'26 paper.
+  # ============================================================
+  version: 0.4
+  nodes:
+  - !Container # Top-level system
+    name: system
+
+  - !Component # DRAM main memory
+    name: DRAM
+    class: DRAM
+    attributes:
+      type: "LPDDR4"
+      width: 64
+      datawidth: 8
+    constraints:
+      # No partial-sum spill: the reduction loops (C, R, S) are the innermost
+      # DRAM loops, so the accumulator holds an output tile until its
+      # reduction ends.
+      temporal: {permutation: [C, R, S]}
+
+  - !Container # Gemmini accelerator
+    name: gemmini
+    attributes:
+      technology: "7nm"
+
+  - !Parallel # Scratchpad (inputs + weights) next to the accumulator (outputs)
+    nodes:
+    - !Component # Scratchpad: 4 banks x 4096 rows x 128 bit = 256 KB
+      name: scratchpad
+      class: smartbuffer_SRAM
+      attributes:
+        depth: 16384
+        width: 128
+        n_banks: 4
+        datawidth: 8
+        read_bandwidth: 16
+        write_bandwidth: 16
+      constraints:
+        dataspace: {keep: [Inputs, Weights], bypass: [Outputs]}
+        # Only reduction loops here (timeloopfe puts this level above the
+        # accumulator): an output loop here would cycle the output tiles
+        # inside a DRAM reduction loop and spill partial sums.
+        temporal: {factors: [M=1, P=1, Q=1, N=1, G=1]}
+
+    - !Component # Accumulator: 2 banks x 512 rows x 512 bit = 64 KB, int32
+      name: accumulator
+      class: smartbuffer_SRAM
+      attributes:
+        depth: 1024
+        width: 512
+        n_banks: 2
+        datawidth: 32
+        read_bandwidth: 16
+        write_bandwidth: 16
+      constraints:
+        dataspace: {keep: [Outputs], bypass: [Inputs, Weights]}
+
+  - !Container # 16 mesh columns, one output channel each
+    name: PE_column
+    spatial: {meshY: 16}
+    constraints:
+      spatial:
+        permutation: [M]
+        factors: [C=1, R=1, S=1, P=1, Q=1, N=1, G=1]
+
+  - !Container # 16 PEs per column, one input channel each (psums flow down)
+    name: PE
+    spatial: {meshX: 16}
+    constraints:
+      spatial:
+        permutation: [C]
+        factors: [M=1, R=1, S=1, P=1, Q=1, N=1, G=1]
+
+  - !Parallel # Per-PE pipeline registers
+    nodes:
+    - !Component # Stationary weight, double-buffered (propagate)
+      name: weight_reg
+      class: regfile
+      attributes:
+        depth: 2
+        width: 8
+        datawidth: 8
+      constraints:
+        dataspace: {keep: [Weights], bypass: [Inputs, Outputs]}
+        temporal: {factors: [R=1, S=1, M=1, C=1]}
+
+    - !Component # Input activation flowing left to right
+      name: input_reg
+      class: regfile
+      attributes:
+        depth: 1
+        width: 8
+        datawidth: 8
+      constraints:
+        dataspace: {keep: [Inputs], bypass: [Weights, Outputs]}
+        temporal: {factors: [P=1, Q=1, C=1, N=1]}
+
+    - !Component # Partial sum flowing top to bottom
+      name: psum_reg
+      class: regfile
+      attributes:
+        depth: 1
+        width: 32
+        datawidth: 32
+      constraints:
+        dataspace: {keep: [Outputs], bypass: [Inputs, Weights]}
+        temporal: {factors: [P=1, Q=1, M=1, N=1]}
+
+  - !Component # int8 x int8 -> int32 MAC
+    name: mac
+    class: intmac
+    attributes:
+      multiplier_width: 8
+      adder_width: 32

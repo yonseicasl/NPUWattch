@@ -1,0 +1,176 @@
+// ============================================================================
+// nvdla_sdp_dp -- the datapath of the NVDLA SDP (nv_small), for the logic flow.
+//
+// MODIFIED FILE (NVIDIA Open NVDLA License v1.0, section 4.2). NPUWattch made
+// this file from the NVDLA sources in rtl_gen/third_party/nvdla_sdp/vmod:
+//   - the sources are concatenated in the order of sources.f,
+//   - `include "simulate_x_tick.vh" is replaced by the contents of that file,
+//   - the macros below are defined,
+//   - the wrapper module nvdla_sdp_dp is added at the end.
+// The NVDLA copyright notices of each source are kept below. The license is
+// rtl_gen/third_party/nvdla_sdp/LICENSE. Source: github.com/nvdla/hw,
+// branch nv_small, commit {{ source_commit }}.
+// ============================================================================
+`ifndef SYNTHESIS
+`define SYNTHESIS
+`endif
+`ifndef VERILINT
+`define VERILINT
+`endif
+`ifndef VLIB_BYPASS_POWER_CG
+`define VLIB_BYPASS_POWER_CG
+`endif
+
+{{ nvdla_sources }}
+
+// ============================================================================
+// Wrapper (NPUWattch). The register values (reg2dp_*) and the operand streams
+// are ports. One element enters per cycle on i_cacc_*; o_out_data holds 8
+// int8 results. The clock-override and power-bus inputs are tied off.
+// ============================================================================
+module nvdla_sdp_dp (
+    input  logic         i_clk,
+    input  logic         i_rst_n,
+    // CACC input (flying mode): one int32 element for each handshake
+    input  logic         i_cacc_valid,
+    output logic         o_cacc_ready,
+    input  logic [31:0]  i_cacc_data,
+    // MRDMA input (memory-to-memory mode): 8 elements for each handshake
+    input  logic         i_mrdma_valid,
+    output logic         o_mrdma_ready,
+    input  logic [257:0] i_mrdma_data,
+    // BS and BN operand streams: 8 int16 operands for each handshake
+    input  logic         i_bs_alu_valid,
+    output logic         o_bs_alu_ready,
+    input  logic [127:0] i_bs_alu_data,
+    input  logic         i_bs_mul_valid,
+    output logic         o_bs_mul_ready,
+    input  logic [127:0] i_bs_mul_data,
+    input  logic         i_bn_alu_valid,
+    output logic         o_bn_alu_ready,
+    input  logic [127:0] i_bn_alu_data,
+    input  logic         i_bn_mul_valid,
+    output logic         o_bn_mul_ready,
+    input  logic [127:0] i_bn_mul_data,
+    // Outputs: 8 int8 results to WDMA, or one int8 result to PDP
+    output logic         o_out_valid,
+    input  logic         i_out_ready,
+    output logic [63:0]  o_out_data,
+    output logic         o_pdp_valid,
+    input  logic         i_pdp_ready,
+    output logic [7:0]   o_pdp_data,
+    output logic [31:0]  o_sat_count,
+    // Register values
+    input  logic         i_op_en,
+    input  logic         i_layer_done,
+    input  logic         i_flying_mode,
+    input  logic         i_output_dst,
+    input  logic [1:0]   i_proc_precision,
+    input  logic [1:0]   i_out_precision,
+    input  logic         i_nan_to_zero,
+    input  logic         i_perf_sat_en,
+    input  logic         i_perf_lut_en,
+    input  logic         i_bcore_slcg_en,
+    input  logic         i_ncore_slcg_en,
+    input  logic         i_ecore_slcg_en,
+    input  logic         i_bs_bypass,
+    input  logic         i_bs_alu_bypass,
+    input  logic [1:0]   i_bs_alu_algo,
+    input  logic         i_bs_alu_src,
+    input  logic [5:0]   i_bs_alu_shift,
+    input  logic [15:0]  i_bs_alu_operand,
+    input  logic         i_bs_mul_bypass,
+    input  logic         i_bs_mul_src,
+    input  logic         i_bs_mul_prelu,
+    input  logic [7:0]   i_bs_mul_shift,
+    input  logic [15:0]  i_bs_mul_operand,
+    input  logic         i_bs_relu_bypass,
+    input  logic         i_bn_bypass,
+    input  logic         i_bn_alu_bypass,
+    input  logic [1:0]   i_bn_alu_algo,
+    input  logic         i_bn_alu_src,
+    input  logic [5:0]   i_bn_alu_shift,
+    input  logic [15:0]  i_bn_alu_operand,
+    input  logic         i_bn_mul_bypass,
+    input  logic         i_bn_mul_src,
+    input  logic         i_bn_mul_prelu,
+    input  logic [7:0]   i_bn_mul_shift,
+    input  logic [15:0]  i_bn_mul_operand,
+    input  logic         i_bn_relu_bypass,
+    input  logic [31:0]  i_cvt_offset,
+    input  logic [15:0]  i_cvt_scale,
+    input  logic [5:0]   i_cvt_shift
+);
+    NV_NVDLA_SDP_core u_core (
+        .nvdla_core_clk                (i_clk),
+        .nvdla_core_rstn               (i_rst_n),
+        .sdp_brdma2dp_mul_valid        (i_bs_mul_valid),
+        .sdp_brdma2dp_mul_ready        (o_bs_mul_ready),
+        .sdp_brdma2dp_mul_pd           ({1'b0, i_bs_mul_data}),
+        .sdp_brdma2dp_alu_valid        (i_bs_alu_valid),
+        .sdp_brdma2dp_alu_ready        (o_bs_alu_ready),
+        .sdp_brdma2dp_alu_pd           ({1'b0, i_bs_alu_data}),
+        .sdp_nrdma2dp_mul_valid        (i_bn_mul_valid),
+        .sdp_nrdma2dp_mul_ready        (o_bn_mul_ready),
+        .sdp_nrdma2dp_mul_pd           ({1'b0, i_bn_mul_data}),
+        .sdp_nrdma2dp_alu_valid        (i_bn_alu_valid),
+        .sdp_nrdma2dp_alu_ready        (o_bn_alu_ready),
+        .sdp_nrdma2dp_alu_pd           ({1'b0, i_bn_alu_data}),
+        .sdp_dp2wdma_valid             (o_out_valid),
+        .sdp_dp2wdma_ready             (i_out_ready),
+        .sdp_dp2wdma_pd                (o_out_data),
+        .sdp2pdp_valid                 (o_pdp_valid),
+        .sdp2pdp_ready                 (i_pdp_ready),
+        .sdp2pdp_pd                    (o_pdp_data),
+        .pwrbus_ram_pd                 (32'd0),
+        .cacc2sdp_valid                (i_cacc_valid),
+        .cacc2sdp_ready                (o_cacc_ready),
+        .cacc2sdp_pd                   ({2'b00, i_cacc_data}),
+        .sdp_mrdma2cmux_valid          (i_mrdma_valid),
+        .sdp_mrdma2cmux_ready          (o_mrdma_ready),
+        .sdp_mrdma2cmux_pd             (i_mrdma_data),
+        .reg2dp_bcore_slcg_op_en       (i_bcore_slcg_en),
+        .reg2dp_flying_mode            (i_flying_mode),
+        .reg2dp_bn_alu_algo            (i_bn_alu_algo),
+        .reg2dp_bn_alu_bypass          (i_bn_alu_bypass),
+        .reg2dp_bn_alu_operand         (i_bn_alu_operand),
+        .reg2dp_bn_alu_shift_value     (i_bn_alu_shift),
+        .reg2dp_bn_alu_src             (i_bn_alu_src),
+        .reg2dp_bn_bypass              (i_bn_bypass),
+        .reg2dp_bn_mul_bypass          (i_bn_mul_bypass),
+        .reg2dp_bn_mul_operand         (i_bn_mul_operand),
+        .reg2dp_bn_mul_prelu           (i_bn_mul_prelu),
+        .reg2dp_bn_mul_shift_value     (i_bn_mul_shift),
+        .reg2dp_bn_mul_src             (i_bn_mul_src),
+        .reg2dp_bn_relu_bypass         (i_bn_relu_bypass),
+        .reg2dp_bs_alu_algo            (i_bs_alu_algo),
+        .reg2dp_bs_alu_bypass          (i_bs_alu_bypass),
+        .reg2dp_bs_alu_operand         (i_bs_alu_operand),
+        .reg2dp_bs_alu_shift_value     (i_bs_alu_shift),
+        .reg2dp_bs_alu_src             (i_bs_alu_src),
+        .reg2dp_bs_bypass              (i_bs_bypass),
+        .reg2dp_bs_mul_bypass          (i_bs_mul_bypass),
+        .reg2dp_bs_mul_operand         (i_bs_mul_operand),
+        .reg2dp_bs_mul_prelu           (i_bs_mul_prelu),
+        .reg2dp_bs_mul_shift_value     (i_bs_mul_shift),
+        .reg2dp_bs_mul_src             (i_bs_mul_src),
+        .reg2dp_bs_relu_bypass         (i_bs_relu_bypass),
+        .reg2dp_cvt_offset             (i_cvt_offset),
+        .reg2dp_cvt_scale              (i_cvt_scale),
+        .reg2dp_cvt_shift              (i_cvt_shift),
+        .reg2dp_ecore_slcg_op_en       (i_ecore_slcg_en),
+        .reg2dp_nan_to_zero            (i_nan_to_zero),
+        .reg2dp_ncore_slcg_op_en       (i_ncore_slcg_en),
+        .reg2dp_op_en                  (i_op_en),
+        .reg2dp_out_precision          (i_out_precision),
+        .reg2dp_output_dst             (i_output_dst),
+        .reg2dp_perf_lut_en            (i_perf_lut_en),
+        .reg2dp_perf_sat_en            (i_perf_sat_en),
+        .reg2dp_proc_precision         (i_proc_precision),
+        .dp2reg_done                   (i_layer_done),
+        .dp2reg_out_saturation         (o_sat_count),
+        .dla_clk_ovr_on_sync           (1'b0),
+        .global_clk_ovr_on_sync        (1'b0),
+        .tmc2slcg_disable_clock_gating (1'b0)
+    );
+endmodule

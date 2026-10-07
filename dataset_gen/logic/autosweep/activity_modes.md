@@ -31,6 +31,7 @@ uniform-random inputs, the legacy stimulus and upper anchor).
 | crossbar | random, fixed_route, valid25 | fixed_route: `dest = src % NUM_OUTPUTS` constant, data random |
 | fattree | random, fixed_route | fixed_route: rotation `dest = (src+1) % NUM_NODES` |
 | foldedclos | random, fixed_route | as fattree |
+| nvdla_sdp_dp | random, process, idle | user component (NVDLA SDP, fixed conv-epilogue config). random: int32 data and operand beats uniform random; process: data in a signed 18-bit range, per-channel operand beats held for 64 beats (one channel group); idle: config loaded, no valid input. The TB logs `power phase elements=N` for energy per element |
 | intadd, intmul, fpadd, fpmul | random | pure dataflow arithmetic — random *is* the operation; data-statistics modes (sparse/correlated) are future work |
 
 Deferred candidates (add to `POWER_MODES` + the module's TB template

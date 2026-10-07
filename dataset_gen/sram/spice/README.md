@@ -1,9 +1,9 @@
-# spice — shared extraction + device/model tools
+# spice: shared extraction, device, and model tools
 
-Node-agnostic tools consumed by BOTH sibling flows, `../array/` (wd/column/
-array compilers + SPICE TBs) and `../decoder/` (row-decoder PnR flow).
-Flow-specific scripts live with their flow; this directory only holds what
-they share.
+These node-independent tools are used by **both** sibling flows: `../array/`
+(wd/column/array compilers and SPICE TBs) and `../decoder/` (row-decoder PnR
+flow). Scripts that only one flow uses live with that flow. This directory
+holds only what the two flows share.
 
 ```
 spice/
@@ -22,14 +22,14 @@ spice/
     └── char/             # characterization decks/results from char_nodes.py
 ```
 
-`gds2spice.sh` resolves a bare cell name against `TECH_<N>nm/<name>/01_gds/`
-first, then the node's SRAM library (`tech_libs/techlib_<N>nm/sram/gds/`).
-Collateral file lookup has one authoritative location per file (no
-fallbacks): `NXTGRD`/`LAYOUT_TF` from the techlib root ONLY, `LVS_RS`/
-`STARRC_MAP`/`STRC_TEMPLATE` from the sram/ pack ONLY (filenames declared in
-`techlib_<N>nm/sram/node.env`).
+`gds2spice.sh` looks up a bare cell name in `TECH_<N>nm/<name>/01_gds/`
+first, and then in the node's SRAM library (`tech_libs/techlib_<N>nm/sram/gds/`).
+Each collateral file has exactly one location, with no fallbacks.
+`NXTGRD`/`LAYOUT_TF` come only from the techlib root, and `LVS_RS`/
+`STARRC_MAP`/`STRC_TEMPLATE` come only from the sram/ pack (the file names
+are set in `techlib_<N>nm/sram/node.env`).
 
 See `../array/README.md` for the extraction validation history, per-node
-tech-pack notes, and the 5nm model-card recalibration record;
-`../decoder/README.md` for the decoder flow's use of gds2spice
+tech-pack notes, and the 5nm model-card recalibration record. See
+`../decoder/README.md` for how the decoder flow uses gds2spice
 (`--outdir <cfg>/04_pex`).

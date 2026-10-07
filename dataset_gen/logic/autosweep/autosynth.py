@@ -112,7 +112,15 @@ def prepare_synthesis_script(job: dict[str, str], run_dir: Path) -> Path:
         "read_file -autoread -format verilog   $verilogDir -top $topModule\n"
         "read_file -autoread -format sverilog  $verilogDir -top $topModule"
     )
-    new_read_block = "read_file -format sverilog ${verilogDir}/${topModule}.sv"
+    # read_file elaborates every module without parameters as it reads it.
+    # Such a module that instantiates a parameterized module with new
+    # parameter values (the NVDLA sources do this) keeps an unresolved
+    # reference unless DC saves the parameterized modules as templates.
+    # The variable has no effect on a design without such instances.
+    new_read_block = (
+        "set hdlin_auto_save_templates true\n"
+        "read_file -format sverilog ${verilogDir}/${topModule}.sv"
+    )
     if old_read_block not in text:
         raise ValueError("synthesis template missing expected read_file block")
     text = text.replace(old_read_block, new_read_block)

@@ -69,6 +69,8 @@ class NPUWattchArgs:
     vectorless_activity: Optional[float] = None
     # Print the instance hierarchy (report.tree) of the design.
     tree: bool = False
+    # Show f_max, the critical paths, and the clock-range warnings.
+    show_fmax: bool = False
     # Write the HTML/JSON PPA report (manual §8) to this directory.
     report_dir: Optional[Path] = None
     node: str = "7nm"
@@ -166,6 +168,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Print the instance-hierarchy tree of the modeled architecture "
              "(estimator + harness modes; Accelergy descriptions show their "
              "declared hierarchy, native/harness inputs the reconstructed one).",
+    )
+    parser.add_argument(
+        "--fmax",
+        dest="show_fmax",
+        action="store_true",
+        help="Show timing: the f_max check and the critical path of each "
+             "component in the report, and the clock-range warnings of the "
+             "logic models (off by default).",
     )
     parser.add_argument(
         "--report",
@@ -477,6 +487,7 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         out_dir=out_dir,
         vectorless_activity=ns.vectorless_activity,
         tree=bool(ns.tree),
+        show_fmax=bool(ns.show_fmax),
         report_dir=Path(ns.report_dir) if ns.report_dir else None,
         node=ns.node or "7nm",
         node_explicit=ns.node is not None,

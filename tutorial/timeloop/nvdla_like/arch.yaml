@@ -1,0 +1,131 @@
+architecture:
+  # ============================================================
+  # NVDLA-like accelerator (nv_small-class convolution core)
+  #   int8 inputs/weights, int32 accumulation
+  #   8 MAC cells (output channels) x 8 multipliers (input channels),
+  #   each cell reducing its 8 products through an adder tree
+  #   64 KB convolution buffer (CBUF) + 1 KB accumulator (CACC) = 65 KB
+  #   SDP post-processing (bias, batch norm, ReLU, int8 requantization)
+  # Matches Table IV of the NPUWattch HPCA'26 paper.
+  # ============================================================
+  version: 0.4
+  nodes:
+  - !Container # Top-level system
+    name: system
+
+  - !Component # DRAM main memory
+    name: DRAM
+    class: DRAM
+    attributes:
+      type: "LPDDR4"
+      width: 64
+      datawidth: 8
+    constraints:
+      # No partial-sum spill: the reduction loops (C, R, S) are the innermost
+      # DRAM loops, so CACC holds an output tile until its reduction ends.
+      temporal: {permutation: [C, R, S]}
+
+  - !Container # NVDLA convolution core
+    name: nvdla
+    attributes:
+      technology: "7nm"
+
+  - !Component # SDP: post-processing of the CACC outputs on their way to DRAM.
+    # Timeloop has no model for it and accepts only storage/compute/network
+    # classes, so for Timeloop it is a zero-cost level (dummy_storage) that
+    # holds no data. NPUWattch prices it from the user component library
+    # entry that the attribute user_component names (user_components.yaml).
+    name: sdp
+    class: dummy_storage
+    attributes:
+      user_component: "nvdla_sdp"
+      depth: 0
+      width: 64
+      datawidth: 8
+    constraints:
+      dataspace: {bypass: [Inputs, Weights, Outputs]}
+      # No loops at this level: it holds no data, so a loop here only
+      # enlarges the mapper's search space.
+      temporal: {factors: [C=1, M=1, R=1, S=1, P=1, Q=1, N=1, G=1]}
+
+  - !Parallel # CBUF (features + weights) next to CACC (partial sums)
+    nodes:
+    - !Component # Convolution buffer: 16 banks x 512 rows x 64 bit = 64 KB
+      name: cbuf
+      class: smartbuffer_SRAM
+      attributes:
+        depth: 8192
+        width: 64
+        n_banks: 16
+        datawidth: 8
+        read_bandwidth: 16
+        write_bandwidth: 16
+      constraints:
+        dataspace: {keep: [Inputs, Weights], bypass: [Outputs]}
+        # Only reduction loops here (timeloopfe puts this level above CACC):
+        # an output loop here would cycle the output tiles inside a DRAM
+        # reduction loop and spill partial sums.
+        temporal: {factors: [M=1, P=1, Q=1, N=1, G=1]}
+
+    - !Component # Accumulator assembly buffer: 32 rows x 256 bit = 1 KB, int32
+      name: cacc
+      class: smartbuffer_SRAM
+      attributes:
+        depth: 32
+        width: 256
+        datawidth: 32
+        read_bandwidth: 8
+        write_bandwidth: 8
+      constraints:
+        dataspace: {keep: [Outputs], bypass: [Inputs, Weights]}
+
+  - !Container # 8 MAC cells, one output channel each
+    name: mac_cell
+    spatial: {meshY: 8}
+    constraints:
+      spatial:
+        permutation: [M]
+        factors: [C=1, R=1, S=1, P=1, Q=1, N=1, G=1]
+
+  - !Container # 8 multipliers per cell, one input channel each (adder-tree reduced)
+    name: lane
+    spatial: {meshX: 8}
+    constraints:
+      spatial:
+        permutation: [C]
+        factors: [M=1, R=1, S=1, P=1, Q=1, N=1, G=1]
+
+  - !Parallel # Per-lane operand registers (2 B local buffer)
+    nodes:
+    - !Component # Weight held by the lane (weight shadow register)
+      name: weight_reg
+      class: regfile
+      attributes:
+        depth: 1
+        width: 8
+        datawidth: 8
+      constraints:
+        dataspace: {keep: [Weights], bypass: [Inputs, Outputs]}
+        temporal: {factors: [R=1, S=1, M=1, C=1]}
+
+    - !Component # Feature operand broadcast to the lane
+      name: input_reg
+      class: regfile
+      attributes:
+        depth: 1
+        width: 8
+        datawidth: 8
+      constraints:
+        dataspace: {keep: [Inputs], bypass: [Weights, Outputs]}
+        temporal: {factors: [P=1, Q=1, C=1, N=1]}
+
+    # Partial sums are not held per lane: the adder tree reduces them
+    # spatially on their way to CACC.
+    - !Nothing {constraints: {dataspace: {keep: [Outputs]}}}
+
+  - !Component # int8 x int8 multiply + adder-tree accumulate
+    name: mac
+    class: intmac
+    attributes:
+      multiplier_width: 8
+      adder_width: 32

@@ -24,8 +24,8 @@ The engine and the definition files are separate:
   characterized ``POWER_MODES`` and the trained models. Do not edit it.
 - The definition files of a design are inputs of a run: its compound
   components and its projection, in JSON or YAML. You can read, copy, and
-  edit these files. Examples are in ``tutorial/pytorchsim/`` and
-  ``tutorial/timeloop/``. ``npuwattch_harness.run_inputs`` finds and loads
+  edit these files. Examples are in ``tutorial/pytorchsim/<design>/`` and
+  ``tutorial/timeloop/<design>/``. ``npuwattch_harness.run_inputs`` finds and loads
   the files of a run.
 """
 
