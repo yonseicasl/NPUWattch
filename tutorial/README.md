@@ -16,7 +16,7 @@ tutorial/
     └── tpu_like_bf16/             the same run, PEs fixed to bf16 MACs
 ```
 
-`npuwattch_basic/` is a three-part introduction (motivation and method, the
+`npuwattch_basic/` is a four-part introduction (motivation, method, the
 structure of a run and the files each harness reads, and how to bring your
 own data). Its exercises use the two examples below.
 

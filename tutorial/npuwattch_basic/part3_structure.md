@@ -1,9 +1,9 @@
-# Part 2 — How NPUWattch is built, and what it reads
+# Part 3 — How NPUWattch is built, and what it reads
 
-This part explains the structure of NPUWattch at the level you need in order
-to use it with your own simulator runs. It does not go through the source
-code. The code is still changing from release to release, but the structure
-below and the file formats are stable.
+This part explains how NPUWattch is put together, at the level you need
+to use it with your own simulator runs. It stays out of the source code.
+The structure below and the file formats are what you work with, and they
+are stable across releases.
 
 The part ends with two short exercises on the `tutorial/timeloop` and
 `tutorial/pytorchsim` examples.
@@ -13,37 +13,40 @@ The part ends with two short exercises on the `tutorial/timeloop` and
 Every NPUWattch run follows the same path, whatever the input is:
 
 ```
- your simulator's files              ┌──────────────┐
- (Accelergy v0.4 arch.yaml   ──────► │   harness    │ ──► description.yaml  (what the hardware is)
-  + Timeloop stats, or               │  timeloop |  │ ──► activity.csv      (what it did, per window)
-  a PyTorchSim run folder)           │  pytorchsim  │ ──► warnings, notes, instance tree
- three definition files      ──────► └──────────────┘
- (compound_components.yaml,                   │
-  projection.yaml,                            ▼
-  user_components.yaml)             ┌──────────────────┐     ┌────────────────────────┐
-                                    │  estimator core  │ ◄── │ providers              │
-                                    │  per component:  │     │  logic MLPs (14 types) │
-                                    │  energy/access,  │     │  SRAM MLP              │
-                                    │  leakage, area,  │     │  DRAM / link constants │
-                                    │  critical path   │     │  your user components  │
-                                    └──────────────────┘     └────────────────────────┘
-                                              │
-                                              ▼
+                                    ┌──────────────────┐          NPUWATTCH ARTIFACTS
+ your simulator's files *1   ─────► │     HARNESS      │ ──► description.yaml  (what the hardware is)
+                                    │    pytorchsim    │ ──► activity.csv      (what it did)
+ three definition files      ─────► │     timeloop     │ ──► warnings, notes, instance tree
+ (compound_components.yaml,         └──────────────────┘
+  projection.yaml,                           │
+  user_components.yaml)                      ▼
+                                    ┌──────────────────┐     ┌──────────────────────────┐
+                                    │  NPUWATTCH CORE  │     │        ESTIMATORS        │
+                                    │  per component:  │     │  logic models            │
+                                    │  energy/access,  │ ◄── │  SRAM model              │
+                                    │  leakage, area,  │     │  DRAM / link constants   │
+                                    │  critical path   │     │  user components scaler  │
+                                    └──────────────────┘     └──────────────────────────┘
+                                             │
+                                             ▼
                                     ┌──────────────────┐
-                                    │   aggregation    │  count × energy, leakage × time, per window
+                                    │   AGGREGATION    │  count × energy, leakage × time
                                     └──────────────────┘
-                                              │
-                                              ▼
-                               console table · report.html · report.json
+                                             │
+                                             ▼
+                                        USER REPORT
+                          console table · report.html · report.json
+
+ *1 Currently supports Accelergy v0.4 arch.yaml + Timeloop stats, or a PyTorchSim run folder
 ```
 
-The important idea is the middle layer. A **harness** turns a simulator's own
-files into two plain NPUWattch files, a **description** and an **activity
-table**. Everything after that point is the same for every simulator. If you
-run with `-o DIR`, NPUWattch writes those two files to disk, and you can run
-them again with `npuwattch -d description.yaml -l activity.csv` without the
-harness. That is also the path for a simulator NPUWattch has no harness for:
-write the two files yourself (Part 3).
+The key idea is the middle layer. A **harness** turns a simulator's own
+files into two plain NPUWattch files: a **description** and an **activity
+table**. Everything after that point is the same for every simulator. If
+you run with `-o DIR`, NPUWattch writes those two files to disk, and you
+can run them again with `npuwattch -d description.yaml -l activity.csv`
+without the harness. That is also the path for a simulator that has no
+harness yet: write the two files yourself (Part 4).
 
 ## 2. The native model: a description and an activity table
 
@@ -94,7 +97,7 @@ The primitives that have trained models:
 | Fabric | `simplemux`, `crossbar`, `fattree`, `foldedclos` | `data_width`, `net_inputs`, `net_outputs`, radix, levels |
 | SRAM | `sram` | `data_width`, `mem_depth_per_bank`, `mem_banks`, port counts |
 
-Two more classes are priced from tables rather than models: `hbm` (DRAM, per
+Two more classes get their cost from tables rather than models: `hbm` (DRAM, per
 bit and per row activation) and `d2dlink` (a die-to-die link, per bit).
 
 ### 2.2 `activity.csv`: what the hardware did
@@ -116,21 +119,21 @@ run and stays at the end of the file.
 - **`window`** is a slice of the run: one layer for Timeloop, one kernel for
   PyTorchSim. The report shows energy per window and the sum.
 - **`component`** is a name from the description.
-- **`event`** is a label for people: `op`, `read`, `write`, `transfer`, or
-  `idle`. It does not change the energy.
-- **`mode`** does change the energy. It names the **stimulus mode** the
-  primitive was characterized in: `hold_b` for a weight-stationary MAC,
-  `random` for random operands, `read` or `write` for a memory, `idle` for
-  a clocked but inactive block, and so on. Each primitive has its own list
-  of characterized modes, and a mode that was never characterized for a
-  primitive is rejected, not guessed.
+- **`event`** is a label for the reader: `op`, `read`, `write`,
+  `transfer`, or `idle`. It has no effect on the energy.
+- **`mode`** sets the energy. It names the **stimulus mode** the primitive
+  was characterized in: `hold_b` for a weight-stationary MAC, `random` for
+  random operands, `read` or `write` for a memory, `idle` for a clocked
+  but inactive block, and so on. Each primitive has its own list of
+  characterized modes, and NPUWattch checks every row against that list,
+  so a typo in a mode name is caught before anything is computed.
 - **`count`** is the number of events in that window, summed over all
   instances of the component.
 
-A component that has no row in a window is charged leakage for the window
-and no dynamic energy. If a run has no activity at all, NPUWattch falls back
-to a **vectorless** estimate: one cycle at 25% of random switching, labeled
-VECTORLESS in every output.
+A component with no row in a window is charged leakage for that window
+and no dynamic energy. If a run has no activity at all, NPUWattch gives a
+**vectorless** estimate instead: one cycle at 25% of random switching,
+labeled VECTORLESS in every output.
 
 ### 2.3 How a number is made
 
@@ -140,12 +143,13 @@ For each component in each window:
 - leakage energy = `count × leakage power × window time`, with window time = cycles ÷ clock
 - area = `count × area per instance`
 
-The per-event energy, leakage power, area, and critical-path delay come from
-the **providers**. A request for a component goes down a short chain: the
-SRAM model answers `sram`, the logic models answer the 14 logic primitives,
-your user library answers your own class names, and the tables answer `hbm`
-and `d2dlink`. If nobody answers, the run stops with an error that names the
-component. NPUWattch never fills a gap with a silent placeholder.
+The per-event energy, leakage power, area, and critical-path delay come
+from the **providers**. A request for a component goes down a short chain.
+The SRAM model answers `sram`, the logic models answer the 14 logic
+primitives, your user library answers your own class names, and the tables
+answer `hbm` and `d2dlink`. If no provider has a model for a component, the
+run stops and names that component, so every number in a report comes
+from a model or from data you supplied.
 
 The `model` column in the console summary tells you which provider answered:
 `cal` for a trained model, `const` for a table, `user` for your library.
@@ -174,20 +178,21 @@ declares which input files it needs (the CLI flags for a harness are
 generated from that declaration), reads them, and returns the description,
 the activity rows, the instance tree, and two kinds of messages:
 
-- **WARNING**: the result may be wrong. NPUWattch assumed a value, extrapolated
-  beyond the characterized range, or found inputs that disagree.
-- **INFO** (a note): a convention or exclusion you should know about, such as
-  a counter that is deliberately not charged. Nothing is wrong.
+- **WARNING**: the result may be off. NPUWattch assumed a value,
+  extrapolated beyond the characterized range, or found inputs that
+  disagree with each other.
+- **INFO**: a convention or exclusion you should know about, such as a
+  counter that is left out on purpose. Nothing is wrong.
 
 Read the warnings before you read the numbers.
 
 ### 3.1 The three definition files
 
-Both harnesses read three YAML files from the folder of your run. They are
-part of your input. If one is missing, the run stops.
+Both harnesses read three YAML files from the folder of your run. They
+are part of your input, and NPUWattch asks for them if one is missing.
 
-**`compound_components.yaml`** describes hardware that your simulator sees as
-one unit but that NPUWattch prices as several primitives. A systolic array is
+**`compound_components.yaml`** describes hardware that your simulator sees
+as one unit but that NPUWattch models as several primitives. A systolic array is
 a set of MACs plus weight registers. A vector lane is an ALU plus a register
 file plus a scratchpad.
 
@@ -235,7 +240,7 @@ you list it under `waivers` with a reason.
 **`user_components.yaml`** holds blocks that have no trained model: a control
 processor, a post-processing unit, a DMA engine from your own RTL. You give
 the area, the leakage, and the energy of each action, at a reference node.
-Part 3 shows the full entry.
+Part 4 shows the full entry.
 
 ### 3.2 The Timeloop harness
 
@@ -364,16 +369,18 @@ command counts. Counters that gem5 reports once for the whole kernel are
 split between the arrays in proportion to their active cycles, with a
 warning that says so.
 
-**What is left out.** The scalar core and its caches, the VCIX serializer,
-and DRAM standby power are not charged. The INFO block of every run lists
-them, so the scope of the number is always visible.
+**What is left out.** The scalar core and its caches, the VCIX
+serializer, and DRAM standby power are not included in the totals. The
+INFO block of every run lists them, so you always know what the number
+covers.
 
 ## 4. Reading the result
 
 In the console, from top to bottom:
 
-1. **`--tree`**: the hardware as NPUWattch understood it. Check this first. A
-   missing component or a wrong size here makes every number below wrong.
+1. **`--tree`**: the hardware as NPUWattch understood it. Check this
+   first. If a component is missing or has the wrong size here, every
+   number after it will be off.
 2. **WARNING and INFO lines**: every assumption, extrapolation, and
    exclusion.
 3. **Per-window energy** and **per-window component energy**: one row per
@@ -390,8 +397,8 @@ file and message. `report.json` has the same numbers for scripts.
 
 ## 5. Try it
 
-Both exercises use data that ships with the tutorial. Nothing is downloaded,
-and no EDA tool is involved.
+Both exercises use data that ships with the tutorial. There is nothing
+to download, and no EDA tool is involved.
 
 **Exercise A — Timeloop, Eyeriss-like, AlexNet.**
 
@@ -433,4 +440,4 @@ directly:
 npuwattch -d native/description.yaml -l native/activity.csv
 ```
 
-The totals match the harness run. This is the starting point for Part 3.
+The totals match the harness run. This is the starting point for Part 4.
