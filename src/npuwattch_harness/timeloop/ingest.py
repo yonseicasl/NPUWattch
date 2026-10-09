@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from npuwattch.arch_synth import EmittedArch
+from npuwattch.diagnostics import info, warning
 from ..compounds import Compound, CompoundBundleError, resolve_action, resolve_compound
 from ..registry import HarnessError
 from ..run_inputs import (
@@ -90,8 +91,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     attach_user_components(description, library, library_path, notes)
     used_compounds = {cls for cls, _ in compound_instances.values()}
     notes.extend(
-        f"compound component {name!r} ({compounds_path.name}): parsed, but "
-        f"not used"
+        info(7101, name=name, file=compounds_path.name)
         for name in bundle.compounds if name not in used_compounds)
     compound_bindings = _compound_bindings(bundle, compound_instances)
 
@@ -100,9 +100,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
         from .stats import activity_from_stats
 
         if opts.get("vectorless_activity") is not None:
-            warnings.append(
-                "--vectorless-activity ignored: the Timeloop stats provide "
-                "real activity")
+            warnings.append(warning(7102))
         rows, total_cycles, window_labels, s_warnings, s_notes = (
             activity_from_stats(
                 Path(stats_path), description,
@@ -131,7 +129,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
         from .tree import tree_from_accelergy
         hierarchy = tree_from_accelergy(arch_path)
     except Exception as e:                      # The view is optional. Continue.
-        warnings.append(f"hierarchy view unavailable: {e}")
+        warnings.append(warning(7103, error=e))
 
     return EmittedArch(
         description=description,
@@ -173,10 +171,8 @@ def _expand_compound(compound: Compound, name: str, entry: Any,
             for key, value in attrs.items():
                 if (isinstance(value, str) and key in CANONICAL
                         and CANONICAL[key].kind in ("int", "float")):
-                    raise CompoundBundleError(
-                        f"element {element!r}: {key} = {value!r} has no "
-                        f"value; the Accelergy component does not declare "
-                        f"that attribute as an integer")
+                    raise CompoundBundleError.nw(
+                        7104, element=element, key=key, value=value)
             warnings.extend(validate_attributes(rel.primitive, attrs,
                                                 component=component))
             components.append({
@@ -186,10 +182,9 @@ def _expand_compound(compound: Compound, name: str, entry: Any,
                 "attributes": attrs,
             })
     except (CompoundBundleError, NamingError) as e:
-        raise HarnessError(
-            f"{name}: compound component {compound.name!r}: {e} (the "
-            f"symbols of this component are: "
-            f"{', '.join(sorted(symbols)) or 'none'})") from e
+        raise HarnessError.nw(
+            7105, component=name, compound=compound.name, error=e,
+            symbols=", ".join(sorted(symbols)) or "none") from e
     return symbols
 
 
@@ -205,16 +200,14 @@ def _compound_bindings(
     """
     projection = bundle.projections.get("timeloop")
     if projection is None:
-        raise HarnessError(
-            f"the projection of a Timeloop run must declare `tool: timeloop` "
-            f"(found: {', '.join(sorted(bundle.projections)) or 'none'})")
+        raise HarnessError.nw(
+            7106, found=", ".join(sorted(bundle.projections)) or "none")
     for cname, actions in projection.compounds.items():
         unknown = sorted(set(actions) - set(_ACTION_EVENT))
         if unknown:
-            raise HarnessError(
-                f"projection: compound {cname!r} has action(s) "
-                f"{', '.join(unknown)}; the Timeloop events are "
-                f"{', '.join(_ACTION_EVENT)}")
+            raise HarnessError.nw(
+                7107, compound=cname, actions=", ".join(unknown),
+                events=", ".join(_ACTION_EVENT))
     bindings: Dict[str, Dict[str, List[Tuple[str, str, int]]]] = {}
     for name, (cname, symbols) in compound_instances.items():
         per_event: Dict[str, List[Tuple[str, str, int]]] = {}
@@ -224,7 +217,8 @@ def _compound_bindings(
                     projection, bundle.compounds[cname], action, None,
                     bundle.primitive_modes, extra_symbols=symbols)
             except CompoundBundleError as e:
-                raise HarnessError(f"{name}: projection {cname}.{action}: {e}") from e
+                raise HarnessError.nw(7108, component=name, compound=cname,
+                                      action=action, error=e) from e
             per_event[_ACTION_EVENT[action]] = [
                 (f"{name}.{el.element}", el.stim_mode, resolved.scale)
                 for el in resolved.elements]
@@ -311,10 +305,8 @@ def description_from_accelergy(
                 components.append({
                     "name": name, "class": linked,
                     "count": int(entry.instance_count), "attributes": {}})
-                notes.append(
-                    f"{name}: attribute user_component {linked!r} — the user "
-                    f"component library entry gives its cost (the class "
-                    f"{entry.comp_class!r} is for Timeloop only)")
+                notes.append(info(7109, component=name, entry=linked,
+                                  comp_class=entry.comp_class))
             else:
                 unmapped.append(
                     f"{name} (user_component {linked!r} is not in the user "
@@ -325,10 +317,10 @@ def description_from_accelergy(
                 compounds[class_name], name, entry, components, warnings)
             if compound_instances is not None:
                 compound_instances[name] = (class_name, symbols)
-            notes.append(
-                f"{name}: class {entry.comp_class!r} is the compound "
-                f"component {class_name!r} "
-                f"({', '.join(compounds[class_name].elements)})")
+            notes.append(info(
+                7110, component=name, comp_class=entry.comp_class,
+                compound=class_name,
+                elements=", ".join(compounds[class_name].elements)))
             continue
         primitive = primitive_for(entry.comp_class, entry.subclass,
                                   entry.attributes)
@@ -340,9 +332,9 @@ def description_from_accelergy(
                 components.append({
                     "name": name, "class": user_class,
                     "count": int(entry.instance_count), "attributes": {}})
-                notes.append(
-                    f"{name}: class {entry.comp_class!r} uses the user "
-                    f"component library entry {user_class!r}")
+                notes.append(info(7111, component=name,
+                                  comp_class=entry.comp_class,
+                                  entry=user_class))
             else:
                 unmapped.append(f"{name} (class {entry.comp_class!r})")
             continue
@@ -353,9 +345,7 @@ def description_from_accelergy(
 
         if primitive == "regfile" and reclassify_regfile_as_sram(attrs):
             primitive = "sram"
-            notes.append(
-                f"{name}: declared a regfile but holds more than "
-                f"32 Kib — modeled with the SRAM estimator")
+            notes.append(info(7112, component=name))
 
         # Check the names. One incorrect component must not stop a large
         # description. It is not in the description and the run gives a
@@ -364,9 +354,7 @@ def description_from_accelergy(
             warnings.extend(validate_attributes(primitive, attrs,
                                                 component=name))
         except NamingError as e:
-            warnings.append(
-                f"{name}: {e} — NOT modeled: its energy and area are NOT "
-                f"included in these results")
+            warnings.append(warning(7113, component=name, error=e))
             continue
         components.append({
             "name": name,
@@ -376,17 +364,10 @@ def description_from_accelergy(
         })
 
     if unmapped:
-        warnings.append(
-            f"{len(unmapped)} component(s) have no NPUWattch primitive and are "
-            f"NOT modeled (their energy and area are NOT included in these "
-            f"results): {', '.join(sorted(unmapped))} — to include one, "
-            f"define its class as a compound component "
-            f"(--compound-components) or add it to the user component "
-            f"library (--user-components)")
+        warnings.append(warning(7114, count=len(unmapped),
+                                components=", ".join(sorted(unmapped))))
     if not components:
-        raise ValueError(
-            f"{arch_path}: no enabled components found — is this an Accelergy "
-            f"v0.4 architecture description?")
+        raise HarnessError.nw(7115, path=arch_path)
 
     # A description has one technology block. Accelergy declares the node for
     # each component. The run uses the node of the CLI, not the node in the
@@ -397,11 +378,12 @@ def description_from_accelergy(
     # - With the default node (7nm), the message is a warning.
     foreign = sorted(n for n in declared_nodes if n != str(tech.node).lower())
     if foreign:
-        msg = (f"the description declares technology {', '.join(foreign)} but "
-               f"the run is evaluated at {tech.node} (--node"
-               f"{'' if node_explicit else ' default'}); NPUWattch models the "
-               f"node it is told to")
-        (notes if node_explicit else warnings).append(msg)
+        if node_explicit:
+            notes.append(info(7116, declared=", ".join(foreign),
+                              node=tech.node))
+        else:
+            warnings.append(warning(7117, declared=", ".join(foreign),
+                                    node=tech.node))
 
     clock_mhz, clock_note = _clock_mhz(flattener, tech, default_clock_mhz)
     if clock_note:
@@ -461,11 +443,10 @@ def _clock_mhz(flattener: Any, tech: Any,
     if explicit:
         note = None
         if from_desc and abs(from_desc - float(explicit)) > 1e-6:
-            note = (f"clock: --clock-mhz {explicit:g} MHz overrides the "
-                    f"description's {from_desc:g} MHz")
+            note = info(7118, clock_mhz=float(explicit),
+                        declared_mhz=from_desc)
         return float(explicit), note
     if from_desc:
-        return from_desc, f"clock: {from_desc:g} MHz, from the description"
+        return from_desc, info(7119, clock_mhz=from_desc)
     fallback = float(default_clock_mhz or 200.0)
-    return fallback, (f"clock: the description declares none — assuming "
-                      f"{fallback:g} MHz")
+    return fallback, info(7120, clock_mhz=fallback)

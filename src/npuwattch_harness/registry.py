@@ -60,6 +60,7 @@ adds its flags to the CLI without a change to the parser.
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError
 import importlib
 import pkgutil
 from dataclasses import dataclass, field
@@ -76,7 +77,7 @@ __all__ = [
 ]
 
 
-class HarnessError(ValueError):
+class HarnessError(NPUWattchError, ValueError):
     """A harness is unknown, its declaration is incorrect, or an input is incorrect."""
 
 
@@ -116,14 +117,13 @@ def available_harnesses() -> Dict[str, HarnessInfo]:
             continue
         name = spec.get("name")
         if not name:
-            raise HarnessError("HARNESS_SPEC missing 'name'")
+            raise HarnessError.nw(5001)
         inputs = spec.get("inputs")
         if not isinstance(inputs, dict) or not inputs:
-            raise HarnessError(
-                f"harness {name!r}: 'inputs' must be a non-empty dict")
+            raise HarnessError.nw(5002, harness=name)
         ingest = spec.get("ingest")
         if not callable(ingest):
-            raise HarnessError(f"harness {name!r}: 'ingest' must be callable")
+            raise HarnessError.nw(5003, harness=name)
         found[name] = HarnessInfo(
             name=name,
             description=spec.get("description", ""),
@@ -162,9 +162,9 @@ def cli_flags() -> Dict[str, Dict[str, Any]]:
                     "dest": flag.lstrip("-").replace("-", "_"),
                     "choices": decl.get("choices"), "by_harness": {}})
                 if (entry["name"], entry["is_option"]) != (name, is_option):
-                    raise HarnessError(
-                        f"flag {flag} has two meanings: {entry['name']!r} and "
-                        f"{name!r} (harness {hname!r})")
+                    raise HarnessError.nw(
+                        5004, flag=flag, first=entry["name"], second=name,
+                        harness=hname)
                 entry["by_harness"][hname] = decl
     for entry in flags.values():
         parts = []
@@ -182,7 +182,7 @@ def get_harness(name: str) -> HarnessInfo:
     harnesses = available_harnesses()
     if name not in harnesses:
         avail = ", ".join(sorted(harnesses)) or "(none)"
-        raise HarnessError(f"unknown harness {name!r}; available: {avail}")
+        raise HarnessError.nw(5005, harness=name, available=avail)
     return harnesses[name]
 
 
@@ -192,10 +192,9 @@ def _validate_inputs(
     """Check the named inputs against the declaration of the harness."""
     unknown = sorted(set(inputs) - set(info.inputs))
     if unknown:
-        raise HarnessError(
-            f"harness {info.name!r}: unknown input(s) {', '.join(unknown)}; "
-            f"declared: {', '.join(sorted(info.inputs))}"
-        )
+        raise HarnessError.nw(
+            5006, harness=info.name, unknown=", ".join(unknown),
+            declared=", ".join(sorted(info.inputs)))
     resolved: Dict[str, Path] = {}
     for iname, decl in info.inputs.items():
         value = inputs.get(iname)
@@ -203,10 +202,12 @@ def _validate_inputs(
             if decl.get("required", True):
                 flag = decl.get("flag", iname)
                 hint = decl.get("hint", "")
-                raise HarnessError(
-                    f"harness {info.name!r}: missing required input {iname!r} "
-                    f"({flag}){' — ' + hint if hint else ''}"
-                )
+                if hint:
+                    raise HarnessError.nw(5007, harness=info.name,
+                                          input_name=iname, flag=flag,
+                                          hint=hint)
+                raise HarnessError.nw(5008, harness=info.name,
+                                      input_name=iname, flag=flag)
             continue
         path = Path(value)
         kind = decl.get("kind", "dir")
@@ -217,10 +218,8 @@ def _validate_inputs(
         else:
             ok, expected = path.is_dir(), "directory"
         if not ok:
-            raise HarnessError(
-                f"harness {info.name!r}: input {iname!r} is not a "
-                f"{expected}: {path}"
-            )
+            raise HarnessError.nw(5009, harness=info.name, input_name=iname,
+                                  expected=expected, path=path)
         resolved[iname] = path
     return resolved
 

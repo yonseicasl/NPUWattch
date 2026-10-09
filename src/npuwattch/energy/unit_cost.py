@@ -24,13 +24,14 @@ in the user component library (``npuwattch.user_components``).
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import CRITICAL, NPUWattchError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
 import yaml
 
-from .dram_table import default_table
+from .dram_table import EnergyTableError, default_table
 
 try:
     from typing import Protocol, runtime_checkable
@@ -38,7 +39,7 @@ except ImportError:  # pragma: no cover - py<3.8
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
 __all__ = ["TechContext", "UnitCostProvider", "NoModelError",
-           "NoModelProvider",
+           "NoModelProvider", "ProviderChainError",
            "D2DLinkCostProvider", "D2D_ENERGY_PER_BIT_PJ",
            "HBMCostProvider", "HBM_ACT_ENERGY_PJ",
            "HBM_ACCESS_ENERGY_PER_BIT_PJ", "HBM_REF_ENERGY_PJ"]
@@ -100,8 +101,14 @@ class UnitCostProvider(Protocol):
 # End of the provider chain
 # ---------------------------------------------------------------------------
 
-class NoModelError(ValueError):
+class NoModelError(NPUWattchError, ValueError):
     """No provider has a model for a primitive."""
+
+
+class ProviderChainError(NPUWattchError, ValueError):
+    """The provider chain is not correct (an internal error of NPUWattch)."""
+
+    level = CRITICAL
 
 
 @dataclass(frozen=True)
@@ -118,10 +125,7 @@ class NoModelProvider:
     calibrated: bool = True
 
     def _raise(self, primitive: str) -> float:
-        raise NoModelError(
-            f"no model for class {primitive!r} — NPUWattch has no estimator "
-            f"for it; give its area and action energies in the user component "
-            f"library (--user-components)")
+        raise NoModelError.nw(3001, primitive=primitive)
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
         return self._raise(primitive)
@@ -150,11 +154,9 @@ def _load_d2d_energy_per_bit() -> float:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))["energy_pj_per_bit"]
     except (OSError, yaml.YAMLError, KeyError, TypeError) as e:
-        raise ValueError(f"link energy table {path}: {e}") from e
+        raise EnergyTableError.nw(3002, path=path, error=e) from e
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-        raise ValueError(
-            f"link energy table {path}: energy_pj_per_bit must be a positive "
-            f"number, got {value!r}")
+        raise EnergyTableError.nw(3003, path=path, value=value)
     return float(value)
 
 
@@ -190,9 +192,8 @@ class D2DLinkCostProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self.fallback is None:
-            raise ValueError(
-                f"d2dlink provider got primitive {primitive!r} and has no fallback"
-            )
+            raise ProviderChainError.nw(3004, provider="d2dlink",
+                                        primitive=primitive)
         return getattr(self.fallback, method)(primitive, features)
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
@@ -278,9 +279,8 @@ class HBMCostProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self.fallback is None:
-            raise ValueError(
-                f"hbm provider got primitive {primitive!r} and has no fallback"
-            )
+            raise ProviderChainError.nw(3004, provider="hbm",
+                                        primitive=primitive)
         return getattr(self.fallback, method)(primitive, features)
 
     @staticmethod

@@ -47,6 +47,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import torch
 
+from npuwattch.diagnostics import error, info
+
 _HERE = Path(__file__).resolve().parent
 
 
@@ -538,14 +540,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     for m in models:
         if m not in smlp.MODEL_NAMES:
-            ap.error(f"unknown model '{m}' (choose from {smlp.MODEL_NAMES})")
+            ap.error(error(8280, model=m, known=smlp.MODEL_NAMES))
 
     ds = sram.load_dataset(ddir)
     ds_hash = smlp.dataset_hash(ddir)
     samples, dropped = assemble(ds)
-    print(f"dataset {ddir} sha256={ds_hash[:12]}…  samples: "
-          + ", ".join(f"{m}={len(samples[m])}" for m in smlp.MODEL_NAMES)
-          + f", dropped={len(dropped)}")
+    info(8281, path=ddir, sha=ds_hash[:12],
+         samples=", ".join(f"{m}={len(samples[m])}" for m in smlp.MODEL_NAMES),
+         dropped=len(dropped)).emit()
 
     report: Dict[str, Any] = {
         "dataset": {"dir": str(ddir), "sha256": ds_hash,
@@ -616,7 +618,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         report["gates"][model] = {"pass_10pct": not over10,
                                   "ops_over_5pct": over5,
                                   "ops_over_10pct": over10}
-        print(f"[{model}] arch={arch} test MAPE={ev['mape']:.3%} "
+        print(f"[{model}] arch={arch} test MAPE={ev['mape']:.3%} "  # nw-lint: text
               f"ρ={ev['spearman']:.3f} epochs={res.epochs_run} "
               f"({time.time() - t0:.0f}s)  over5%={over5 or '-'}")
 
@@ -628,7 +630,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         report["baseline_vs_table"] = table_baseline(ds, results, test_sets)
 
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
-    print(f"wrote {out_dir / 'eval_report.json'}")
+    info(8003, path=out_dir / "eval_report.json").emit()
     return 0
 
 

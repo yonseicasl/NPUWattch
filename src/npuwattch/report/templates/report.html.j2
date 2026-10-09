@@ -63,6 +63,11 @@
   .tree .leaf::before{content:"\00B7  ";color:var(--muted)}
   .tree .cnt{color:var(--accent);font-weight:600}
   .tree .lbl{color:var(--muted)}
+  table.msgs th,table.msgs td{text-align:left;vertical-align:top;font-size:12.5px}
+  table.msgs td:nth-child(3){white-space:normal}
+  table.msgs th:last-child,table.msgs td:last-child{text-align:right}
+  table.msgs tr.lvl-warning td:nth-child(2){color:var(--warn-ink);font-weight:600}
+  table.msgs tr.lvl-error td:nth-child(2),table.msgs tr.lvl-critical td:nth-child(2){color:var(--err-ink);font-weight:600}
   ul.warnings{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted)}
   footer{color:var(--muted);font-size:11px;margin:24px 0}
   code{background:#f0efec;border-radius:4px;padding:0 4px;font-size:12px}
@@ -306,20 +311,29 @@
         {{ f.name }}{% if f.sha %} <code>{{ f.sha[:12] }}</code>{% endif %}{{ ", " if not loop.last }}
       {%- else %}(in-memory run — no input files recorded){% endfor %}
     </div>
-    {% if provenance.warnings %}
+    {% set dw = provenance.diagnostics.warnings %}
+    {% set dn = provenance.diagnostics.notes %}
+    {% if dw %}
     <details><summary style="cursor:pointer;font-size:13px">
-      {{ provenance.warnings|length }} warnings recorded during this run</summary>
-      <ul class="warnings">
-      {% for w in provenance.warnings %}<li>{{ w }}</li>{% endfor %}
-      </ul></details>
+      {{ provenance.warnings|length }} warnings recorded during this run
+      ({{ dw|length }} distinct)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+        {% for m in dw %}<tr class="lvl-{{ m.level|lower }}"><td><code>{{ m.code or "—" }}</code></td>
+          <td>{{ m.level }}</td><td>{{ m.message }}</td><td>{{ m.count }}</td></tr>
+        {% endfor %}
+      </table></div></details>
     {% endif %}
-    {% if provenance.notes %}
+    {% if dn %}
     <details><summary style="cursor:pointer;font-size:13px">
-      {{ provenance.notes|length }} declared exclusions (INFO — deliberate,
-      not modeling gaps)</summary>
-      <ul class="warnings">
-      {% for n in provenance.notes %}<li>{{ n }}</li>{% endfor %}
-      </ul></details>
+      {{ provenance.notes|length }} declared exclusions and notes (INFO —
+      deliberate, not modeling gaps)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+        {% for m in dn %}<tr class="lvl-{{ m.level|lower }}"><td><code>{{ m.code or "—" }}</code></td>
+          <td>{{ m.level }}</td><td>{{ m.message }}</td><td>{{ m.count }}</td></tr>
+        {% endfor %}
+      </table></div></details>
     {% endif %}
   </div>
 

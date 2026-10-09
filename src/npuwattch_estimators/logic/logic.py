@@ -76,6 +76,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from npuwattch.diagnostics import warning
+from npuwattch_estimators.errors import (
+    EstimatorInternalError, EstimatorQueryError, LogicCheckpointError,
+    LogicModelError, LogicQueryError)
+
 MODULE_DIR = Path(__file__).resolve().parent
 
 # --------------------------------------------------------------------------
@@ -135,18 +140,14 @@ def _mlp():
             sys.modules.pop("_npuwattch_logic_mlp", None)
             _MLP_MOD_CACHE.update(mod=None, err=f"{type(e).__name__}: {e}")
     if _MLP_MOD_CACHE["mod"] is None:
-        raise RuntimeError(
-            f"logic MLP layer unavailable ({_MLP_MOD_CACHE['err']}) — "
-            f"torch and the v2 checkpoints are required")
+        raise LogicModelError.nw(8101, error=_MLP_MOD_CACHE["err"])
     return _MLP_MOD_CACHE["mod"]
 
 
 def _need(features: Mapping[str, Any], key: str, component: str) -> float:
     v = features.get(key)
     if not isinstance(v, (int, float)) or isinstance(v, bool):
-        raise ValueError(
-            f"logic/{component}: required attribute {key!r} is missing or "
-            f"non-numeric (got {v!r})")
+        raise LogicQueryError.nw(8102, component=component, key=key, value=v)
     return float(v)
 
 
@@ -171,9 +172,7 @@ def _oversubscription(f: Mapping[str, Any], component: str) -> float:
     """
     v = _opt(f, "net_oversubscription", 1.0)
     if not 0.0 < v <= 1.0:
-        raise ValueError(
-            f"logic/{component}: net_oversubscription must be in (0, 1] "
-            f"(got {v!r})")
+        raise LogicQueryError.nw(8103, component=component, value=v)
     return v
 
 
@@ -272,7 +271,7 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "num_spines": _need(f, "net_spines", component),
             "oversubscription": _oversubscription(f, component),
         }
-    raise ValueError(f"logic: unmapped component {component!r}")
+    raise EstimatorInternalError.nw(8104, component=component)
 
 
 class _LogicUnitCostProvider:
@@ -283,7 +282,8 @@ class _LogicUnitCostProvider:
     component) goes to ``fallback``.
 
     The class has the structure of the ``UnitCostProvider`` protocol: the
-    ``calibrated`` flag and four methods. It does not import npuwattch, thus
+    ``calibrated`` flag and four methods. From npuwattch, it imports only the
+    message catalog (``npuwattch.diagnostics``, standard library only), thus
     runpy can load this file. The provider keeps each prediction and uses it
     again for an equal query.
     """
@@ -313,10 +313,9 @@ class _LogicUnitCostProvider:
             expect = mlp.feature_names(component, metric)
             got = list(m.meta.get("features", []))
             if got and got != expect:
-                raise RuntimeError(
-                    f"logic/{component}.{metric}: checkpoint feature order "
-                    f"{got} != code {expect} — version drift, retrain or "
-                    f"pin logic_mlp.VERSION")
+                raise LogicCheckpointError.nw(
+                    8105, component=component, metric=metric, got=got,
+                    expected=expect)
             self._models[key] = m
         return m
 
@@ -340,10 +339,8 @@ class _LogicUnitCostProvider:
         node = str(merged.get("node", ""))
         nm = mlp.node_nm(node)
         if nm not in mlp.NODE_LIST:
-            raise ValueError(
-                f"logic/{component}: node {node!r} is outside the "
-                f"characterized set {sorted(mlp.NODE_LIST)} (nm) — no "
-                f"extrapolation across the node one-hot")
+            raise LogicQueryError.nw(8106, component=component, node=node,
+                                     nodes=sorted(mlp.NODE_LIST))
         clock_mhz = merged.get("clock_mhz")
         clock_ns = (1000.0 / float(clock_mhz)
                     if isinstance(clock_mhz, (int, float)) and clock_mhz
@@ -365,9 +362,8 @@ class _LogicUnitCostProvider:
         mlp = _mlp()
         nm, clock_ns, params, _ = self._resolve(component, features)
         if mode is not None and mode not in mlp.STIM_MODES[component]:
-            raise ValueError(
-                f"logic/{component}: stim_mode {mode!r} was never "
-                f"characterized (known: {mlp.STIM_MODES[component]})")
+            raise LogicQueryError.nw(8107, component=component, mode=mode,
+                                     modes=mlp.STIM_MODES[component])
         key = (component, metric, nm, round(clock_ns, 6),
                tuple(sorted(params.items())), mode)
         hit = self._memo.get(key)
@@ -392,8 +388,8 @@ class _LogicUnitCostProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self._fallback is None:
-            raise ValueError(
-                f"logic provider got primitive '{primitive}' and has no fallback")
+            raise EstimatorQueryError.nw(8001, provider="logic",
+                                         primitive=primitive)
         return getattr(self._fallback, method)(primitive, features)
 
     # -- the UnitCostProvider protocol -------------------------------------
@@ -452,19 +448,16 @@ class _LogicUnitCostProvider:
         out: List[str] = []
         depths = env.get("pipeline_stages") or []
         if requested is not None:
-            out.append(
-                f"pipeline_stages={requested} is outside the characterized "
-                f"{min(depths)}-{max(depths)} for {primitive} (depth = "
-                f"registered latency incl. input/output registers) — "
-                f"evaluated at pipeline_stages={params['pipeline_stages']}")
+            out.append(warning(
+                8110, requested=requested, lo=min(depths), hi=max(depths),
+                primitive=primitive, used=params["pipeline_stages"]))
         for col, (lo, hi) in sorted(env.get("params", {}).items()):
             if col == "pipeline_stages" or col not in params:
                 continue
             v = float(params[col])
             if not lo <= v <= hi:
-                out.append(
-                    f"{col}={v:g} is outside the characterized {lo:g}-{hi:g} "
-                    f"for {primitive} — extrapolated")
+                out.append(warning(8111, param=col, value=v, lo=lo, hi=hi,
+                                   primitive=primitive))
         if features.get("clock_check") is False:
             return out
         fastest = (env.get("config_min_clock_ns", {}).get(str(nm), {})
@@ -475,19 +468,16 @@ class _LogicUnitCostProvider:
         # the characterized point, not an extrapolation.
         tol = 0.005
         if fastest is not None and clock_ns < fastest * (1 - tol):
-            out.append(
-                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is faster than the "
-                f"fastest characterized implementation of this {primitive} "
-                f"configuration at {nm} nm ({fastest:g} ns, "
-                f"{1000.0 / fastest:.0f} MHz) — extrapolated along the clock "
-                f"axis; a deeper pipeline or slower clock is characterized")
+            out.append(warning(
+                8112, clock_ns=clock_ns, clock_mhz=mhz, primitive=primitive,
+                node_nm=nm, fastest_ns=fastest, fastest_mhz=1000.0 / fastest))
         elif (lo_hi is not None
               and not lo_hi[0] * (1 - tol) <= clock_ns <= lo_hi[1] * (1 + tol)):
             side = "faster" if clock_ns < lo_hi[0] else "slower"
-            out.append(
-                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is {side} than any "
-                f"characterized {primitive} at {nm} nm ({lo_hi[0]:g}-"
-                f"{lo_hi[1]:g} ns) — extrapolated along the clock axis")
+            out.append(warning(
+                8113, clock_ns=clock_ns, clock_mhz=mhz, side=side,
+                primitive=primitive, node_nm=nm, lo_ns=lo_hi[0],
+                hi_ns=lo_hi[1]))
         return out
 
 

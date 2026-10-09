@@ -64,6 +64,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 
+from npuwattch.diagnostics import error, info
+
 _HERE = Path(__file__).resolve().parent
 
 
@@ -532,10 +534,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
     for c in components:
         if c not in lmlp.COMPONENTS:
-            ap.error(f"unknown component '{c}' (choose from {lmlp.COMPONENTS})")
+            ap.error(error(8180, component=c, known=lmlp.COMPONENTS))
     for m in metrics:
         if m not in lmlp.METRICS:
-            ap.error(f"unknown metric '{m}' (choose from {lmlp.METRICS})")
+            ap.error(error(8181, metric=m, known=lmlp.METRICS))
 
     ds_hash = lmlp.dataset_hash(ddir, components)
     report: Dict[str, Any] = {
@@ -571,9 +573,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if (s.params, s.node, s.clock_ns, s.mode) not in bad]
             report["leakage_quarantine"][component] = qstats
         report["dropped_rows"].extend(dropped)
-        print(f"[{component}] rows={len(rows)}  samples: "
-              + ", ".join(f"{m}={len(samples[m])}" for m in lmlp.METRICS)
-              + f", dropped={len(dropped)}")
+        info(8182, component=component, rows=len(rows),
+             samples=", ".join(f"{m}={len(samples[m])}" for m in lmlp.METRICS),
+             dropped=len(dropped)).emit()
 
         for metric in metrics:
             t0 = time.time()
@@ -631,7 +633,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report["gates"][key] = {"pass_10pct": not over10,
                                     "modes_over_5pct": over5,
                                     "modes_over_10pct": over10}
-            print(f"  [{key}] arch={arch} test MAPE={ev['mape']:.3%} "
+            print(f"  [{key}] arch={arch} test MAPE={ev['mape']:.3%} "  # nw-lint: text
                   f"ρ={ev['spearman']:.3f} epochs={res.epochs_run} "
                   f"({time.time() - t0:.0f}s)  over5%={over5 or '-'}")
 
@@ -639,7 +641,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 report["ab_none"][component] = ab_none(
                     component, samples["energy"], arch, args.epochs,
                     args.seed, args.patience, res, te)
-                print(f"  [{component}] none-A/B: "
+                print(f"  [{component}] none-A/B: "  # nw-lint: text
                       f"{report['ab_none'][component]}")
 
             if args.audits:
@@ -651,10 +653,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
 
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
-    print(f"wrote {out_dir / 'eval_report.json'}")
+    info(8003, path=out_dir / "eval_report.json").emit()
     # The range checks of the provider use the SAME data as the training.
     env = lmlp.write_envelope(ddir, out_dir, lmlp.COMPONENTS)
-    print(f"wrote {env}")
+    info(8003, path=env).emit()
     return 0
 
 

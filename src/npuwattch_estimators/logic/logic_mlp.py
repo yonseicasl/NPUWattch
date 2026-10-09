@@ -44,6 +44,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import torch
 from torch import nn
 
+from npuwattch_estimators.errors import EstimatorQueryError, LogicQueryError
+
 VERSION = "v2"   # The v2 dataset: re-characterized cell libraries and the
                  # re-pipelined fpadd/fpmul/fpmac RTL.
 
@@ -145,7 +147,7 @@ DEFAULT_ARCH: Dict[str, List[int]] = {
 def node_nm(node: str) -> int:
     m = re.search(r"(\d+)", node)
     if not m:
-        raise ValueError(f"cannot parse node '{node}'")
+        raise EstimatorQueryError.nw(8002, node=node)
     return int(m.group(1))
 
 
@@ -181,8 +183,8 @@ def base_features(component: str, nm: int, clock_ns: float,
     for col, values in CATEGORICAL_COLUMNS.get(component, ()):
         v = str(params[col])
         if v not in values:
-            raise ValueError(f"{component}.{col}: unknown category {v!r} "
-                             f"(known: {values})")
+            raise LogicQueryError.nw(8150, component=component, column=col,
+                                     value=v, known=values)
         f += [1.0 if v == known else 0.0 for known in values]
     f += [1.0 if nm == n else 0.0 for n in NODE_LIST]
     return f

@@ -20,6 +20,10 @@ from pathlib import Path
 
 __all__ = ["tree_from_accelergy"]
 
+#: The warnings of the storage rule that tell that the word width or the
+#: depth is an assumed value (``vocabulary._storage_rule``).
+_ASSUMED_SIZE = frozenset({"NW-7302", "NW-7304"})
+
 
 def _storage_capacity(node) -> "str | None":
     """Return the capacity text of a storage component, for example ``32 KB``.
@@ -42,7 +46,7 @@ def _storage_capacity(node) -> "str | None":
                                notes=[])
     except Exception:                       # a tree error must not stop the run
         return None
-    if any("assuming" in w for w in warnings):
+    if any(getattr(w, "code", None) in _ASSUMED_SIZE for w in warnings):
         return None                         # assumed width or depth: show no capacity
     return capacity_suffix(attrs)
 

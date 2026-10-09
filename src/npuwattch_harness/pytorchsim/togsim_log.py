@@ -44,11 +44,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from npuwattch.diagnostics import NPUWattchError, warning
+
 __all__ = ["TogsimActivity", "TogsimLogError", "parse_config",
            "parse_dram_ctrl_stats", "parse_icnt_config", "parse_togsim_log"]
 
 
-class TogsimLogError(ValueError):
+class TogsimLogError(NPUWattchError, ValueError):
     """The TOGSim log has an incorrect format or does not have a necessary field."""
 
 
@@ -178,10 +180,7 @@ def parse_config(text: str) -> Dict[str, object]:
             start = i
             break
     if start is None:
-        raise TogsimLogError(
-            f"no {_CONFIG_MARKER!r} header found (older 'TOGSim Config: {{JSON}}' "
-            f"logs are no longer supported — re-run with a current PyTorchSim build)"
-        )
+        raise TogsimLogError.nw(6301)
     config: Dict[str, object] = {}
     for line in lines[start + 1:]:
         if line.startswith("["):          # a line with a timestamp ends the block
@@ -190,7 +189,7 @@ def parse_config(text: str) -> Dict[str, object]:
         if m:
             config[m.group(1)] = _coerce(m.group(2))
     if not config:
-        raise TogsimLogError(f"{_CONFIG_MARKER!r} block is empty")
+        raise TogsimLogError.nw(6302)
     return config
 
 
@@ -281,17 +280,9 @@ def parse_kernel_hash(text: str) -> str:
     if len(hashes) == 1:
         return hashes[0]
     if len(hashes) > 1:
-        raise TogsimLogError(
-            f"models_list log mentions {len(hashes)} kernel dirs "
-            f"({', '.join(hashes[:4])}{', …' if len(hashes) > 4 else ''}) — "
-            f"its combined activity cannot be split per kernel; re-run with "
-            f"one kernel per simulator invocation"
-        )
-    raise TogsimLogError(
-        "no kernel hash: expected '--trace_so .../outputs/<hash>/trace.so' on "
-        "the command line, or (models_list builds) an outputs/<hash>/ path in "
-        "the log body"
-    )
+        shown = ", ".join(hashes[:4]) + (", …" if len(hashes) > 4 else "")
+        raise TogsimLogError.nw(6303, count=len(hashes), hashes=shown)
+    raise TogsimLogError.nw(6304)
 
 
 @dataclass(frozen=True)
@@ -350,7 +341,7 @@ def parse_togsim_log(text: str,
     config = {**(base_config or {}), **parse_config(text)}
     lanes = _as_int(config, "vpu_num_lanes")
     if lanes is None:
-        raise TogsimLogError("config has no integer 'vpu_num_lanes'")
+        raise TogsimLogError.nw(6305)
     num_cores = _as_int(config, "num_cores") or 1
     kernel_hash = parse_kernel_hash(text)
 
@@ -367,10 +358,8 @@ def parse_togsim_log(text: str,
             if not isinstance(cur, int):
                 config[key] = echoed
             elif cur != echoed:
-                log_warnings.append(
-                    f"config {key}={cur} disagrees with the [Config/DRAM] "
-                    f"echo ({echoed}); keeping the config value"
-                )
+                log_warnings.append(warning(6306, kernel=kernel_hash, key=key,
+                                            value=cur, echoed=echoed))
     m = _ENERGY_TABLE_ECHO.search(text)
     energy_table_name = m.group(1) if m else None
     energy_table_path = m.group(2) if m else None

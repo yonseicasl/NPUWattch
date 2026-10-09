@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from npuwattch.diagnostics import NPUWattchError, warning
+
 __all__ = ["NetGraph", "NetRouter", "NocDerivation", "parse_net_file", "derive_noc"]
 
 #: The topologies that this harness can divide into components. The harness
@@ -85,7 +87,7 @@ class NocDerivation:
     warnings: List[str] = field(default_factory=list)
 
 
-class NetFileError(ValueError):
+class NetFileError(NPUWattchError, ValueError):
     """The anynet ``.net`` file is absent or has an incorrect format."""
 
 
@@ -102,11 +104,11 @@ def parse_net_file(text: str) -> NetGraph:
         if not toks:
             continue
         if toks[0] != "router" or len(toks) < 2:
-            raise NetFileError(f".net line {lineno}: expected 'router <id> ...', got {line!r}")
+            raise NetFileError.nw(6401, line=lineno, text=line)
         try:
             rid = int(toks[1])
         except ValueError:
-            raise NetFileError(f".net line {lineno}: non-integer router id {toks[1]!r}")
+            raise NetFileError.nw(6402, line=lineno, token=toks[1])
         nodes.setdefault(rid, [])
         links.setdefault(rid, [])
         i = 2
@@ -125,9 +127,7 @@ def parse_net_file(text: str) -> NetGraph:
                     i += 2
                 links[rid].append((peer, latency))
             else:
-                raise NetFileError(
-                    f".net line {lineno}: unexpected token {kind!r} (want 'node'/'router')"
-                )
+                raise NetFileError.nw(6403, line=lineno, token=kind)
     return NetGraph(routers={
         rid: NetRouter(nodes=tuple(nodes[rid]), links=tuple(links[rid]))
         for rid in nodes
@@ -151,14 +151,10 @@ def _find_net_file(icnt: Dict[str, object], booksim_dir: Path) -> Path:
     if len(found) == 1:
         return found[0]
     if not found:
-        raise NetFileError(
-            f"anynet network file {name or '<unnamed>'} not found in {booksim_dir} "
-            f"(no *.net present)"
-        )
-    raise NetFileError(
-        f"anynet network file {name!r} not found in {booksim_dir} and the directory "
-        f"holds {len(found)} *.net files — cannot pick one"
-    )
+        raise NetFileError.nw(6404, name=name or "<unnamed>",
+                              directory=booksim_dir)
+    raise NetFileError.nw(6405, name=name, directory=booksim_dir,
+                          count=len(found))
 
 
 def _flit_totals(act) -> Tuple[Optional[float], List[str]]:
@@ -171,19 +167,13 @@ def _flit_totals(act) -> Tuple[Optional[float], List[str]]:
     the function scales the flit totals by it and gives a warning.
     """
     if act.dram_reads is None or act.dram_writes is None:
-        return None, [
-            "log has no DRAM request totals; NoC structure is emitted but its "
-            "dynamic energy cannot be charged"
-        ]
+        return None, [warning(6406)]
     flits = 2.0 * (act.dram_reads + act.dram_writes)
     warnings: List[str] = []
     apl = getattr(act, "booksim_avg_packet_length", None)
     if apl is not None and apl > 0 and abs(apl - 1.0) > 1e-6:
         flits *= apl
-        warnings.append(
-            f"BookSim reports packet length average {apl:g} (the model assumes "
-            f"1 flit/packet): flit totals scaled by {apl:g}"
-        )
+        warnings.append(warning(6407, length=apl))
     return flits, warnings
 
 
@@ -202,66 +192,46 @@ def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
     if not icnt:
         icnt_type = (act.config or {}).get("icnt_type")
         if icnt_type == "booksim2":
-            why = "log has no embedded BookSim [config] echo (older build?)"
-        else:
-            why = f"icnt_type {icnt_type!r} is not modeled (booksim2 only)"
-        return NocDerivation(warnings=[f"NoC not emitted: {why}"])
+            return NocDerivation(warnings=[warning(6408)])
+        return NocDerivation(warnings=[warning(6409, icnt_type=icnt_type)])
 
     warnings: List[str] = []
     symbols = {f"booksim_{k}": v for k, v in icnt.items()
                if isinstance(v, int) and not isinstance(v, bool)}
     flit_size = icnt.get("flit_size")
     if not isinstance(flit_size, int) or flit_size <= 0:
-        return NocDerivation(warnings=[
-            "NoC not emitted: BookSim config has no integer flit_size"
-        ])
+        return NocDerivation(warnings=[warning(6410)])
 
     topology = str(icnt.get("topology", ""))
     if topology == "fly":
         if icnt.get("n") != 1:
             return NocDerivation(warnings=[
-                f"NoC not emitted: unsupported topology 'fly' with n={icnt.get('n')!r} "
-                f"(supported: {_SUPPORTED})"
-            ])
+                warning(6411, n=icnt.get("n"), supported=_SUPPORTED)])
         k = icnt.get("k")
         if not isinstance(k, int) or k <= 0:
-            return NocDerivation(warnings=[
-                "NoC not emitted: fly topology without an integer 'k'"
-            ])
+            return NocDerivation(warnings=[warning(6412)])
         ports, routers, channels, inter_fraction = k, 1, 0, 0.0
 
     elif topology == "anynet":
         if booksim_dir is None:
-            return NocDerivation(warnings=[
-                "NoC not emitted: anynet topology needs the BookSim config "
-                "directory (--booksim-dir, e.g. the run's booksim2_config/) "
-                "for its .net network file"
-            ])
+            return NocDerivation(warnings=[warning(6413)])
         try:
             net_path = _find_net_file(icnt, Path(booksim_dir))
             graph = parse_net_file(net_path.read_text(encoding="utf-8"))
         except (OSError, NetFileError) as e:
-            return NocDerivation(warnings=[f"NoC not emitted: {e}"])
+            return NocDerivation(warnings=[warning(6414, error=e)])
         real = graph.real_routers()
         chans = graph.channels()
         stray = set(graph.routers) - set(real) - set(chans)
         if not real:
-            return NocDerivation(warnings=[
-                f"NoC not emitted: {net_path.name} has no router with attached nodes"
-            ])
+            return NocDerivation(warnings=[warning(6415, file=net_path.name)])
         for rid in sorted(stray):
-            warnings.append(
-                f"{net_path.name}: router {rid} has no nodes and "
-                f"{len(graph.routers[rid].links)} links — treated as a switch "
-                f"(expected 2-link pass-through channels only)"
-            )
+            warnings.append(warning(6416, file=net_path.name, router=rid,
+                                    links=len(graph.routers[rid].links)))
         radices = sorted({r.radix for r in real.values()} |
                          {graph.routers[i].radix for i in stray})
         if len(radices) > 1:
-            warnings.append(
-                f"{net_path.name}: router radix varies ({radices}); using the "
-                f"largest for all switches"
-            )
+            warnings.append(warning(6417, file=net_path.name, radices=radices))
         ports = radices[-1]
         routers = len(real) + len(stray)
         channels = len(chans)
@@ -278,25 +248,16 @@ def derive_noc(act, booksim_dir: Optional[Path] = None) -> NocDerivation:
             if (act.dram_reads is not None and act.dram_writes is not None
                     and numa_local + numa_remote
                     != act.dram_reads + act.dram_writes):
-                warnings.append(
-                    f"NUMA request total {numa_local + numa_remote} != [DRAM] "
-                    f"request total {act.dram_reads + act.dram_writes}; the "
-                    f"d2d split still uses the NUMA local/remote ratio"
-                )
+                warnings.append(warning(
+                    6418, numa_total=numa_local + numa_remote,
+                    dram_total=act.dram_reads + act.dram_writes))
         else:
             inter_fraction = (routers - 1) / routers if routers > 1 else 0.0
             if routers > 1:
-                warnings.append(
-                    f"NoC traffic split is a uniform-traffic assumption: "
-                    f"{inter_fraction:.2f} of flits are charged one die-to-die "
-                    f"channel crossing and a second switch traversal (the log "
-                    f"has no NUMA local/remote counters)"
-                )
+                warnings.append(warning(6419, fraction=inter_fraction))
     else:
         return NocDerivation(warnings=[
-            f"NoC not emitted: unsupported BookSim topology {topology!r} "
-            f"(supported: {_SUPPORTED})"
-        ])
+            warning(6420, topology=topology, supported=_SUPPORTED)])
 
     symbols.update(icnt_ports=ports, icnt_routers=routers, icnt_channels=channels)
 

@@ -109,9 +109,8 @@ def find_definition(inputs: Mapping[str, Any], name: str, run_dir: Path) -> Path
     if path.exists():
         return path
     flag = DEFINITION_INPUTS[name]["flag"]
-    raise HarnessError(
-        f"{FIXED_NAMES[name]} not found in {run_dir} — put the file there or "
-        f"give it with {flag}")
+    raise HarnessError.nw(5101, file_name=FIXED_NAMES[name], run_dir=run_dir,
+                          flag=flag)
 
 
 def load_run_bundle(compounds_path: Path, projection_path: Path) -> Bundle:
@@ -130,7 +129,7 @@ def load_run_bundle(compounds_path: Path, projection_path: Path) -> Bundle:
                         primitive_modes=load_primitive_modes())
         bundle.validate()
     except CompoundBundleError as e:
-        raise HarnessError(str(e)) from e
+        raise HarnessError.nw(5102, error=e) from e
     return bundle
 
 
@@ -139,7 +138,7 @@ def load_user_library(path: Path) -> Dict[str, UserComponent]:
     try:
         return load_user_components(Path(path))
     except UserComponentError as e:
-        raise HarnessError(str(e)) from e
+        raise HarnessError.nw(5103, error=e) from e
 
 
 def attach_user_components(description: Mapping[str, Any],

@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from npuwattch.diagnostics import NPUWattchError, warning
+
 from .definitions import VOCABULARY
 
 __all__ = [
@@ -61,7 +63,7 @@ __all__ = [
 # Datatypes
 # ---------------------------------------------------------------------------
 
-class MacInferenceError(ValueError):
+class MacInferenceError(NPUWattchError, ValueError):
     """The artifacts are present, but they do not give a MAC configuration."""
 
 
@@ -104,7 +106,7 @@ def parse_dtype(token: str) -> DType:
         bits = int(m.group(2))
         return DType("int", bits, canonical, signed=signed)
 
-    raise MacInferenceError(f"unrecognized dtype token: {token!r}")
+    raise MacInferenceError.nw(6101, token=token)
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +244,12 @@ def parse_mlir(text: str) -> MlirMatmul:
     """Get the operand types of the func signature and the ``linalg.matmul`` operands."""
     mm = _MATMUL.search(text)
     if not mm:
-        raise NotAMatmulKernel("no `linalg.matmul` found in MLIR")
+        raise NotAMatmulKernel.nw(6102)
 
     ins = _memrefs(mm.group("ins"))
     outs_list = _memrefs(mm.group("outs"))
     if len(ins) < 2 or not outs_list:
-        raise MacInferenceError(
-            f"malformed linalg.matmul: {len(ins)} ins / {len(outs_list)} outs"
-        )
+        raise MacInferenceError.nw(6103, ins=len(ins), outs=len(outs_list))
 
     func_types: List[DType] = []
     fm = _FUNC_KERNEL.search(text)
@@ -305,7 +305,7 @@ def _select_primitive(
             "data_width_acc": acc_width,
             "pipeline_stages": pipeline_stages,
         }
-    raise MacInferenceError(f"no MAC primitive for operand kind {operand.kind!r}")
+    raise MacInferenceError.nw(6104, kind=operand.kind)
 
 
 def infer_mac_config(
@@ -314,15 +314,17 @@ def infer_mac_config(
     *,
     meta_text: Optional[str] = None,
     pipeline_stages: int = 2,
+    kernel: str = "kernel",
 ) -> MacConfig:
     """Infer a ``MacConfig`` from the MLIR of one kernel and, optionally, its meta.txt.
 
     ``lanes`` is the width of the systolic array (``vpu_num_lanes`` /
     ``systolicArrayWidth``). It is an architecture parameter from the run
-    configuration, not from the kernel.
+    configuration, not from the kernel. ``kernel`` is the name (the hash) of
+    the kernel in the warnings.
     """
     if lanes < 1:
-        raise MacInferenceError(f"lanes must be >= 1, got {lanes}")
+        raise MacInferenceError.nw(6105, lanes=lanes)
 
     mlir = parse_mlir(mlir_text)
     meta = parse_meta(meta_text) if meta_text else []
@@ -332,10 +334,9 @@ def infer_mac_config(
     # --- operand dtype ---------------------------------------------------
     ins_types = [dt for _, dt in mlir.ins]
     if len({dt.canonical for dt in ins_types}) > 1:
-        warnings.append(
-            "mixed-precision matmul operands "
-            f"({', '.join(dt.canonical for dt in ins_types)}); using the first"
-        )
+        warnings.append(warning(
+            6106, kernel=kernel,
+            dtypes=", ".join(dt.canonical for dt in ins_types)))
     matmul_operand = ins_types[0]
 
     func_int_types = [dt for dt in mlir.func_operand_types if dt.kind == "int"]
@@ -345,11 +346,9 @@ def infer_mac_config(
         # The tensor dtype of the kernel (func signature) is the correct operand type.
         operand = min(func_int_types, key=lambda d: d.bits)
         lowering_ok = False
-        warnings.append(
-            f"partial int lowering: linalg.matmul is {matmul_operand.canonical} but "
-            f"kernel I/O is {operand.canonical}; selecting intmac by tensor dtype. "
-            "int MAC energy is NOT calibrated on this image."
-        )
+        warnings.append(warning(
+            6107, kernel=kernel, matmul_dtype=matmul_operand.canonical,
+            tensor_dtype=operand.canonical))
         provenance["operand_dtype"] = "mlir:func.func signature (matmul disagreed)"
     else:
         operand = matmul_operand
@@ -360,10 +359,9 @@ def infer_mac_config(
     if meta_inputs:
         meta_in_canon = {e.dtype.canonical for e in meta_inputs}
         if lowering_ok and operand.canonical not in meta_in_canon:
-            warnings.append(
-                f"operand dtype {operand.canonical} (MLIR) not among meta.txt "
-                f"input dtypes {sorted(meta_in_canon)}"
-            )
+            warnings.append(warning(
+                6108, kernel=kernel, dtype=operand.canonical,
+                meta_dtypes=sorted(meta_in_canon)))
         provenance["operand_dtype_crosscheck"] = "meta.txt inputs (attr=1)"
 
     # --- accumulator dtype ----------------------------------------------
@@ -390,9 +388,8 @@ def infer_mac_config(
     if len(a_shape) == 2 and len(b_shape) == 2:
         gemm_shape = (a_shape[0], a_shape[1], b_shape[1])  # (M, K, N)
         if a_shape[1] != b_shape[0]:
-            warnings.append(
-                f"matmul K mismatch: A={a_shape} B={b_shape}"
-            )
+            warnings.append(warning(6109, kernel=kernel, a_shape=a_shape,
+                                    b_shape=b_shape))
 
     return MacConfig(
         primitive=primitive,
@@ -415,17 +412,16 @@ def _find_kernel_mlir(kernel_dir: Path) -> Path:
         if not p.stem.endswith(("_llvm", "_sample", "_sample_llvm"))
     ]
     if not candidates:
-        raise MacInferenceError(f"no kernel .mlir in {kernel_dir}")
+        raise MacInferenceError.nw(6110, path=kernel_dir)
     # Use the file that has a linalg.matmul. More than one such file is an error.
     matmul = [
         p for p in candidates
         if "linalg.matmul" in p.read_text(encoding="utf-8", errors="ignore")
     ]
     if len(matmul) > 1:
-        raise MacInferenceError(
-            f"{kernel_dir}: {len(matmul)} candidate kernel MLIRs contain linalg.matmul "
-            f"({', '.join(p.name for p in matmul)}); ambiguous — leave exactly one"
-        )
+        raise MacInferenceError.nw(
+            6111, path=kernel_dir, count=len(matmul),
+            files=", ".join(p.name for p in matmul))
     if matmul:
         return matmul[0]
     return candidates[0]
@@ -436,8 +432,13 @@ def infer_mac_config_from_dir(
     lanes: int,
     *,
     pipeline_stages: int = 2,
+    kernel: Optional[str] = None,
 ) -> MacConfig:
-    """Infer from an ``outputs/<hash>/`` directory. Read meta.txt and the kernel MLIR."""
+    """Infer from an ``outputs/<hash>/`` directory. Read meta.txt and the kernel MLIR.
+
+    The default of ``kernel`` (the name in the warnings) is the directory
+    name, which is the kernel hash.
+    """
     kernel_dir = Path(kernel_dir)
     mlir_path = _find_kernel_mlir(kernel_dir)
     meta_path = kernel_dir / "meta.txt"
@@ -449,6 +450,7 @@ def infer_mac_config_from_dir(
         lanes,
         meta_text=meta_text,
         pipeline_stages=pipeline_stages,
+        kernel=kernel if kernel is not None else kernel_dir.name,
     )
 
 
@@ -461,6 +463,7 @@ def infer_mac_config_from_meta(
     lanes: int,
     *,
     pipeline_stages: int = 2,
+    kernel: str = "kernel",
 ) -> MacConfig:
     """Infer a ``MacConfig`` from ``meta.txt`` only. This is the fallback without MLIR.
 
@@ -482,14 +485,15 @@ def infer_mac_config_from_meta(
       one of the two orientations. It is ``None`` if the shape is ambiguous.
       It is only information.
 
-    ``confidence`` is always ``"low"``.
+    ``confidence`` is always ``"low"``. ``kernel`` is the name (the hash) of
+    the kernel in the warnings.
     """
     if lanes < 1:
-        raise MacInferenceError(f"lanes must be >= 1, got {lanes}")
+        raise MacInferenceError.nw(6105, lanes=lanes)
 
     entries = parse_meta(meta_text)
     if not entries:
-        raise MacInferenceError("meta.txt has no parseable entries")
+        raise MacInferenceError.nw(6112)
 
     warnings: List[str] = []
     provenance: Dict[str, str] = {}
@@ -499,20 +503,16 @@ def infer_mac_config_from_meta(
     if not voters:
         voters = [e for e in entries if e.attr == 1]
         if voters:
-            warnings.append(
-                "no 2-D input tensors in meta.txt; operand dtype taken from "
-                "non-matrix inputs"
-            )
+            warnings.append(warning(6113, kernel=kernel))
     if not voters:
-        raise MacInferenceError("meta.txt has no attr=1 (input) entries")
+        raise MacInferenceError.nw(6114)
 
     by_canonical = {e.dtype.canonical: e.dtype for e in voters}
     if len(by_canonical) > 1:
         operand = min(by_canonical.values(), key=lambda d: (d.bits, d.canonical))
-        warnings.append(
-            f"mixed input dtypes in meta.txt ({', '.join(sorted(by_canonical))}); "
-            f"using the narrowest ({operand.canonical})"
-        )
+        warnings.append(warning(
+            6115, kernel=kernel, dtypes=", ".join(sorted(by_canonical)),
+            dtype=operand.canonical))
     else:
         operand = next(iter(by_canonical.values()))
     provenance["operand_dtype"] = "meta.txt inputs (attr=1); no kernel MLIR"
@@ -543,10 +543,7 @@ def infer_mac_config_from_meta(
         elif k0 == b1:                       # the weights are transposed
             gemm_shape = (m0, k0, b0)
 
-    warnings.append(
-        "MAC config inferred from meta.txt only (no kernel MLIR); accumulator "
-        "format is assumed — energy for this kernel is lower-confidence"
-    )
+    warnings.append(warning(6116, kernel=kernel))
     return MacConfig(
         primitive=primitive,
         primitive_config=cfg,

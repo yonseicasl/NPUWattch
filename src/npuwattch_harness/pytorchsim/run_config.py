@@ -18,14 +18,21 @@ from typing import Any, Dict, List, Mapping
 
 import yaml
 
-__all__ = ["load_config_yml", "config_conflicts"]
+from npuwattch.diagnostics import NPUWattchError, warning
+
+__all__ = ["RunConfigError", "load_config_yml", "config_conflicts"]
+
+
+class RunConfigError(NPUWattchError, ValueError):
+    """The run configuration (``config.yml`` or the log header) is not correct
+    or not complete."""
 
 
 def load_config_yml(path: Path) -> Dict[str, Any]:
     """Read a TOGSim ``config.yml`` and return its keys and values as a dict."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: expected a YAML mapping, got {type(data).__name__}")
+        raise RunConfigError.nw(6701, path=path, type=type(data).__name__)
     return data
 
 
@@ -38,7 +45,7 @@ def config_conflicts(base: Mapping[str, Any], merged: Mapping[str, Any]) -> List
     value. In that case, the files can be from different runs.
     """
     return [
-        f"config.yml disagrees with the log header: {k} = {base[k]!r} vs {merged[k]!r}"
+        warning(6702, key=k, file_value=base[k], log_value=merged[k])
         for k in sorted(base)
         if k in merged and merged[k] != base[k]
     ]

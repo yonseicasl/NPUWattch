@@ -31,6 +31,7 @@ The engine and the definition files are separate:
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,7 +77,7 @@ _MAC_SYMBOLS = ("lanes", "bitwidth")
 _SYMBOL_RE = __import__("re").compile(r"[A-Za-z_]\w*$")
 
 
-class CompoundBundleError(ValueError):
+class CompoundBundleError(NPUWattchError, ValueError):
     """A compound, projection, or stim_mode file is malformed or inconsistent."""
 
 
@@ -90,7 +91,7 @@ def _read_structured(path: Path, what: str) -> object:
     try:
         text = p.read_text(encoding="utf-8")
     except FileNotFoundError as e:
-        raise CompoundBundleError(f"{what} not found: {p}") from e
+        raise CompoundBundleError.nw(5301, what=what, path=p) from e
     suffix = p.suffix.lower()
     try:
         if suffix in (".yaml", ".yml"):
@@ -103,9 +104,9 @@ def _read_structured(path: Path, what: str) -> object:
             except json.JSONDecodeError:
                 obj = yaml.safe_load(text)
     except (json.JSONDecodeError, yaml.YAMLError) as e:
-        raise CompoundBundleError(f"{what} is not valid JSON/YAML: {e}") from e
+        raise CompoundBundleError.nw(5302, what=what, error=e) from e
     if obj is None:
-        raise CompoundBundleError(f"{what} is empty: {p}")
+        raise CompoundBundleError.nw(5303, what=what, path=p)
     return obj
 
 
@@ -125,7 +126,7 @@ def _is_placeholder(v: object) -> bool:
 def _check_scalar_expr(expr: object, where: str) -> None:
     """Check the syntax only: an int, or symbols and int literals joined by + and *."""
     if isinstance(expr, bool) or not isinstance(expr, (int, str)):
-        raise CompoundBundleError(f"{where}: scalar must be int or expr string, got {expr!r}")
+        raise CompoundBundleError.nw(5304, where=where, expr=expr)
     if isinstance(expr, int):
         return
     for term in expr.split("+"):
@@ -133,16 +134,14 @@ def _check_scalar_expr(expr: object, where: str) -> None:
             f = factor.strip()
             if f.isdigit() or _SYMBOL_RE.match(f):
                 continue
-            raise CompoundBundleError(
-                f"{where}: malformed token {f!r} in {expr!r} (use ints, +, *, and "
-                f"identifier symbols — MAC scalars {', '.join(_MAC_SYMBOLS)} or the "
-                f"harness's integer run-config keys)"
-            )
+            raise CompoundBundleError.nw(
+                5305, where=where, token=f, expr=expr,
+                mac_symbols=", ".join(_MAC_SYMBOLS))
 
 
 def _resolve_scalar_expr(expr: Union[int, str], symbols: Mapping[str, int], where: str) -> int:
     if isinstance(expr, bool):
-        raise CompoundBundleError(f"{where}: bool is not a scalar")
+        raise CompoundBundleError.nw(5306, where=where)
     if isinstance(expr, int):
         return expr
     total = 0
@@ -155,7 +154,7 @@ def _resolve_scalar_expr(expr: Union[int, str], symbols: Mapping[str, int], wher
             elif f.isdigit():
                 prod *= int(f)
             else:
-                raise CompoundBundleError(f"{where}: unresolved symbol {f!r} in {expr!r}")
+                raise CompoundBundleError.nw(5307, where=where, symbol=f, expr=expr)
         total += prod
     return total
 
@@ -179,7 +178,7 @@ class PrimitiveModes:
 
     def modes_of(self, primitive: str) -> List[str]:
         if primitive not in self.modes:
-            raise CompoundBundleError(f"unknown primitive: {primitive!r}")
+            raise CompoundBundleError.nw(5308, primitive=primitive)
         return list(self.modes[primitive])
 
     def is_valid(self, primitive: str, mode: str) -> bool:
@@ -188,15 +187,13 @@ class PrimitiveModes:
     def require(self, primitive: str, mode: str) -> None:
         """Raise an error if ``(primitive, mode)`` is not a characterized pair."""
         if primitive not in self.modes:
-            raise CompoundBundleError(
-                f"primitive {primitive!r} not in vocabulary "
-                f"({', '.join(self.primitives())})"
-            )
+            raise CompoundBundleError.nw(
+                5309, primitive=primitive,
+                primitives=", ".join(self.primitives()))
         if mode not in self.modes[primitive]:
-            raise CompoundBundleError(
-                f"stim_mode {mode!r} not characterized for {primitive!r}; "
-                f"allowed: {', '.join(self.modes[primitive])}"
-            )
+            raise CompoundBundleError.nw(
+                5310, mode=mode, primitive=primitive,
+                allowed=", ".join(self.modes[primitive]))
 
 
 def load_primitive_modes(path: Optional[Path] = None) -> PrimitiveModes:
@@ -204,28 +201,22 @@ def load_primitive_modes(path: Optional[Path] = None) -> PrimitiveModes:
     p = Path(path) if path is not None else DATA_DIR / "primitive_modes.json"
     obj = _read_structured(p, "primitive_modes")
     if not isinstance(obj, dict):
-        raise CompoundBundleError("primitive_modes: top-level must be an object")
+        raise CompoundBundleError.nw(5311)
     modes = obj.get("modes", obj)  # accept {"modes": {...}} or a bare map
     if not isinstance(modes, dict) or not modes:
-        raise CompoundBundleError("primitive_modes: 'modes' must be a non-empty object")
+        raise CompoundBundleError.nw(5312)
     out: Dict[str, List[str]] = {}
     for prim, lst in modes.items():
         if prim.startswith("_"):  # comment keys
             continue
         if not isinstance(lst, list) or not lst:
-            raise CompoundBundleError(
-                f"primitive_modes[{prim!r}] must be a non-empty list of mode names"
-            )
+            raise CompoundBundleError.nw(5313, primitive=prim)
         if not all(isinstance(m, str) and m for m in lst):
-            raise CompoundBundleError(
-                f"primitive_modes[{prim!r}] must contain non-empty strings"
-            )
+            raise CompoundBundleError.nw(5314, primitive=prim)
         if len(set(lst)) != len(lst):
-            raise CompoundBundleError(f"primitive_modes[{prim!r}] has duplicate modes")
+            raise CompoundBundleError.nw(5315, primitive=prim)
         if "random" not in lst:
-            raise CompoundBundleError(
-                f"primitive_modes[{prim!r}] must include 'random' (the universal anchor)"
-            )
+            raise CompoundBundleError.nw(5316, primitive=prim)
         out[prim] = list(lst)
     return PrimitiveModes(modes=out)
 
@@ -270,27 +261,21 @@ class Compound:
 def _parse_compound(name: str, obj: Mapping) -> Compound:
     els_obj = obj.get("elements")
     if not isinstance(els_obj, dict) or not els_obj:
-        raise CompoundBundleError(f"compound {name!r}: 'elements' must be a non-empty object")
+        raise CompoundBundleError.nw(5317, compound=name)
     elements: Dict[str, CompoundElement] = {}
     for ename, espec in els_obj.items():
         if not isinstance(espec, dict) or "primitive" not in espec:
-            raise CompoundBundleError(
-                f"compound {name!r} element {ename!r}: needs at least a 'primitive'"
-            )
+            raise CompoundBundleError.nw(5318, compound=name, element=ename)
         if not isinstance(espec["primitive"], str):
-            raise CompoundBundleError(
-                f"compound {name!r} element {ename!r}: 'primitive' must be a string "
-                f"(got {type(espec['primitive']).__name__}); if you wrote a placeholder "
-                f"like {{mac_primitive}} in YAML, quote it: \"{{mac_primitive}}\""
-            )
+            raise CompoundBundleError.nw(
+                5319, compound=name, element=ename,
+                type_name=type(espec["primitive"]).__name__)
         count = espec.get("count", 1)
         _check_scalar_expr(count, f"compound {name!r} element {ename!r} count")
         per = espec.get("per", "array")
         if per not in ELEMENT_PER:
-            raise CompoundBundleError(
-                f"compound {name!r} element {ename!r}: 'per' must be one of "
-                f"{ELEMENT_PER}, got {per!r}"
-            )
+            raise CompoundBundleError.nw(5320, compound=name, element=ename,
+                                         choices=ELEMENT_PER, per=per)
         elements[ename] = CompoundElement(
             name=ename,
             primitive=espec["primitive"],
@@ -300,10 +285,8 @@ def _parse_compound(name: str, obj: Mapping) -> Compound:
         )
     default_mode = obj.get("default_mode", "idle")
     if default_mode not in DEFAULT_MODES:
-        raise CompoundBundleError(
-            f"compound {name!r}: 'default_mode' must be one of {DEFAULT_MODES}, "
-            f"got {default_mode!r}"
-        )
+        raise CompoundBundleError.nw(5321, compound=name, choices=DEFAULT_MODES,
+                                     default_mode=default_mode)
     return Compound(
         name=name,
         select_primitive_by=obj.get("select_primitive_by"),
@@ -319,14 +302,14 @@ def load_compounds(path: Path) -> Dict[str, Compound]:
     """
     obj = _read_structured(Path(path), "compounds file")
     if not isinstance(obj, dict):
-        raise CompoundBundleError("compounds file: top-level must be an object")
+        raise CompoundBundleError.nw(5322)
     out: Dict[str, Compound] = {}
     for name, spec in _strip_comments(obj).items():
         if not isinstance(spec, dict):
-            raise CompoundBundleError(f"compound {name!r}: must be an object")
+            raise CompoundBundleError.nw(5323, compound=name)
         out[name] = _parse_compound(name, spec)
     if not out:
-        raise CompoundBundleError("compounds file declares no compounds")
+        raise CompoundBundleError.nw(5324)
     return out
 
 
@@ -389,32 +372,23 @@ class Projection:
 def _parse_action(compound: str, action: str, obj: Mapping) -> ActionMapping:
     cf = obj.get("count_from")
     if not isinstance(cf, dict) or "stat" not in cf:
-        raise CompoundBundleError(
-            f"projection {compound}.{action}: 'count_from' needs a 'stat'"
-        )
+        raise CompoundBundleError.nw(5325, compound=compound, action=action)
     stat = cf["stat"]
     if not isinstance(stat, str) or not stat:
-        raise CompoundBundleError(
-            f"projection {compound}.{action}: count_from.stat must be a non-empty string"
-        )
+        raise CompoundBundleError.nw(5326, compound=compound, action=action)
     scale = cf.get("scale", 1)
     _check_scalar_expr(scale, f"projection {compound}.{action} count_from.scale")
     unit = cf.get("unit", "words")
     if unit not in COUNT_UNITS:
-        raise CompoundBundleError(
-            f"projection {compound}.{action}: count_from.unit must be one of "
-            f"{COUNT_UNITS}, got {unit!r}"
-        )
+        raise CompoundBundleError.nw(5327, compound=compound, action=action,
+                                     choices=COUNT_UNITS, unit=unit)
     els = obj.get("elements")
     if not isinstance(els, dict) or not els:
-        raise CompoundBundleError(
-            f"projection {compound}.{action}: 'elements' must be a non-empty object"
-        )
+        raise CompoundBundleError.nw(5328, compound=compound, action=action)
     for k, v in els.items():
         if not isinstance(v, str) or not v:
-            raise CompoundBundleError(
-                f"projection {compound}.{action}.elements[{k!r}] must be a mode string"
-            )
+            raise CompoundBundleError.nw(5329, compound=compound, action=action,
+                                         element=k)
     return ActionMapping(action=action, count_from=CountFrom(stat, scale, unit),
                          elements=dict(els))
 
@@ -422,20 +396,18 @@ def _parse_action(compound: str, action: str, obj: Mapping) -> ActionMapping:
 def load_projection(path: Path) -> Projection:
     obj = _read_structured(Path(path), "projection file")
     if not isinstance(obj, dict) or "tool" not in obj:
-        raise CompoundBundleError("projection file: needs a top-level 'tool'")
+        raise CompoundBundleError.nw(5330)
     compounds_obj = obj.get("compounds")
     if not isinstance(compounds_obj, dict) or not compounds_obj:
-        raise CompoundBundleError("projection file: 'compounds' must be a non-empty object")
+        raise CompoundBundleError.nw(5331)
     compounds: Dict[str, Dict[str, ActionMapping]] = {}
     for cname, actions in _strip_comments(compounds_obj).items():
         if not isinstance(actions, dict):
-            raise CompoundBundleError(f"projection compound {cname!r}: must be an object")
+            raise CompoundBundleError.nw(5332, compound=cname)
         parsed: Dict[str, ActionMapping] = {}
         for aname, aspec in _strip_comments(actions).items():
             if not isinstance(aspec, dict):
-                raise CompoundBundleError(
-                    f"projection {cname}.{aname}: must be an object"
-                )
+                raise CompoundBundleError.nw(5333, compound=cname, action=aname)
             parsed[aname] = _parse_action(cname, aname, aspec)
         compounds[cname] = parsed
 
@@ -443,39 +415,29 @@ def load_projection(path: Path) -> Projection:
     # it as an alias. The NPUWattch attribute names use the same policy.
     for legacy, current in (("ignores", "waivers"), ("notes", "out_of_scope")):
         if legacy in obj:
-            raise CompoundBundleError(
-                f"projection file: {legacy!r} was renamed — use {current!r}"
-            )
+            raise CompoundBundleError.nw(5334, legacy=legacy, current=current)
 
     waivers_obj = obj.get("waivers") or {}
     if not isinstance(waivers_obj, dict):
-        raise CompoundBundleError("projection file: 'waivers' must be an object "
-                                  "mapping stat name -> justification string")
+        raise CompoundBundleError.nw(5335)
     waivers: Dict[str, str] = {}
     for stat, justification in _strip_comments(waivers_obj).items():
         if not isinstance(justification, str) or not justification.strip():
-            raise CompoundBundleError(
-                f"projection waivers[{stat!r}]: the justification must be a "
-                f"non-empty string (say WHY the stat is deliberately not charged)"
-            )
+            raise CompoundBundleError.nw(5336, stat=stat)
         waivers[stat] = " ".join(justification.split())
     # A stat that is charged and also waived is an error in the definition file.
     for cname, actions in compounds.items():
         for aname, mapping in actions.items():
             if mapping.count_from.stat in waivers:
-                raise CompoundBundleError(
-                    f"projection {cname}.{aname} charges stat "
-                    f"{mapping.count_from.stat!r} which is also listed in "
-                    f"'waivers' — remove one of the two"
-                )
+                raise CompoundBundleError.nw(
+                    5337, compound=cname, action=aname,
+                    stat=mapping.count_from.stat)
 
     def _string_list(key: str) -> List[str]:
         raw = obj.get(key) or []
         if not isinstance(raw, list) or any(
                 not isinstance(n, str) or not n.strip() for n in raw):
-            raise CompoundBundleError(
-                f"projection file: {key!r} must be a list of non-empty strings"
-            )
+            raise CompoundBundleError.nw(5338, key=key)
         return [" ".join(n.split()) for n in raw]
 
     return Projection(tool=obj["tool"], compounds=compounds,
@@ -505,25 +467,22 @@ def validate_projection(
     """
     for cname, actions in projection.compounds.items():
         if cname not in compounds:
-            raise CompoundBundleError(
-                f"projection {projection.tool!r} references unknown compound {cname!r}"
-            )
+            raise CompoundBundleError.nw(5339, tool=projection.tool,
+                                         compound=cname)
         compound = compounds[cname]
         for aname, mapping in actions.items():
             for ename, mode in mapping.elements.items():
                 if ename not in compound.elements:
-                    raise CompoundBundleError(
-                        f"projection {cname}.{aname}: element {ename!r} not in compound "
-                        f"({', '.join(compound.elements)})"
-                    )
+                    raise CompoundBundleError.nw(
+                        5340, compound=cname, action=aname, element=ename,
+                        elements=", ".join(compound.elements))
                 el = compound.elements[ename]
                 if el.primitive_is_template:
                     if not any(primitive_modes.is_valid(p, mode) for p in MAC_PRIMITIVES):
-                        raise CompoundBundleError(
-                            f"projection {cname}.{aname}: mode {mode!r} for templated "
-                            f"element {ename!r} is not valid for any MAC primitive "
-                            f"({', '.join(MAC_PRIMITIVES)})"
-                        )
+                        raise CompoundBundleError.nw(
+                            5341, compound=cname, action=aname, mode=mode,
+                            element=ename,
+                            mac_primitives=", ".join(MAC_PRIMITIVES))
                 else:
                     primitive_modes.require(el.primitive, mode)
 
@@ -601,15 +560,13 @@ def _resolve_element(
     cfg = el.config
     if mac_config is None and (el.primitive_is_template
                                or cfg == "{mac_config}"):
-        raise CompoundBundleError(
-            f"compound {compound_name}.{el.name}: the templates "
-            f"{{mac_primitive}} and {{mac_config}} need a MAC configuration, "
-            f"which this run does not have")
+        raise CompoundBundleError.nw(5342, compound=compound_name,
+                                     element=el.name)
     primitive = mac_config.primitive if el.primitive_is_template else el.primitive
     if cfg == "{mac_config}":
         config: object = dict(mac_config.primitive_config)
     elif _is_placeholder(cfg):
-        raise CompoundBundleError(f"{where}: unknown placeholder {cfg!r}")
+        raise CompoundBundleError.nw(5343, where=where, placeholder=cfg)
     elif isinstance(cfg, dict):
         config = {}
         for k, v in cfg.items():
@@ -682,9 +639,8 @@ def resolve_action(
     """
     actions = projection.compounds.get(compound.name)
     if actions is None or action not in actions:
-        raise CompoundBundleError(
-            f"projection {projection.tool!r} has no action {action!r} for {compound.name!r}"
-        )
+        raise CompoundBundleError.nw(5344, tool=projection.tool, action=action,
+                                     compound=compound.name)
     mapping = actions[action]
     symbols = _symbols_for(mac_config, extra_symbols)
     scale = _resolve_scalar_expr(
@@ -741,10 +697,9 @@ def _structured_files(directory: Path) -> List[Path]:
     seen: Dict[str, Path] = {}
     for p in sorted(files):
         if p.stem in seen:
-            raise CompoundBundleError(
-                f"two bundle files with stem {p.stem!r} in {directory}: "
-                f"{seen[p.stem].name} and {p.name}"
-            )
+            raise CompoundBundleError.nw(5345, stem=p.stem, directory=directory,
+                                         first=seen[p.stem].name,
+                                         second=p.name)
         seen[p.stem] = p
     return [seen[k] for k in sorted(seen)]
 
@@ -772,14 +727,14 @@ class Bundle:
 
     def compound(self, name: str) -> Compound:
         if name not in self.compounds:
-            raise CompoundBundleError(
-                f"no compound {name!r} in bundle ({', '.join(sorted(self.compounds))})"
-            )
+            raise CompoundBundleError.nw(
+                5346, compound=name,
+                available=", ".join(sorted(self.compounds)))
         return self.compounds[name]
 
     def projection(self, tool: str) -> Projection:
         if tool not in self.projections:
-            raise CompoundBundleError(
-                f"no projection {tool!r} in bundle ({', '.join(sorted(self.projections))})"
-            )
+            raise CompoundBundleError.nw(
+                5347, tool=tool,
+                available=", ".join(sorted(self.projections)))
         return self.projections[tool]

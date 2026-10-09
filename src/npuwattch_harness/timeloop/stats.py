@@ -69,17 +69,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from npuwattch.diagnostics import NPUWattchError, info, warning
 from npuwattch.naming import primitive_of
 from npuwattch.user_components import user_components_of
 
 __all__ = [
     "LevelStats",
     "TimeloopStats",
+    "TimeloopStatsError",
     "activity_from_stats",
     "load_stats_map",
     "parse_stats_file",
     "read_stats_input",
 ]
+
+class TimeloopStatsError(NPUWattchError, ValueError):
+    """A stats file, a stats directory, or a ``--stats-map`` file is not
+    correct."""
+
 
 #: File pattern for a stats directory. The name order is the layer order.
 STATS_GLOB = "*.stats.txt"
@@ -241,14 +248,12 @@ def parse_stats_file(path: Path) -> TimeloopStats:
                 continue
 
     if not levels:
-        raise ValueError(
-            f"{path}: no '=== <level> ===' blocks found — is this a "
-            f"timeloop-model/mapper .stats.txt?")
+        raise TimeloopStatsError.nw(7201, path=path)
     cycles = summary_cycles
     if cycles is None:
         cycles = max((lv.cycles or 0) for lv in levels)
     if cycles <= 0:
-        raise ValueError(f"{path}: no positive cycle count found")
+        raise TimeloopStatsError.nw(7202, path=path)
     return TimeloopStats(path=Path(path), cycles=cycles, levels=tuple(levels))
 
 
@@ -264,10 +269,7 @@ def read_stats_input(path: Path) -> List[TimeloopStats]:
         return [parse_stats_file(p)]
     files = sorted(p.glob(STATS_GLOB))
     if not files:
-        raise ValueError(
-            f"{p}: no '{STATS_GLOB}' files found — pass a "
-            f"timeloop-model/mapper stats file or a directory of per-layer "
-            f"stats files")
+        raise TimeloopStatsError.nw(7203, path=p, pattern=STATS_GLOB)
     return [parse_stats_file(f) for f in files]
 
 
@@ -328,13 +330,9 @@ def _targets(level: str, where: str, tgt: Any
                     if action is not None:
                         actions[name] = action
                     continue
-        raise ValueError(
-            f"stats map: level '{level}'{where} must name components "
-            f"(a name, {{name: N}} for N events per access, or "
-            f"{{name: {{count: N, action: A}}}})")
+        raise TimeloopStatsError.nw(7204, level=level, where=where)
     if not names:
-        raise ValueError(
-            f"stats map: level '{level}'{where} must list component names")
+        raise TimeloopStatsError.nw(7205, level=level, where=where)
     return names, mult, actions
 
 
@@ -368,11 +366,10 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
     if per_event:                            # {read: ..., write: ..., op: ...}
         unknown = [str(ev) for ev in value if str(ev) not in _EVENTS]
         if unknown:
-            raise ValueError(
-                f"stats map: level '{level}' has unknown event '{unknown[0]}' "
-                f"(use {', '.join(_EVENTS)})")
+            raise TimeloopStatsError.nw(7206, level=level, event=unknown[0],
+                                        events=", ".join(_EVENTS))
         if not value:
-            raise ValueError(f"stats map: level '{level}' binds nothing")
+            raise TimeloopStatsError.nw(7207, level=level)
         out: Dict[str, Any] = {}
         mult: Dict[str, int] = {}
         for ev, tgt in value.items():
@@ -386,9 +383,7 @@ def _normalize_binding(level: str, value: Any) -> Dict[str, Any]:
         if a:
             acts[_ANY] = a
     else:
-        raise ValueError(
-            f"stats map: level '{level}' must be a component name, a list of "
-            f"names, or {{read|write|op: names}}")
+        raise TimeloopStatsError.nw(7208, level=level)
     if mult:
         out[_MULT] = mult
     if acts:
@@ -417,17 +412,14 @@ def load_stats_map(path: Path) -> Tuple[Dict[str, Dict[str, List[str]]], set]:
     with Path(path).open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, Mapping):
-        raise ValueError(f"{path}: expected a mapping with 'levels:'/'ignore:'")
+        raise TimeloopStatsError.nw(7209, path=path)
     levels = data.get("levels") or {}
     ignore = data.get("ignore") or []
     if not isinstance(levels, Mapping) or not isinstance(ignore, (list, tuple)):
-        raise ValueError(
-            f"{path}: 'levels' must be a mapping and 'ignore' a list")
+        raise TimeloopStatsError.nw(7210, path=path)
     unknown = sorted(set(data) - {"levels", "ignore"})
     if unknown:
-        raise ValueError(
-            f"{path}: unknown key(s) {', '.join(unknown)} — the stats map "
-            f"takes 'levels:' and 'ignore:'")
+        raise TimeloopStatsError.nw(7211, path=path, keys=", ".join(unknown))
     return ({str(k): _normalize_binding(str(k), v) for k, v in levels.items()},
             {str(v) for v in ignore})
 
@@ -505,7 +497,7 @@ def activity_from_stats(
     its elements, as the projection of the run declares.
     """
     if mode not in ("windows", "aggregate"):
-        raise ValueError(f"stats mode must be 'windows' or 'aggregate', got {mode!r}")
+        raise TimeloopStatsError.nw(7212, mode=mode)
 
     stats_list = read_stats_input(stats_path)
     level_map, ignore = load_stats_map(map_path) if map_path else ({}, set())
@@ -548,10 +540,9 @@ def activity_from_stats(
                             for t, a in per_t.items() if t in resolved}
     level_map = resolved_map
     if missing_targets:
-        raise ValueError(
-            f"stats map names component(s) not in the description: "
-            f"{', '.join(sorted(set(missing_targets)))} — description "
-            f"components are {', '.join(sorted(names))}")
+        raise TimeloopStatsError.nw(
+            7213, missing=", ".join(sorted(set(missing_targets))),
+            components=", ".join(sorted(names)))
 
     try:
         from ..compounds import load_primitive_modes
@@ -591,10 +582,9 @@ def activity_from_stats(
                     target, cands = _match_component(lv.name, names)
                 if target is None:
                     if len(cands) > 1:
-                        warnings.append(
-                            f"stats level '{lv.name}' is ambiguous in the "
-                            f"description ({', '.join(sorted(cands))}) — "
-                            f"pick one via --stats-map 'levels:'")
+                        warnings.append(warning(
+                            7214, level=lv.name,
+                            candidates=", ".join(sorted(cands))))
                     else:
                         unmatched.append(lv.name)
                     continue
@@ -622,10 +612,9 @@ def activity_from_stats(
                 declared = int(comp.get("count", 1))
                 if target in own and lv.instances is not None \
                         and lv.instances != declared:
-                    warnings.append(
-                        f"stats level '{lv.name}' declares {lv.instances} "
-                        f"instance(s) but the description has {declared} for "
-                        f"'{target}' — are the stats from this architecture?")
+                    warnings.append(warning(
+                        7215, level=lv.name, stats_instances=lv.instances,
+                        declared=declared, component=target))
                 covered.add(target)
             if len(all_targets) > 1 or set(binding) != {_ANY} or mult or acts:
                 fanout.setdefault(lv.name, binding)
@@ -638,11 +627,9 @@ def activity_from_stats(
                                       acts.get((_ANY, target)))
                     if target in compound_bindings:
                         if action is not None:
-                            raise ValueError(
-                                f"stats map: level '{lv.name}' names the action "
-                                f"'{action}' for the compound component "
-                                f"'{target}' — a compound takes its actions "
-                                f"from projection.yaml")
+                            raise TimeloopStatsError.nw(
+                                7216, level=lv.name, action=action,
+                                component=target)
                         for element, stim, scale in compound_bindings[
                                 target].get(event, ()):
                             key = (element, event, stim)
@@ -654,10 +641,9 @@ def activity_from_stats(
                         # The user named the action: use it or stop.
                         known = modes_by_prim.get(primitive, ["random"])
                         if action not in known:
-                            raise ValueError(
-                                f"stats map: level '{lv.name}' charges "
-                                f"'{target}' with the action '{action}', but "
-                                f"its actions are {', '.join(known)}")
+                            raise TimeloopStatsError.nw(
+                                7217, level=lv.name, component=target,
+                                action=action, actions=", ".join(known))
                         charged = action
                     else:
                         charged = _mode_for(primitive, wanted_mode, modes_by_prim)
@@ -701,28 +687,17 @@ def activity_from_stats(
 
     # -- notes and warnings about the source of the activity --------------
     n_layers = len(stats_list)
-    notes.append(
-        f"Timeloop stats: {n_layers} file(s), {total_cycles} cycles, "
-        f"{len(covered)}/{len(names)} description component(s) charged "
-        f"({mode} mode); compute charged in the weight-stationary mode "
-        f"(Computes -> hold_b)")
+    notes.append(info(7218, files=n_layers, cycles=total_cycles,
+                      charged=len(covered), total=len(names), mode=mode))
     if unmatched:
-        warnings.append(
-            f"stats level(s) with no matching description component: "
-            f"{', '.join(sorted(set(unmatched)))} — their activity is NOT "
-            f"charged; rename via --stats-map 'levels:' or drop deliberately "
-            f"via 'ignore:'")
+        warnings.append(warning(7219, levels=", ".join(sorted(set(unmatched)))))
     if ignored_with_activity:
-        notes.append(
-            f"stats level(s) dropped by the map's 'ignore:': "
-            f"{', '.join(sorted(set(ignored_with_activity)))} — their energy "
-            f"is deliberately NOT in this run")
+        notes.append(info(
+            7220, levels=", ".join(sorted(set(ignored_with_activity)))))
     uncovered = sorted(set(names) - covered)
     if uncovered:
-        warnings.append(
-            f"{len(uncovered)} description component(s) get no Timeloop "
-            f"activity (charged leakage/area only — Timeloop does not model "
-            f"them): {', '.join(uncovered)}")
+        warnings.append(warning(7221, count=len(uncovered),
+                                components=", ".join(uncovered)))
     for level, binding in sorted(fanout.items()):
         mult = level_mult.get(level, {})
         acts = level_act.get(level, {})
@@ -736,13 +711,8 @@ def activity_from_stats(
                         + (f" as '{acts.get((ev, t), acts.get((_ANY, t)))}'"
                            if (ev, t) in acts or (_ANY, t) in acts else "")
                         for t in binding[ev]))
-        notes.append(
-            f"stats level '{level}' fans out per --stats-map: "
-            + "; ".join(parts)
-            + " (the same access count charges each listed component)")
+        notes.append(info(7222, level=level, bindings="; ".join(parts)))
     for target, charged in sorted(mode_fallbacks.items()):
-        notes.append(
-            f"{target}: charged in the '{charged}' stim mode — the wanted "
-            f"mode is not characterized for this primitive")
+        notes.append(info(7223, component=target, mode=charged))
     warnings = list(dict.fromkeys(warnings))  # remove duplicate warnings
     return rows, total_cycles, labels, warnings, notes

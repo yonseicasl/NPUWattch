@@ -24,6 +24,13 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from npuwattch.diagnostics import (
+    INFO,
+    WARNING,
+    NPUWattchError,
+    group as group_messages,
+    is_suppressed,
+)
 from .svg import (
     donut,
     dyn_leak_bar,
@@ -33,7 +40,11 @@ from .svg import (
     windows_chart,
 )
 
-__all__ = ["build_context", "render_html", "write_report"]
+__all__ = ["ReportError", "build_context", "render_html", "write_report"]
+
+
+class ReportError(NPUWattchError, ValueError):
+    """The report cannot be made from the results of the run."""
 
 _TOP_N = 8                     # the donut and the bar list show this many items
 
@@ -226,7 +237,7 @@ def build_context(
     provider = getattr(chain, "provider", None)
 
     if not run.windows:
-        raise ValueError("report: RunEnergy has no windows to report")
+        raise ReportError.nw(4001)
     comp0 = run.windows[0].components
     total_pJ = run.total_energy_pJ or 1.0
 
@@ -558,8 +569,17 @@ def build_context(
                            "table constants; a user component uses the "
                            "values of the user component library."),
             "inputs": input_entries,
-            "warnings": list(warnings),
-            "notes": list(notes),
+            # The text of each message ("(NW-6101): ..."), and the same
+            # messages grouped with their code, level and count. A message
+            # that --suppress hides is in neither.
+            "warnings": [str(w) for w in warnings
+                         if not is_suppressed(getattr(w, "code", None))],
+            "notes": [str(n) for n in notes
+                      if not is_suppressed(getattr(n, "code", None))],
+            "diagnostics": {
+                "warnings": group_messages(warnings, WARNING),
+                "notes": group_messages(notes, INFO),
+            },
             # The provenance of each kernel of a harness run: the kind, the
             # source of the dtype, and the primary activity counters. The
             # JSON always has these records, at each console verbosity.

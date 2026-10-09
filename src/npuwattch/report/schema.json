@@ -2,6 +2,17 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "NPUWattch report.json (manual §3.6, npuwattch-report/1)",
   "type": "object",
+  "definitions": {
+    "message_records": {
+      "type": "array", "items": {
+        "type": "object", "required": ["code", "level", "message", "count"],
+        "properties": {
+          "code": {"type": ["string", "null"]},
+          "level": {"enum": ["INFO", "WARNING", "ERROR", "CRITICAL"]},
+          "message": {"type": "string"},
+          "count": {"type": "integer", "minimum": 1}
+        }}}
+  },
   "required": ["schema", "design_name", "timestamp", "version", "tech", "clock",
                "activity_source", "totals", "timing", "windows", "components",
                "provenance"],
@@ -124,7 +135,7 @@
     "tree": {"type": ["object", "null"]},
     "provenance": {
       "type": "object",
-      "required": ["models", "inputs", "warnings"],
+      "required": ["models", "inputs", "warnings", "diagnostics"],
       "properties": {
         "models": {"type": "array"},
         "model_note": {"type": "string"},
@@ -133,7 +144,13 @@
           "properties": {"name": {"type": "string"},
                          "sha": {"type": ["string", "null"]}}}},
         "warnings": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}}
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "diagnostics": {
+          "type": "object", "required": ["warnings", "notes"],
+          "properties": {
+            "warnings": {"$ref": "#/definitions/message_records"},
+            "notes": {"$ref": "#/definitions/message_records"}
+          }}
       }
     }
   }

@@ -49,9 +49,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from npuwattch.catalog import about
+from npuwattch.diagnostics import NPUWattchError, info, warning
 from npuwattch.naming import validate_attributes
 
 __all__ = [
+    "EmitterError",
     "EmittedArch",
     "build_description",
     "build_activity",
@@ -97,6 +100,10 @@ _META_STATS = frozenset({"total_exec_cycles", "numCycles"})
 ACTIVITY_COLUMNS: Tuple[str, ...] = (
     "window", "cycle_start", "cycle_end", "component", "event", "mode", "count",
 )
+
+
+class EmitterError(NPUWattchError, ValueError):
+    """A resolved element cannot be emitted as a component (a definition error)."""
 
 
 # ---------------------------------------------------------------------------
@@ -194,26 +201,18 @@ def _components_for(
         cap_keys = {"capacity_kbit", "capacity_bit"} & set(cfg)
         if rel.primitive == "sram" and cap_keys:
             if len(cap_keys) > 1:
-                raise ValueError(
-                    f"{name}: give capacity_kbit OR capacity_bit, not both"
-                )
+                raise EmitterError.nw(2201, element=name)
             capacity_bits = (int(cfg["capacity_bit"]) if "capacity_bit" in cfg
                              else int(cfg["capacity_kbit"]) * 1024)
             if resolve_capacity is None:
                 if warnings is not None:
-                    warnings.append(
-                        f"{name}: SRAM estimator unavailable (npuwattch_estimators.sram not "
-                        f"importable); capacity-specified element not emitted"
-                    )
+                    warnings.append(warning(2202, element=name))
                 continue
             parts, part_warns = resolve_capacity(capacity_bits)
             if warnings is not None:
-                warnings.extend(f"{name}: {w}" for w in part_warns)
+                warnings.extend(about(name, w) for w in part_warns)
                 if len(parts) > 1:
-                    warnings.append(
-                        f"{name}: traffic charged to the primary part; "
-                        f"'{name}.tail' carries leakage/area only"
-                    )
+                    warnings.append(warning(2203, element=name))
             for j, part in enumerate(parts):
                 pname = name if j == 0 else f"{name}.tail"
                 components.append(
@@ -433,7 +432,7 @@ def build_activity(
         if ecyc is None:
             ecyc = getattr(w, "exec_cycles", None)
         if ecyc is None:
-            warnings.append(f"window {i}: no exec cycles; cycle_start/end left at {start}")
+            warnings.append(warning(2204, window=i, start=start))
             ecyc = 0
         end = start + int(ecyc) - 1 if ecyc else start
 
@@ -449,21 +448,17 @@ def build_activity(
                         flit_bits = 8 * int(
                             (getattr(w, "config", None) or {}).get("booksim_flit_size") or 0)
                         if not wb or not flit_bits:
-                            warnings.append(
-                                f"window {i}: action {ba.action!r} (unit flits) "
-                                f"needs a word width and flit size for element "
-                                f"{rae.element!r}; counted as words"
-                            )
+                            warnings.append(warning(
+                                2205, window=i, action=ba.action,
+                                element=rae.element))
                         else:
                             count = -(-(count * flit_bits) // wb)    # ceil
                     elif comp_class == "crossbar":
                         ports = xbar_ports.get(rae.element)
                         if not ports:
-                            warnings.append(
-                                f"window {i}: action {ba.action!r} (unit flits) "
-                                f"has no port count for crossbar element "
-                                f"{rae.element!r}; counted as cycles 1:1"
-                            )
+                            warnings.append(warning(
+                                2206, window=i, action=ba.action,
+                                element=rae.element))
                         else:
                             frac = _XBAR_VALID_FRACTION.get(rae.stim_mode, 1.0)
                             count = -(-count // (frac * ports))      # ceil
@@ -471,11 +466,9 @@ def build_activity(
                 elif unit != "words":
                     wb = word_bits.get(rae.element)
                     if not wb:
-                        warnings.append(
-                            f"window {i}: action {ba.action!r} uses unit "
-                            f"{unit!r} but element {rae.element!r} has no "
-                            f"capacity-resolved word width; counted as words"
-                        )
+                        warnings.append(warning(
+                            2207, window=i, action=ba.action, unit=unit,
+                            element=rae.element))
                     elif unit == "bytes":
                         count = -(-(count * 8.0) // wb)              # ceil
                     else:                                            # vectors
@@ -538,16 +531,13 @@ def _coverage_messages(
                 waived_totals[stat] = waived_totals.get(stat, 0.0) + float(value)
                 waived_windows[stat] = waived_windows.get(stat, 0) + 1
                 continue
-            warnings.append(
-                f"window {i} ({getattr(w, 'kernel_hash', '?')}): activity stat "
-                f"{stat!r}={value} is interpreted by no action in projection {tool!r} "
-                "(intentional coarser fidelity, or an incomplete projection)"
-            )
+            warnings.append(warning(
+                2208, window=i, kernel=getattr(w, "kernel_hash", "?"),
+                stat=stat, value=value, tool=tool))
     notes = [
-        f"activity stat {stat!r} (total "
-        f"{int(total) if float(total).is_integer() else total} across "
-        f"{waived_windows[stat]} window(s)) is not charged — waived in "
-        f"projection {tool!r}: {waivers[stat]}"
+        info(2209, stat=stat,
+             total=int(total) if float(total).is_integer() else total,
+             windows=waived_windows[stat], tool=tool, reason=waivers[stat])
         for stat, total in sorted(waived_totals.items())
     ]
     return warnings, notes

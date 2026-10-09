@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
+from npuwattch.diagnostics import warning
+
 from ..compounds.loader import (
     Compound,
     CompoundBundleError,
@@ -144,33 +146,27 @@ def _mac_config_for(kernel_dir: Path, act: TogsimActivity,
     if has_mlir:
         try:
             mac_config = infer_mac_config_from_dir(
-                kernel_dir, act.lanes, pipeline_stages=pipeline_stages
+                kernel_dir, act.lanes, pipeline_stages=pipeline_stages,
+                kernel=khash,
             )
             warnings.extend(mac_config.warnings)
         except NotAMatmulKernel:
-            warnings.append(f"{khash}: kernel has no linalg.matmul; no MAC config")
+            warnings.append(warning(6201, kernel=khash))
         except MacInferenceError as e:
-            warnings.append(f"{khash}: MAC config inference failed: {e}")
+            warnings.append(warning(6202, kernel=khash, error=e))
     elif not gemm_active:
-        warnings.append(
-            f"{khash}: no kernel MLIR and no systolic/GEMM activity in the "
-            f"log; treated as a non-MAC kernel"
-        )
+        warnings.append(warning(6203, kernel=khash))
     elif meta_path.is_file():
         try:
             mac_config = infer_mac_config_from_meta(
                 meta_path.read_text(encoding="utf-8"), act.lanes,
-                pipeline_stages=pipeline_stages,
+                pipeline_stages=pipeline_stages, kernel=khash,
             )
-            warnings.extend(f"{khash}: {w}" for w in mac_config.warnings)
+            warnings.extend(mac_config.warnings)
         except MacInferenceError as e:
-            warnings.append(
-                f"{khash}: meta.txt-only MAC config inference failed: {e}"
-            )
+            warnings.append(warning(6204, kernel=khash, error=e))
     else:
-        warnings.append(
-            f"{khash}: no kernel MLIR and no meta.txt; MAC config unavailable"
-        )
+        warnings.append(warning(6205, kernel=khash))
     return mac_config
 
 
@@ -186,7 +182,7 @@ def _gem5_instruction_stats(kernel_dir: Path, khash: str,
             stats[name] = float(inst.get(name, 0))
         stats["numCycles"] = sum_stat(sections, "system.cpu.numCycles")
     else:
-        warnings.append(f"{khash}: no m5out/stats.txt; gem5 instruction counts unavailable")
+        warnings.append(warning(6206, kernel=khash))
     return stats
 
 
@@ -205,11 +201,10 @@ def _sfu_format(mac_config: Optional[MacConfig], stats: Mapping[str, float],
             and isinstance(od.exp_bits, int) and isinstance(od.mantissa_bits, int)):
         sfu_exp, sfu_mant = od.exp_bits, od.mantissa_bits
     elif any(stats.get(name) for name in _SFU_INSTS):
-        warnings.append(
-            f"{khash}: SFU ops present but the kernel's operand dtype is "
-            f"{'integer' if od is not None else 'unknown'}; charging the SFU "
-            f"at fp32 (e8m23) tables"
-        )
+        if od is not None:
+            warnings.append(warning(6207, kernel=khash))      # integer dtype
+        else:
+            warnings.append(warning(6208, kernel=khash))      # no dtype
     return sfu_exp, sfu_mant
 
 
@@ -246,15 +241,11 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
     log_dir = Path(togsim_dir)
     out_dir = Path(gem5_dir)
     if not log_dir.is_dir():
-        raise MacInferenceError(f"TOGSim log directory not found: {log_dir}")
+        raise MacInferenceError.nw(6209, path=log_dir)
     if not out_dir.is_dir():
-        raise MacInferenceError(f"gem5/codegen output directory not found: {out_dir}")
+        raise MacInferenceError.nw(6210, path=out_dir)
     if not sorted(log_dir.glob("*.log")):
-        raise MacInferenceError(
-            f"no *.log in {log_dir} — pass the run's final togsim_results/ "
-            f"directory (autotune logs under outputs/<hash>/togsim_result/ are "
-            f"candidates, not results)"
-        )
+        raise MacInferenceError.nw(6211, path=log_dir)
 
     windows: List[KernelWindow] = []
     skipped: List[str] = []
@@ -270,7 +261,7 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             skipped.append(f"{log_path.name}: {e}")
             continue
         khash = act.kernel_hash
-        warnings.extend(f"{khash}: {w}" for w in act.warnings)
+        warnings.extend(act.warnings)
         kernel_dir = out_dir / khash
 
         mac_config: Optional[MacConfig] = None
@@ -278,9 +269,7 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             mac_config = _mac_config_for(kernel_dir, act, pipeline_stages,
                                          warnings)
         else:
-            warnings.append(
-                f"{khash}: {out_dir.name}/{khash}/ not found; MAC config unavailable"
-            )
+            warnings.append(warning(6212, kernel=khash, directory=out_dir.name))
 
         # Activity from the TOGSim log. The DRAM, NoC, and gem5 stats follow.
         stats: Dict[str, float] = {
@@ -333,14 +322,10 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             )
         )
     if not windows and skipped:
-        raise MacInferenceError(
-            "no parseable TOGSim log in "
-            f"{log_dir} — " + "; ".join(skipped)
-        )
+        raise MacInferenceError.nw(6213, path=log_dir, skipped="; ".join(skipped))
     if skipped:
         windows[0].warnings.insert(
-            0, f"{len(skipped)} unparseable log(s) skipped: " + "; ".join(skipped)
-        )
+            0, warning(6214, count=len(skipped), skipped="; ".join(skipped)))
     return windows
 
 
@@ -371,9 +356,7 @@ def bind_window(
       errors in the definitions.
     """
     if window.mac_config is None:
-        raise MacInferenceError(
-            f"window {window.kernel_hash} has no MAC config; cannot bind projection"
-        )
+        raise MacInferenceError.nw(6215, kernel=window.kernel_hash)
     # Each integer key of the run configuration is also a symbol. The
     # compounds and the projection of this harness can use it in expressions.
     extra_symbols = {
@@ -393,7 +376,8 @@ def bind_window(
         except CompoundBundleError as e:
             if skipped is None:
                 raise
-            skipped.append(f"{compound.name}.{action_name}: not charged — {e}")
+            skipped.append(warning(6216, compound=compound.name,
+                                   action=action_name, error=e))
             continue
         stat_value = window.stats[stat]
         bound.append(

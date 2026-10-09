@@ -18,6 +18,8 @@ from collections import OrderedDict
 from copy import deepcopy
 from typing import Dict, List, Any, Tuple, Optional, Union
 
+from npuwattch.diagnostics import info, warning
+
 
 class TreeNode:
     """One node of the architecture hierarchy tree."""
@@ -506,10 +508,10 @@ class AccelergyV04Flattener:
     def print_tree(self):
         """Print the hierarchy tree of the input file with box-drawing characters."""
         if not self.tree_root:
-            print("[WARNING] No tree to display")
+            warning(7501).emit()
             return
         
-        print("[INFO] Architecture Hierarchy Tree:")
+        info(7502).emit()
         print("=" * 100)
         if self.tree_root.children:
             for child in self.tree_root.children:
@@ -559,17 +561,17 @@ class AccelergyV04Flattener:
                 type_info = f"(class: {node.comp_class}/{node.subclass})"
             else:
                 type_info = f"(class: {node.comp_class})"
-            print(f"{prefix}{connector}{node.name}{instance_str} {type_info}{status_str}")
+            print(f"{prefix}{connector}{node.name}{instance_str} {type_info}{status_str}")  # nw-lint: text
         elif node.node_type == 'Container':
-            print(f"{prefix}{connector}{node.name} (container){instance_str}{status_str}")
+            print(f"{prefix}{connector}{node.name} (container){instance_str}{status_str}")  # nw-lint: text
         elif node.node_type in ['Parallel', 'Hierarchical', 'Pipelined']:
-            print(f"{prefix}{connector}{node.name}")
+            print(f"{prefix}{connector}{node.name}")  # nw-lint: text
         elif node.node_type == 'Nothing':
             # For a Nothing node, show if it has constraints.
             constraint_info = ""
             if node.constraints:
                 constraint_info = f" [has constraints]"
-            print(f"{prefix}{connector}{node.name} (nothing){instance_str}{constraint_info}{status_str}")
+            print(f"{prefix}{connector}{node.name} (nothing){instance_str}{constraint_info}{status_str}")  # nw-lint: text
         
         # Print the children.
         for i, child in enumerate(node.children):
@@ -614,7 +616,7 @@ def flatten_accelergy_v04_yaml(
     in_path = Path(input_yaml)
     out_path = Path(output_yaml)
 
-    print(f"[INFO] Flattening {in_path} for estimator mode...")
+    info(7503, path=in_path).emit()
 
     flattener = AccelergyV04Flattener()
     content = flattener.parse_yaml(str(in_path))
@@ -626,6 +628,6 @@ def flatten_accelergy_v04_yaml(
     flattener.save_flattened(str(out_path), flattened)
     
     # Print the result message.
-    print(f"[INFO] Flattened YAML written to: {out_path}")
+    info(7504, path=out_path).emit()
     
     return flattened

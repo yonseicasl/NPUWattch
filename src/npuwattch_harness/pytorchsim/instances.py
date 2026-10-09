@@ -42,22 +42,22 @@ idle component.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from npuwattch.diagnostics import Diagnostic, warning
 
 from .activity import BoundAction, _num
 
 __all__ = ["expand_bounds"]
 
 #: For each stat that drives an action: the counter that gives the share of
-#: each core, and a message. A stat that is not in this table uses "systolic".
-#: A message of None means that the division is exact. A run shows each
-#: message one time.
-_SFU_NOTE = "SFU ops attributed per core by vector active-cycle share"
-_CORE_RULES: Dict[str, Tuple[str, str]] = {
-    "dram_read_bytes": ("movin",
-                        "DRAM→VMEM fill attributed per core by MOVIN instruction share"),
-    "dram_write_bytes": ("movout",
-                         "VMEM→DRAM drain attributed per core by MOVOUT instruction share"),
+#: each core, and the kind of message (see ``_core_note``). A stat that is
+#: not in this table uses "systolic". A message kind of None means that the
+#: division is exact. A run shows each message one time.
+_SFU_NOTE = "sfu"
+_CORE_RULES: Dict[str, Tuple[str, Optional[str]]] = {
+    "dram_read_bytes": ("movin", "movin"),
+    "dram_write_bytes": ("movout", "movout"),
     "vector_active_cycles": ("vector", None),
     # Events of the DMA engine. The division is exact. The last DMA line of
     # each core in the log gives the total response count of that core. One
@@ -73,8 +73,18 @@ _CORE_RULES: Dict[str, Tuple[str, str]] = {
     "CustomVsin": ("vector", _SFU_NOTE),
     "CustomVcos": ("vector", _SFU_NOTE),
 }
-_DEFAULT_CORE_RULE: Tuple[str, str] = (
-    "systolic", "attributed per core by systolic active-cycle share")
+_DEFAULT_CORE_RULE: Tuple[str, str] = ("systolic", "systolic")
+
+
+def _core_note(kind: str, stat: str) -> Diagnostic:
+    """Return the message of a division per core that is not exact."""
+    if kind == "sfu":
+        return warning(6601, stat=stat)
+    if kind == "movin":
+        return warning(6602, stat=stat)
+    if kind == "movout":
+        return warning(6603, stat=stat)
+    return warning(6604, stat=stat)
 
 _CORE_STAT_KEY = {
     "systolic": "systolic_active_cycles",
@@ -119,9 +129,7 @@ class _WindowShares:
             vals = {c: float((self._pc.get(c) or {}).get(stat_key, 0) or 0)
                     for c in range(self._C)}
             if sum(vals.values()) <= 0 and kind != "systolic":
-                self.notes.append(
-                    f"no per-core {stat_key} counters; falling back to the "
-                    f"systolic active-cycle share")
+                self.notes.append(warning(6605, counter=stat_key))
                 m = dict(self.core("systolic"))
             else:
                 m = self._normalize(vals, f"per-core {stat_key}")
@@ -133,7 +141,7 @@ class _WindowShares:
         if total > 0:
             return {k: v / total for k, v in vals.items()}
         if len(vals) > 1:
-            self.notes.append(f"{what}: all zero in this window; split uniformly")
+            self.notes.append(warning(6606, counter=what))
         return {k: 1.0 / len(vals) for k in vals}
 
 
@@ -169,16 +177,14 @@ def expand_bounds(
                 smap = shares.array()
                 # Give a message only if there is more than one array.
                 if ba.stat != "systolic_active_cycles" and C * A > 1:
-                    notes.append(
-                        f"{ba.stat}: kernel-total events attributed per array "
-                        f"in proportion to each array's active cycles")
+                    notes.append(warning(6607, stat=ba.stat))
                 pieces = [(f"core{c}.array{a}.{rae.element}", smap[(c, a)])
                           for c in range(C) for a in range(A)]
             else:                                                  # per: core
                 kind, note = _CORE_RULES.get(ba.stat, _DEFAULT_CORE_RULE)
                 smap = shares.core(kind)
                 if note and C > 1:
-                    notes.append(f"{ba.stat}: {note}")
+                    notes.append(_core_note(note, ba.stat))
                 pieces = [(f"core{c}.{rae.element}", smap[c]) for c in range(C)]
             for qname, s in pieces:
                 cyc = ba.cycle_count * s

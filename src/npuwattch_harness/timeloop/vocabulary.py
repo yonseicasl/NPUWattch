@@ -35,6 +35,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from npuwattch.diagnostics import info, warning
 from npuwattch.naming import CONTEXT_NAMES, PRIMITIVE_PARAMS
 from .dram import CONSTANT_NAMES, constants_for
 from ..vocabulary import (
@@ -162,9 +163,8 @@ def attributes_for(
 
     ignored = reader.ignored()
     if ignored:
-        notes.append(
-            f"{component} ({primitive}): ignored Accelergy attribute(s) "
-            f"{', '.join(ignored)} — no NPUWattch attribute corresponds")
+        notes.append(info(7301, component=component, primitive=primitive,
+                          attributes=", ".join(ignored)))
     return out
 
 
@@ -185,9 +185,7 @@ def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
     if width is None:
         width = _block_width(reader)
     if width is None:
-        warnings.append(
-            f"{component} ({primitive}): no word width declared — assuming "
-            f"32 bits")
+        warnings.append(warning(7302, component=component, primitive=primitive))
         width = 32
     out["data_width"] = width
 
@@ -205,21 +203,17 @@ def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
             capacity_bits = kb * 1024 * 8 if kb else None
         if capacity_bits is not None:
             depth = max(1, capacity_bits // width)
-            notes.append(
-                f"{component} ({primitive}): depth {depth} derived from the "
-                f"declared capacity / {width} b word")
+            notes.append(info(7303, component=component, primitive=primitive,
+                              depth=depth, width=width))
     if depth is None:
-        warnings.append(
-            f"{component} ({primitive}): neither depth nor capacity declared "
-            f"— assuming 64 entries")
+        warnings.append(warning(7304, component=component, primitive=primitive))
         depth = 64
     if banks and banks > 1 and depth_key != "mem_depth_per_bank":
         per_bank = -(-depth // banks)            # ceiling division
         if depth % banks:
-            warnings.append(
-                f"{component} ({primitive}): total depth {depth} is not a "
-                f"multiple of {banks} banks — rounded up to {per_bank} words "
-                f"per bank")
+            warnings.append(warning(7305, component=component,
+                                    primitive=primitive, depth=depth,
+                                    banks=banks, per_bank=per_bank))
         total_bits = banks * per_bank * width
         if total_bits % (8 * 1024 * 1024) == 0:
             capacity = f"{total_bits // (8 * 1024 * 1024)} MB"
@@ -227,10 +221,9 @@ def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
             capacity = f"{total_bits // (8 * 1024)} KB"
         else:
             capacity = f"{total_bits} bit"
-        notes.append(
-            f"{component} ({primitive}): depth {depth} is the Accelergy total "
-            f"over {banks} banks → mem_depth_per_bank {per_bank} "
-            f"({capacity} total)")
+        notes.append(info(7306, component=component, primitive=primitive,
+                          depth=depth, banks=banks, per_bank=per_bank,
+                          capacity=capacity))
         depth = per_bank
     out["mem_depth_per_bank"] = depth
     if banks is not None:
@@ -243,9 +236,7 @@ def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
     rw_ports = reader.take_int("mem_rw_ports")
     if r_ports is None and w_ports is None and rw_ports is None:
         rw_ports = 1
-        notes.append(
-            f"{component} ({primitive}): no port count declared — assuming a "
-            f"single shared read-or-write port")
+        notes.append(info(7307, component=component, primitive=primitive))
     if r_ports is not None:
         out["mem_r_ports"] = r_ports
     if w_ports is not None:
@@ -269,17 +260,14 @@ def _storage_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
         n_banks = banks or 1
         ports = (r_ports or 0) + (w_ports or 0) + (rw_ports or 0) or 1
         if accesses > 1 and n_banks > 1:
-            notes.append(
-                f"{component} ({primitive}): bandwidth {per} → up to "
-                f"{min(accesses, n_banks * ports)} bank accesses per cycle; "
-                f"each is charged as one access event")
+            notes.append(info(7308, component=component, primitive=primitive,
+                              bandwidth=per,
+                              accesses=min(accesses, n_banks * ports)))
         if accesses > n_banks * ports:
-            warnings.append(
-                f"{component} ({primitive}): bandwidth {per} needs "
-                f"{accesses} accesses/cycle, more than {n_banks} bank(s) × "
-                f"{ports} port(s) = {n_banks * ports} — the declared structure "
-                f"cannot serve Timeloop's mapping; it would need "
-                f"{-(-accesses // ports)} banks (or more ports)")
+            warnings.append(warning(
+                7309, component=component, primitive=primitive, bandwidth=per,
+                accesses=accesses, banks=n_banks, ports=ports,
+                slots=n_banks * ports, needed_banks=-(-accesses // ports)))
 
 
 def _dram_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
@@ -287,9 +275,7 @@ def _dram_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
                energy_table: Optional[Any] = None) -> None:
     width = reader.take_int("data_width") or _block_width(reader)
     if width is None:
-        warnings.append(
-            f"{component} (hbm): no word width declared — charging a 32 B "
-            f"burst (256 bits) per access")
+        warnings.append(warning(7310, component=component))
         width = 256
     out["data_width"] = width
 
@@ -308,9 +294,7 @@ def _int_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
     width = reader.take_int("operand_width")
     a = a or width
     if a is None:
-        warnings.append(
-            f"{component} ({primitive}): no operand width declared — assuming "
-            f"8 bits")
+        warnings.append(warning(7311, component=component, primitive=primitive))
         a = 8
     b = b or a
     out["number_format"] = "int"
@@ -322,10 +306,8 @@ def _int_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
         acc = reader.take_int("data_width_acc")
         if acc is None:
             acc = _ACC_WIDTH_MULTIPLIER * max(a, b)
-            notes.append(
-                f"{component} (intmac): accumulator width {acc} b inferred as "
-                f"{_ACC_WIDTH_MULTIPLIER}x the operand width — Accelergy "
-                f"declares none (int8 x int8 -> int32 convention)")
+            notes.append(info(7312, component=component, width=acc,
+                              multiplier=_ACC_WIDTH_MULTIPLIER))
         out["data_width_acc"] = acc
         out["data_width_out"] = declared_out or acc
     elif primitive == "intmul":
@@ -342,21 +324,15 @@ def _fp_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
     if exp is None or mant is None:
         split = _FP_SPLIT_BY_WIDTH.get(width or 32)
         if split is None:
-            warnings.append(
-                f"{component} ({primitive}): {width} b is not an IEEE width — "
-                f"assuming single precision (8, 23); declare exponent_bits / "
-                f"mantissa_bits to model the real format")
+            warnings.append(warning(7313, component=component,
+                                    primitive=primitive, width=width))
             split = _FP_SPLIT_BY_WIDTH[32]
         elif width is None:
-            warnings.append(
-                f"{component} ({primitive}): no width or exponent/mantissa "
-                f"split declared — assuming fp32")
+            warnings.append(warning(7314, component=component,
+                                    primitive=primitive))
         else:
-            notes.append(
-                f"{component} ({primitive}): exponent/mantissa {split} "
-                f"inferred from the declared {width} b width (IEEE 754); "
-                f"bf16 and fp16 share a width — declare the split to "
-                f"distinguish them")
+            notes.append(info(7315, component=component, primitive=primitive,
+                              split=split, width=width))
         exp, mant = split
     out["number_format"] = "fp"
     out["exponent_bits"] = exp
@@ -371,9 +347,7 @@ def _fp_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
                 out[key] = value
         if "sfu_segments" not in out:
             out["sfu_segments"] = 16
-            notes.append(
-                f"{component} (fpsfu): sfu_segments not declared — assuming "
-                f"a 16-segment PWL table")
+            notes.append(info(7316, component=component))
         for key in ("sfu_op_exp", "sfu_op_trig", "sfu_op_hyp", "sfu_op_erf"):
             out.setdefault(key, 1)
 
@@ -382,17 +356,13 @@ def _fabric_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
                  component: str, warnings: List[str], notes: List[str]) -> None:
     width = reader.take_int("data_width")
     if width is None:
-        warnings.append(
-            f"{component} ({primitive}): no flit/data width declared — "
-            f"assuming 64 bits")
+        warnings.append(warning(7317, component=component, primitive=primitive))
         width = 64
     out["data_width"] = width
     inputs = reader.take_int("net_inputs")
     outputs = reader.take_int("net_outputs")
     if inputs is None and outputs is None:
-        warnings.append(
-            f"{component} ({primitive}): no port count declared — assuming a "
-            f"2-port element")
+        warnings.append(warning(7318, component=component, primitive=primitive))
         inputs = outputs = 2
     out["net_inputs"] = inputs if inputs is not None else outputs
     if primitive == "crossbar":
@@ -403,8 +373,7 @@ def _link_rule(primitive: str, reader: AttributeReader, out: Dict[str, Any],
                component: str, warnings: List[str], notes: List[str]) -> None:
     width = reader.take_int("data_width")
     if width is None:
-        warnings.append(
-            f"{component} (d2dlink): no width declared — assuming 64 bits")
+        warnings.append(warning(7319, component=component))
         width = 64
     out["data_width"] = width
 

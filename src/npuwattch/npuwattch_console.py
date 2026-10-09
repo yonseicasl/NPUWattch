@@ -13,9 +13,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import npuwattch.npuwattch_messages as msg
+from npuwattch.catalog import as_diagnostic
+from npuwattch.diagnostics import (
+    INFO,
+    WARNING,
+    NPUWattchError,
+    critical,
+    emit,
+    error,
+    info,
+    warning,
+)
 import npuwattch.npuwattch_tables as tbl
 from npuwattch.npuwattch_parser import (
     parse_args,
@@ -29,6 +40,34 @@ from npuwattch_harness.timeloop.accelergy_flattener import flatten_accelergy_v04
 #: The default clock frequency, in MHz. A run uses it if --clock-mhz, the
 #: description, and the log give no clock.
 DEFAULT_HARNESS_CLOCK_MHZ = 200.0
+
+
+def _emit_messages(messages: Iterable, level: str = WARNING) -> None:
+    """Print a list of deferred messages (warnings or notes).
+
+    A :class:`Diagnostic` prints with its own code and level. A plain
+    ``str`` (from a plugin that does not use the catalog yet) gets the
+    generic entry of ``level``. Thus each printed line has a code.
+    """
+    for m in messages:
+        as_diagnostic(m, level).emit()
+
+
+def _emit_exception(e: BaseException, fallback: int) -> None:
+    """Print the line of an exception that stops the run.
+
+    An exception with a catalog entry prints its own line. Any other
+    exception gets the catalog entry ``fallback``, with its text in the
+    field ``error``.
+    """
+    if isinstance(e, NPUWattchError) and e.number is not None:
+        emit(e)
+    elif fallback == 1018:
+        error(1018, error=e).emit()
+    elif fallback == 1019:
+        critical(1019, error=e).emit()
+    else:
+        critical(1027, error=e).emit()
 
 
 def _run_flattener(args) -> int:
@@ -45,7 +84,7 @@ def _print_tree(root, source: str) -> None:
     """Print the instance hierarchy (``report.tree``) for ``--tree``."""
     from npuwattch.report import render_text
 
-    print(f"[INFO] Instance hierarchy ({source}):")
+    info(1001, source=source).emit()
     print(tbl.rule("-"))
     print(render_text(root))
     print(tbl.rule("-"))
@@ -67,22 +106,20 @@ def _run_training(args, host: EstimatorHost) -> int:
     entrypoints = spec.get("entrypoints") or {}
     if not any(k.startswith("train") for k in entrypoints):
         script = _TRAINERS.get(args.train_estimator)
-        print(f"[ERROR] Estimator {args.train_estimator!r} declares no training "
-              f"entrypoint.")
+        error(1002, estimator=args.train_estimator).emit()
         if script:
-            print(f"[INFO] Its models are trained by {script} — run that "
-                  f"directly (it owns the group split, the adaptive loss and "
-                  f"the checkpoint quartet; manual §5).")
+            info(1003, script=script).emit()
         return 1
 
-    print(f"[INFO] Starting training mode")
-    print(f"[INFO] Estimator: {args.train_estimator}")
-    print(f"[INFO] Model type: {args.train_model_type}")
-    print(f"[INFO] Training data: {args.train_csv}")
-    print(f"[INFO] Epochs: {args.train_epochs}, Batch size: {args.train_batch_size}, LR: {args.train_lr}")
-    print("=" * 80)
+    info(1004).emit()
+    info(1005, estimator=args.train_estimator).emit()
+    info(1006, model_type=args.train_model_type).emit()
+    info(1007, path=args.train_csv).emit()
+    info(1008, epochs=args.train_epochs, batch_size=args.train_batch_size,
+         lr=args.train_lr).emit()
+    print("=" * 80)  # nw-lint: text
 
-    result, error = host.train_model(
+    result, train_error = host.train_model(
         module_name=args.train_estimator,
         model_type=args.train_model_type,
         csv_file=str(args.train_csv),
@@ -92,11 +129,11 @@ def _run_training(args, host: EstimatorHost) -> int:
         lr=args.train_lr,
     )
 
-    if error:
-        print(f"[ERROR] Training failed: {error}")
+    if train_error:
+        error(1009, error=getattr(train_error, "text", None) or train_error).emit()
         return 1
 
-    print("[INFO] Training completed successfully!")
+    info(1010).emit()
     return 0
 
 def _resolve_tech_node(chain, tech):
@@ -110,17 +147,15 @@ def _resolve_tech_node(chain, tech):
     the warnings. The caller also gives the warnings
     (``NodeResolution.warnings``) to the report.
 
-    Raises ``ValueError`` if the node cannot be parsed. The callers change
-    this into a CLI error.
+    Raises ``NodeError`` (a ``ValueError``) if the node cannot be parsed. The
+    callers change this into a CLI error.
     """
     from npuwattch.energy import apply_node_scaling
 
     chain, resolution = apply_node_scaling(chain, tech)
     if resolution is not None:
-        for note in resolution.notes:
-            print(f"[INFO] {note}")
-        for warning in resolution.warnings:
-            print(f"[WARNING] {warning}")
+        _emit_messages(resolution.notes, INFO)
+        _emit_messages(resolution.warnings, WARNING)
     return chain, resolution
 
 
@@ -146,7 +181,7 @@ def _run_native_estimator(args, description) -> int:
         vectorless_activity_rows,
     )
 
-    print("[INFO] Native NPUWattch description detected (§3.1)")
+    info(1011).emit()
 
     if args.tree:
         # The tree is only a view. A failure here gives a warning, and the
@@ -156,11 +191,11 @@ def _run_native_estimator(args, description) -> int:
             _print_tree(tree_from_native(description),
                         "flat native description; dot-grouped")
         except Exception as e:
-            print(f"[WARNING] --tree: hierarchy view unavailable: {e}")
+            warning(1012, error=e).emit()
 
     if len(args.activity_logs) > 1:
-        print(f"[ERROR] Native mode expects exactly one activity CSV, got "
-              f"{len(args.activity_logs)}: {', '.join(str(p) for p in args.activity_logs)}")
+        error(1013, count=len(args.activity_logs),
+              paths=", ".join(str(p) for p in args.activity_logs)).emit()
         return 1
 
     nw = description.get("npuwattch", {})
@@ -173,18 +208,22 @@ def _run_native_estimator(args, description) -> int:
         temperature_C=float(t.get("temperature_C", 25.0)),
         clock_mhz=(nw.get("clock") or {}).get("frequency_MHz"),
     )
-    print(f"[INFO] Technology: {tech.node} / {tech.transistor} / {tech.corner} / "
-          f"{tech.voltage_offset_V:+.3f} V / {tech.temperature_C} C")
+    info(1014, node=tech.node, transistor=tech.transistor, corner=tech.corner,
+         voltage_offset_V=tech.voltage_offset_V,
+         temperature_C=tech.temperature_C).emit()
 
     if args.activity_logs:
         activity_path = Path(args.activity_logs[0])
         try:
             rows, total_cycles = read_activity_csv(activity_path)
         except Exception as e:
-            print(f"[ERROR] Failed to read activity CSV {activity_path}: {e}")
+            error(1015, path=activity_path, error=e).emit()
             return 1
-        print(f"[INFO] Activity: {activity_path} ({len(rows)} rows"
-              f"{f', total_cycles={total_cycles}' if total_cycles else ''})")
+        if total_cycles:
+            info(1017, path=activity_path, rows=len(rows),
+                 total_cycles=total_cycles).emit()
+        else:
+            info(1016, path=activity_path, rows=len(rows)).emit()
     else:
         activity = (args.vectorless_activity
                     if args.vectorless_activity is not None
@@ -192,10 +231,9 @@ def _run_native_estimator(args, description) -> int:
         try:
             rows, notes = vectorless_activity_rows(description, activity=activity)
         except ValueError as e:
-            print(f"[ERROR] {e}")
+            _emit_exception(e, 1018)
             return 1
-        for note in notes:
-            print(f"[INFO] {note}")
+        _emit_messages(notes, INFO)
 
     naming_warnings: List[str] = []
     try:
@@ -208,18 +246,17 @@ def _run_native_estimator(args, description) -> int:
             warnings=naming_warnings,
             clock_check=args.show_fmax,
         )
-    except ValueError as e:
-        print(f"[ERROR] {e}")
+    except ValueError as e:                 # catalog errors and user input
+        _emit_exception(e, 1018)
         return 1
     except Exception as e:
-        print(f"[ERROR] Energy aggregation failed: {e}")
+        _emit_exception(e, 1019)
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
         return 1
 
-    for w in naming_warnings:
-        print(f"[WARNING] {w}")
+    _emit_messages(naming_warnings, WARNING)
     extra_tag = None
     if not args.activity_logs:
         pct = (args.vectorless_activity
@@ -235,7 +272,7 @@ def _run_native_estimator(args, description) -> int:
         hierarchy = tree_from_native(description)
     except Exception as e:                       # only a view: the run continues
         hierarchy = None
-        naming_warnings.append(f"hierarchy view unavailable: {e}")
+        naming_warnings.append(warning(1020, error=e))
     vectorless = None
     if not args.activity_logs:
         vectorless = (args.vectorless_activity
@@ -266,19 +303,18 @@ def _run_estimator(args) -> int:
     input. Give it to ``--harness timeloop --arch-yaml``. Thus each input
     type has one flag, as for all harnesses.
     """
-    print("[INFO] Starting estimator mode")
+    info(1021).emit()
     print(tbl.rule("="))
 
     if not args.description_files:
-        print("[ERROR] Estimator mode requires -d/--description")
+        error(1115).emit()
         return 1
     desc_path = Path(args.description_files[0])
     if len(args.description_files) > 1:
-        print(f"[ERROR] Estimator mode expects one description, got "
-              f"{len(args.description_files)}")
+        error(1022, count=len(args.description_files)).emit()
         return 1
     if not desc_path.is_file():
-        print(f"[ERROR] Description not found: {desc_path}")
+        error(1023, path=desc_path).emit()
         return 1
     # A native description is plain YAML with an `npuwattch:` root. A file
     # with an `architecture:` root, or with the `!Container`/`!Component`
@@ -290,12 +326,8 @@ def _run_estimator(args) -> int:
         content = None
     if isinstance(content, dict) and "npuwattch" in content:
         return _run_native_estimator(args, content)
-    print(f"[ERROR] Not a native NPUWattch description (no 'npuwattch:' "
-          f"root): {desc_path}")
-    print(f"[ERROR] Accelergy/Timeloop architecture YAMLs go through the "
-          f"timeloop harness explicitly:")
-    print(f"[ERROR]     npuwattch --harness timeloop --arch-yaml {desc_path} "
-          f"[--node ... --clock-mhz ...]")
+    error(1024, path=desc_path).emit()
+    info(1025, path=desc_path).emit()
     return 1
 
 
@@ -312,7 +344,7 @@ def _run_harness(args) -> int:
     from npuwattch.energy import TechContext, aggregate_native, build_provider
     from npuwattch_harness import HarnessError, get_harness, run_harness
 
-    print(f"[INFO] Harness mode: {args.harness}")
+    info(1026, harness=args.harness).emit()
     print(tbl.rule("="))
 
     tech = TechContext(
@@ -342,11 +374,11 @@ def _run_harness(args) -> int:
         # Clock priority: --clock-mhz (in tech), then the harness log, then
         # the 200 MHz default.
         emitted = run_harness(args.harness, harness_inputs, tech, **opts)
-    except HarnessError as e:
-        print(f"[ERROR] {e}")
+    except (HarnessError, NPUWattchError) as e:   # a catalog error
+        _emit_exception(e, 1018)
         return 1
     except Exception as e:
-        print(f"[ERROR] Harness ingest failed: {e}")
+        _emit_exception(e, 1027)
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
@@ -357,27 +389,22 @@ def _run_harness(args) -> int:
             _print_tree(emitted.hierarchy,
                         emitted.tree_source or "reconstructed from the run's model")
         else:
-            print("[WARNING] --tree: no hierarchy view for this run "
-                  "(the emitter's warnings below say why); energy accounting "
-                  "is unaffected")
+            warning(1028).emit()
 
     # Print the warnings of the harness (for example, activity that it cannot
     # interpret). Then print the notes: the exclusions that the projection
     # declares (waivers, out_of_scope).
-    for w in emitted.warnings:
-        print(f"[WARNING] {w}")
-    for n in emitted.notes:
-        print(f"[INFO] {n}")
+    _emit_messages(emitted.warnings, WARNING)
+    _emit_messages(emitted.notes, INFO)
 
     # Provenance of each window: the kind, the source of the dtype, and the
     # main counters. One line for each window is too much for the default
     # output of a large model. Thus the lines are printed only at -v 2 or
     # more. report.json always contains them.
     if args.verbose >= 2 and emitted.window_provenance:
-        print(f"[INFO] Per-kernel provenance "
-              f"({len(emitted.window_provenance)} kernel(s)):")
+        info(1029, count=len(emitted.window_provenance)).emit()
         for p in emitted.window_provenance:
-            print(f"[INFO]   window {p['window']}: {p['kernel']}  "
+            print(f"         window {p['window']}: {p['kernel']}  "  # nw-lint: text
                   f"kind={p['kind']}  dtype={p['dtype']} ({p['dtype_source']})  "
                   f"systolic={p['systolic_active_cycles']}  "
                   f"vector={p['vector_active_cycles']}  sfu={p['sfu_ops']}  "
@@ -386,8 +413,8 @@ def _run_harness(args) -> int:
     # If --out is given, write the native description and the activity CSV.
     if args.out_dir is not None:
         desc_path, act_path = write_arch(emitted, args.out_dir)
-        print(f"[INFO] Wrote native description: {desc_path}")
-        print(f"[INFO] Wrote native activity:    {act_path}")
+        info(1030, path=desc_path).emit()
+        info(1031, path=act_path).emit()
 
     # §6: calculate the energy from the description and its activity rows.
     energy_warnings: List[str] = []
@@ -404,10 +431,9 @@ def _run_harness(args) -> int:
             clock_check=args.show_fmax,
         )
     except ValueError as e:
-        print(f"[ERROR] {e}")
+        _emit_exception(e, 1018)
         return 1
-    for w in energy_warnings:
-        print(f"[WARNING] {w}")
+    _emit_messages(energy_warnings, WARNING)
     # If a harness makes synthetic activity, each output must show
     # VECTORLESS.
     vectorless = emitted.vectorless_activity
@@ -477,10 +503,10 @@ def _maybe_write_report(args, *, run, description, tech, chain, rows,
             node_resolution=node_resolution, timing=args.show_fmax,
         )
         html_path, json_path = write_report(ctx, args.report_dir)
-        print(f"[INFO] Wrote report:      {html_path}")
-        print(f"[INFO] Wrote report data: {json_path}")
+        info(1032, path=html_path).emit()
+        info(1033, path=json_path).emit()
     except Exception as e:
-        print(f"[WARNING] --report: report generation failed: {e}")
+        warning(1034, error=e).emit()
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
@@ -513,8 +539,8 @@ def _print_window_energy(run, verbose: int = 0,
     if window_provenance:
         kinds = {p["window"]: p["kind"] for p in window_provenance}
     term = "kernel" if window_provenance else "window"
-    print("\n" + tbl.rule("="))
-    print(f"[INFO] Per-{term} energy ({n} {term}{'s' if n != 1 else ''})")
+    print("\n" + tbl.rule("="))  # nw-lint: text
+    info(1035, term=term, count=n, noun=term if n == 1 else f"{term}s").emit()
 
     table = tbl.make_table()
     cols = [("#", "right"), (term, "left")]
@@ -541,9 +567,8 @@ def _print_window_energy(run, verbose: int = 0,
         total = mac_tot + non_tot
         pct = (100.0 * non_tot / total) if total else 0.0
         n_non = sum(1 for k in kinds.values() if k == "non_mac")
-        print(f"[INFO] GEMM kernels (mac/fused): {mac_tot:.4g} pJ "
-              f"({n - n_non} window(s)); non-GEMM kernels: {non_tot:.4g} pJ "
-              f"({n_non} window(s), {pct:.1f}% of total)")
+        info(1036, gemm_pJ=mac_tot, gemm_windows=n - n_non,
+             non_gemm_pJ=non_tot, non_gemm_windows=n_non, percent=pct).emit()
     _print_window_component_matrix(run, term=term)
 
 
@@ -560,7 +585,7 @@ def _print_window_component_matrix(run, term: str = "window") -> None:
               if any(w.components[name].dyn_energy_pJ for w in run.windows)]
     if not active:
         return
-    print(f"[INFO] Per-{term} component energy (dynamic, pJ)")
+    info(1037, term=term).emit()
 
     short, prefix = tbl.strip_common_prefix(active)
     cells = {
@@ -588,8 +613,7 @@ def _print_window_component_matrix(run, term: str = "window") -> None:
         tbl.print_table(table)
     idle = len(all_names) - len(active)
     if idle:
-        print(f"({idle} component(s) with no dynamic activity omitted — "
-              f"leakage in the summary below)")
+        info(1038, count=idle).emit()
 
 
 def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
@@ -640,10 +664,10 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
             parts.append(f"uncalibrated: {', '.join(sorted(others))}")
         tag = "PARTIAL — " + "; ".join(parts)
 
-    print("\n" + tbl.rule("="))
+    print("\n" + tbl.rule("="))  # nw-lint: text
     if extra_tag:
         tag = f"{extra_tag} — {tag}"
-    print(f"[INFO] Energy summary — {tag}")
+    info(1039, tag=tag).emit()
 
     short, prefix = tbl.strip_common_prefix(list(per_comp))
     if prefix:
@@ -677,25 +701,61 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
     dram_tot = act + rd + wr + ref
     if dram_tot > 0:
         print(tbl.rule("-"))
-        print(f"[INFO] DRAM device energy ({', '.join(dram_names)}): "
-              f"activation {act:.4g} pJ ({100 * act / dram_tot:.1f}%) + "
-              f"transfer {rd + wr:.4g} pJ ({100 * (rd + wr) / dram_tot:.1f}%; "
-              f"read {rd:.4g} + write {wr:.4g}) + "
-              f"refresh {ref:.4g} pJ ({100 * ref / dram_tot:.1f}%)")
+        info(1040, components=", ".join(dram_names), activate_pJ=act,
+             activate_pct=100 * act / dram_tot, transfer_pJ=rd + wr,
+             transfer_pct=100 * (rd + wr) / dram_tot, read_pJ=rd, write_pJ=wr,
+             refresh_pJ=ref, refresh_pct=100 * ref / dram_tot).emit()
     print(tbl.rule("-"))
-    print(f"total energy = {run.total_energy_pJ:.4g} pJ "
+    print(f"total energy = {run.total_energy_pJ:.4g} pJ "  # nw-lint: text
           f"(dyn {run.dyn_energy_pJ:.4g} + leak {run.leak_energy_pJ:.4g}); "
           f"avg power = {run.avg_power_mW:.4g} mW; exec = {run.exec_time_s:.4g} s")
     if calibrated_prims:
-        print(f"calibrated primitives available: {', '.join(calibrated_prims)}")
-    for note in getattr(chain, "notes", ()) or ():
-        print(f"[WARNING] {note}")
+        print("calibrated primitives available: "  # nw-lint: text
+              f"{', '.join(calibrated_prims)}")
+    _emit_messages(getattr(chain, "notes", ()) or (), WARNING)
     print(tbl.rule("="))
+
+
+def _print_catalog(prefix: str) -> int:
+    """Print the message catalog for ``--list-messages [PREFIX]``."""
+    from npuwattch import diagnostics
+
+    rows = diagnostics.listing(prefix)
+    for code, level, kind, template in rows:
+        owner = f" [{kind}]" if kind else ""
+        print(f"{code:<9} {level:<8} {template}{owner}")  # nw-lint: text
+    print(f"{len(rows)} message(s)")  # nw-lint: text
+    return 0
+
+
+def _print_message_summary() -> None:
+    """Print the message summary at the end of a run (EDA style).
+
+    One INFO line gives the count of each level. Then one row for each
+    WARNING, ERROR and CRITICAL code gives the number of its messages."""
+    from npuwattch import diagnostics
+
+    s = diagnostics.summary()
+    n = s["by_level"]
+    counts = dict(critical=n["CRITICAL"], error=n["ERROR"],
+                  warning=n["WARNING"], info=n["INFO"])
+    suppressed = s["suppressed"]
+    print(tbl.rule("-"))
+    if suppressed:
+        info(1903, **counts, suppressed=sum(suppressed.values()),
+             codes=", ".join(f"{c} x{k}" for c, k in suppressed.items())).emit()
+    else:
+        info(1902, **counts).emit()
+    for code, rec in s["by_code"].items():
+        print(f"    {code:<9} {rec['level']:<8} x{rec['count']}")  # nw-lint: text
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     """Run the NPUWattch CLI and return the exit code."""
+    from npuwattch import diagnostics
+
     msg._print_intro()
+    diagnostics.reset()
 
     argv_list: List[str] = list(sys.argv[1:] if argv is None else argv)
 
@@ -704,20 +764,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     except SystemExit as e:
         return 0 if (e.code == 0) else 1
 
-    # Training mode uses the estimator host.
-    if args.train:
-        host = EstimatorHost(verbose=args.verbose)
-        host.scan_estimators()
-        return _run_training(args, host)
+    if args.list_messages is not None:
+        return _print_catalog(args.list_messages)
+    diagnostics.suppress(args.suppress)     # the parser checked the codes
 
-    # Select the mode.
-    if args.flatten:
-        return _run_flattener(args)
+    try:
+        # Training mode uses the estimator host.
+        if args.train:
+            host = EstimatorHost(verbose=args.verbose)
+            host.scan_estimators()
+            return _run_training(args, host)
 
-    if args.harness:
-        return _run_harness(args)
+        # Select the mode.
+        if args.flatten:
+            return _run_flattener(args)
 
-    return _run_estimator(args)
+        if args.harness:
+            return _run_harness(args)
+
+        return _run_estimator(args)
+    finally:
+        _print_message_summary()
 
 
 if __name__ == "__main__":

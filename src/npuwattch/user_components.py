@@ -49,6 +49,7 @@ use them: it uses the reference values. They are data for the scaler.
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError, info
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,7 +75,7 @@ _NODE_RE = re.compile(r"\d+(\.\d+)?nm$")
 DESIGN_CLASSES = ("register", "compute")
 
 
-class UserComponentError(ValueError):
+class UserComponentError(NPUWattchError, ValueError):
     """A user component library is incorrect."""
 
 
@@ -118,53 +119,48 @@ def parse_user_components(table: Any, where: str) -> Dict[str, UserComponent]:
     if table is None:
         return {}
     if not isinstance(table, Mapping):
-        raise UserComponentError(f"{where}: user_components must be a mapping")
+        raise UserComponentError.nw(2101, where=where)
 
     def number(value: Any, what: str, *, positive: bool) -> float:
         ok = (isinstance(value, (int, float)) and not isinstance(value, bool)
               and (value > 0 if positive else value >= 0))
         if not ok:
-            limit = "a positive number" if positive else "a number >= 0"
-            raise UserComponentError(f"{where}: {what} must be {limit}, "
-                                     f"got {value!r}")
+            if positive:
+                raise UserComponentError.nw(2102, where=where, what=what,
+                                            value=value)
+            raise UserComponentError.nw(2103, where=where, what=what,
+                                        value=value)
         return float(value)
 
     out: Dict[str, UserComponent] = {}
     for name, entry in table.items():
         name = str(name)
         if not _NAME_RE.match(name):
-            raise UserComponentError(
-                f"{where}: component name {name!r} must be lowercase letters, "
-                f"digits, and underscores, and start with a letter")
+            raise UserComponentError.nw(2104, where=where, name=name)
         if not isinstance(entry, Mapping):
-            raise UserComponentError(f"{where}: {name}: must be a mapping")
+            raise UserComponentError.nw(2105, where=where, name=name)
         unknown = sorted(set(entry) - {"reference", "design_class", "area_um2",
                                        "leak_power_mW", "actions",
                                        "description", "characterized"})
         if unknown:
-            raise UserComponentError(
-                f"{where}: {name}: unknown key(s) {', '.join(unknown)}")
+            raise UserComponentError.nw(2106, where=where, name=name,
+                                        keys=", ".join(unknown))
         reference = entry.get("reference") or {}
         if not isinstance(reference, Mapping) or not reference.get("node"):
-            raise UserComponentError(
-                f"{where}: {name}: reference.node is necessary (the "
-                f"technology node of the area and energy values)")
+            raise UserComponentError.nw(2107, where=where, name=name)
         design_class = entry.get("design_class")
         if design_class is not None and design_class not in DESIGN_CLASSES:
-            raise UserComponentError(
-                f"{where}: {name}: design_class must be one of "
-                f"{', '.join(DESIGN_CLASSES)}, got {design_class!r}")
+            raise UserComponentError.nw(2108, where=where, name=name,
+                                        classes=", ".join(DESIGN_CLASSES),
+                                        design_class=design_class)
         def parse_actions(actions_raw: Any, what: str) -> Dict[str, float]:
             if not isinstance(actions_raw, Mapping) or not actions_raw:
-                raise UserComponentError(
-                    f"{where}: {what}: actions must be a mapping with one "
-                    f"action or more")
+                raise UserComponentError.nw(2109, where=where, name=what)
             parsed: Dict[str, float] = {}
             for action, spec in actions_raw.items():
                 if not isinstance(spec, Mapping) or "energy_pJ" not in spec:
-                    raise UserComponentError(
-                        f"{where}: {what}.actions.{action}: give "
-                        f"{{energy_pJ: <number>}}")
+                    raise UserComponentError.nw(2110, where=where, name=what,
+                                                action=action)
                 parsed[str(action)] = number(
                     spec["energy_pJ"], f"{what}.actions.{action}.energy_pJ",
                     positive=False)
@@ -174,20 +170,18 @@ def parse_user_components(table: Any, where: str) -> Dict[str, UserComponent]:
         characterized: Dict[str, Dict[str, Any]] = {}
         table = entry.get("characterized") or {}
         if not isinstance(table, Mapping):
-            raise UserComponentError(
-                f"{where}: {name}.characterized must map a node to its values")
+            raise UserComponentError.nw(2111, where=where, name=name)
         for node, row in table.items():
             node = str(node).strip().lower()
             what = f"{name}.characterized.{node}"
             if not _NODE_RE.match(node) or not isinstance(row, Mapping):
-                raise UserComponentError(
-                    f"{where}: {what}: give a node such as 7nm and a mapping")
+                raise UserComponentError.nw(2112, where=where, name=what)
             unknown_row = sorted(set(row) - {"clock_MHz", "area_um2",
                                              "leak_power_mW", "actions",
                                              "run_id"})
             if unknown_row:
-                raise UserComponentError(
-                    f"{where}: {what}: unknown key(s) {', '.join(unknown_row)}")
+                raise UserComponentError.nw(2106, where=where, name=what,
+                                            keys=", ".join(unknown_row))
             parsed_row: Dict[str, Any] = {}
             if "clock_MHz" in row:
                 parsed_row["clock_MHz"] = number(row["clock_MHz"],
@@ -222,13 +216,11 @@ def load_user_components(path: Path) -> Dict[str, UserComponent]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError as e:
-        raise UserComponentError(
-            f"user component library not found: {path}") from e
+        raise UserComponentError.nw(2113, path=path) from e
     except yaml.YAMLError as e:
-        raise UserComponentError(f"{path}: not valid YAML: {e}") from e
+        raise UserComponentError.nw(2114, path=path, error=e) from e
     if not isinstance(data, Mapping) or "user_components" not in data:
-        raise UserComponentError(
-            f"{path}: the file must have a top-level `user_components` key")
+        raise UserComponentError.nw(2115, path=path)
     return parse_user_components(data["user_components"], str(path))
 
 
@@ -242,5 +234,5 @@ def unused_component_notes(library: Mapping[str, UserComponent],
                            used: Iterable[str], source: str) -> List[str]:
     """Return one note for each library component that the design does not use."""
     used = set(used)
-    return [f"user component {name!r} ({source}): parsed, but not used"
+    return [info(2116, name=name, source=source)
             for name in library if name not in used]

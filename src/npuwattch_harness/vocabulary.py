@@ -38,6 +38,7 @@ Python code of the harness.
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
@@ -59,7 +60,7 @@ _SECTIONS = ("tool", "classes", "float_format", "families", "attributes",
              "stats")
 
 
-class VocabularyError(ValueError):
+class VocabularyError(NPUWattchError, ValueError):
     """A vocabulary table is incorrect."""
 
 
@@ -223,24 +224,23 @@ def load_vocabulary(path: Path) -> Vocabulary:
     try:
         table = yaml.safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError as e:
-        raise VocabularyError(f"vocabulary table not found: {path}") from e
+        raise VocabularyError.nw(5201, path=path) from e
     except yaml.YAMLError as e:
-        raise VocabularyError(f"{path}: not valid YAML: {e}") from e
+        raise VocabularyError.nw(5202, path=path, error=e) from e
     if not isinstance(table, Mapping):
-        raise VocabularyError(f"{path}: the table must be a mapping")
+        raise VocabularyError.nw(5203, path=path)
     unknown = sorted(set(table) - set(_SECTIONS))
     if unknown:
-        raise VocabularyError(
-            f"{path}: unknown section(s) {', '.join(unknown)} "
-            f"(expected: {', '.join(_SECTIONS)})")
+        raise VocabularyError.nw(5204, path=path, unknown=", ".join(unknown),
+                                 expected=", ".join(_SECTIONS))
 
     known_primitives = set(PRIMITIVE_PARAMS)
 
     def check_primitive(primitive: Any, where: str) -> str:
         if primitive not in known_primitives:
-            raise VocabularyError(
-                f"{path}: {where}: {primitive!r} is not a NPUWattch primitive "
-                f"({', '.join(sorted(known_primitives))})")
+            raise VocabularyError.nw(
+                5205, path=path, where=where, primitive=primitive,
+                known=", ".join(sorted(known_primitives)))
         return primitive
 
     classes = {
@@ -258,39 +258,35 @@ def load_vocabulary(path: Path) -> Vocabulary:
         for primitive in primitives or ():
             check_primitive(primitive, f"families.{family}")
             if primitive in family_of:
-                raise VocabularyError(
-                    f"{path}: primitive {primitive!r} is in two families "
-                    f"({family_of[primitive]}, {family})")
+                raise VocabularyError.nw(
+                    5206, path=path, primitive=primitive,
+                    first=family_of[primitive], second=family)
             family_of[primitive] = family
 
     spellings: Dict[str, Dict[str, Tuple[str, ...]]] = {}
     for section in ("attributes", "hints"):
         for family, names in (table.get(section) or {}).items():
             if family not in set(family_of.values()):
-                raise VocabularyError(
-                    f"{path}: {section}.{family}: no such family in `families`")
+                raise VocabularyError.nw(5207, path=path, section=section,
+                                         family=family)
             merged = spellings.setdefault(family, {})
             for name, keys in (names or {}).items():
                 if section == "attributes" and name not in CANONICAL:
-                    raise VocabularyError(
-                        f"{path}: attributes.{family}.{name}: {name!r} is not "
-                        f"a NPUWattch attribute name (see npuwattch.naming)")
+                    raise VocabularyError.nw(5208, path=path, family=family,
+                                             name=name)
                 if section == "hints" and name in CANONICAL:
-                    raise VocabularyError(
-                        f"{path}: hints.{family}.{name}: {name!r} is a "
-                        f"NPUWattch attribute name; put it in `attributes`")
+                    raise VocabularyError.nw(5209, path=path, family=family,
+                                             name=name)
                 if name in merged:
-                    raise VocabularyError(
-                        f"{path}: {section}.{family}.{name}: declared twice")
+                    raise VocabularyError.nw(5210, path=path, section=section,
+                                             family=family, name=name)
                 merged[name] = tuple(str(k) for k in keys or ())
 
     float_formats: Dict[str, Tuple[int, int, int]] = {}
     for name, fields in (table.get("float_formats") or {}).items():
         if not (isinstance(fields, list) and len(fields) == 3
                 and all(isinstance(x, int) for x in fields)):
-            raise VocabularyError(
-                f"{path}: float_formats.{name}: give [total bits, exponent "
-                f"bits, mantissa bits]")
+            raise VocabularyError.nw(5211, path=path, name=name)
         float_formats[str(name)] = (fields[0], fields[1], fields[2])
 
     return Vocabulary(

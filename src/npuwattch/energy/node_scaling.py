@@ -34,9 +34,13 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace as _dc_replace
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+from npuwattch.diagnostics import Diagnostic, NPUWattchError, info, warning
+from .unit_cost import ProviderChainError
+
 __all__ = [
     "ENVELOPE_LO_FACTOR",
     "ENVELOPE_HI_FACTOR",
+    "NodeError",
     "NodeResolution",
     "NodeScalingProvider",
     "apply_node_scaling",
@@ -55,10 +59,15 @@ ENVELOPE_HI_FACTOR = 1.5
 _EXACT_RTOL = 1e-6
 
 
+class NodeError(NPUWattchError, ValueError):
+    """A technology node is not a positive length in nm."""
+
+
 def parse_node_nm(value: Any) -> float:
     """Return the node in nanometers. Examples: "7nm", "8.5nm", 12, "45NM".
 
-    Raise ``ValueError`` if the value is not a positive length in nm.
+    Raise :class:`NodeError` (a ``ValueError``) if the value is not a
+    positive length in nm.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         nm = float(value)
@@ -69,11 +78,9 @@ def parse_node_nm(value: Any) -> float:
         try:
             nm = float(text)
         except ValueError:
-            raise ValueError(
-                f"cannot parse technology node {value!r} — expected a length "
-                f"in nm such as '7nm' or '12.5nm'") from None
+            raise NodeError.nw(3201, value=value) from None
     if not math.isfinite(nm) or nm <= 0:
-        raise ValueError(f"technology node must be a positive length, got {value!r}")
+        raise NodeError.nw(3202, value=value)
     return nm
 
 
@@ -109,8 +116,8 @@ class NodeResolution:
     lo: str                       # the anchor nodes, from the characterized set
     hi: str
     weight: float                 # the position of eval_nm on the log axis from lo to hi
-    warnings: Tuple[str, ...] = ()
-    notes: Tuple[str, ...] = ()
+    warnings: Tuple[Diagnostic, ...] = ()
+    notes: Tuple[Diagnostic, ...] = ()
 
 
 def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
@@ -122,7 +129,7 @@ def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
     clamped.
     """
     if not characterized:
-        raise ValueError("resolve_node needs a non-empty characterized node set")
+        raise ProviderChainError.nw(3203)
     requested_nm = parse_node_nm(node)
 
     anchors = sorted(((parse_node_nm(s), str(s)) for s in characterized))
@@ -130,8 +137,8 @@ def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
     lo_env, hi_env = node_envelope_nm(nms)
     lo_char, hi_char = nms[0], nms[-1]
 
-    warnings: Tuple[str, ...] = ()
-    notes: Tuple[str, ...] = ()
+    warnings: Tuple[Diagnostic, ...] = ()
+    notes: Tuple[Diagnostic, ...] = ()
     eval_nm = requested_nm
 
     for nm, name in anchors:
@@ -143,11 +150,10 @@ def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
     if requested_nm < lo_env or requested_nm > hi_env:
         eval_nm = min(max(requested_nm, lo_env), hi_env)
         kind = "clamped"
-        warnings = ((
-            f"node {requested_nm:g} nm is outside the supported envelope "
-            f"{lo_env:g}-{hi_env:g} nm (characterized {lo_char:g}-{hi_char:g} nm "
-            f"±50%) — evaluated at {eval_nm:g} nm instead; the results "
-            f"model {eval_nm:g} nm, not {requested_nm:g} nm"),)
+        warnings = (warning(
+            3204, requested_nm=requested_nm, envelope_lo_nm=lo_env,
+            envelope_hi_nm=hi_env, char_lo_nm=lo_char, char_hi_nm=hi_char,
+            eval_nm=eval_nm),)
     elif requested_nm < lo_char or requested_nm > hi_char:
         kind = "extrapolated"
     else:
@@ -164,14 +170,12 @@ def resolve_node(node: Any, characterized: Sequence[str]) -> NodeResolution:
     weight = (math.log(eval_nm) - math.log(n1)) / (math.log(n2) - math.log(n1))
 
     if kind == "extrapolated":
-        warnings = ((
-            f"node {requested_nm:g} nm is outside the characterized range "
-            f"{lo_char:g}-{hi_char:g} nm — log-extrapolated from the "
-            f"{lo_name}/{hi_name} trend; treat the results as first-order"),)
+        warnings = (warning(
+            3205, requested_nm=requested_nm, char_lo_nm=lo_char,
+            char_hi_nm=hi_char, lo=lo_name, hi=hi_name),)
     elif kind == "interpolated":
-        notes = ((
-            f"node {requested_nm:g} nm is not a characterized node — "
-            f"log-interpolated between {lo_name} and {hi_name}"),)
+        notes = (info(3206, requested_nm=requested_nm, lo=lo_name,
+                      hi=hi_name),)
 
     return NodeResolution(
         requested=str(node), requested_nm=requested_nm, eval_nm=eval_nm,
@@ -273,8 +277,8 @@ def apply_node_scaling(chain: Any, tech: Any) -> Tuple[Any, Optional[NodeResolut
     chain declares no characterized nodes, return the same chain and ``None``.
     The providers then get the node of ``tech`` without a change.
 
-    If the function cannot parse the node, it raises ``ValueError``. The CLI
-    shows this as an error message.
+    If the function cannot parse the node, it raises :class:`NodeError` (a
+    ``ValueError``). The CLI shows this as an error message.
     """
     characterized = tuple(getattr(chain, "characterized_nodes", ()) or ())
     if not characterized:

@@ -15,21 +15,29 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from npuwattch.diagnostics import Diagnostic, emit
+from npuwattch.diagnostics import error as arg_error
+
 
 class NPUWattchArgumentParser(argparse.ArgumentParser):
-    """An ArgumentParser that prints an NPUWattch error line before the argparse
-    error message."""
+    """An ArgumentParser that prints its errors as catalog messages.
+
+    ``parse_args`` gives a catalog message to :meth:`error`. A built-in
+    error of argparse (an unknown flag, a missing value) is free text. It
+    gets the generic entry NW-1101. The usage text and the exit code 2 do
+    not change.
+    """
 
     def error(self, message: str) -> None:
-        self._print_message(
-            "[ERROR] Incomplete argument. Please refer to the error message below:\n",
-            sys.stderr,
-        )
-        super().error(message)
+        if not isinstance(message, Diagnostic):
+            message = arg_error(1101, message=message)
+        self.print_usage(sys.stderr)
+        emit(message, file=sys.stderr)
+        self.exit(2)
 
 
 @dataclass(frozen=True)
@@ -81,6 +89,10 @@ class NPUWattchArgs:
     voltage_offset_V: float = 0.0   # nominal Vdd
     temperature_C: float = 25.0
     clock_mhz: Optional[float] = None   # None: use the harness log
+    # Message codes that --suppress hides (normalized, e.g. "NW-7221").
+    suppress: Tuple[str, ...] = ()
+    # --list-messages PREFIX: list the catalog and stop ("" = all codes).
+    list_messages: Optional[str] = None
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -313,6 +325,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Verbosity level (0=quiet, 1=normal, 2=detailed).",
     )
 
+    common_group.add_argument(
+        "--suppress",
+        action="append",
+        metavar="CODE[,CODE...]",
+        help="Do not print the INFO/WARNING messages with these codes "
+             "(e.g. NW-7221). The message summary at the end of the run "
+             "counts them, and the report does not show them. The option "
+             "can be given more than once.",
+    )
+
+    common_group.add_argument(
+        "--list-messages",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PREFIX",
+        help="List the message catalog (code, level, text) and stop. "
+             "PREFIX selects codes, e.g. NW-6 for the PyTorchSim harness. "
+             "See docs/MESSAGES.md.",
+    )
+
     return parser
 
 
@@ -358,6 +391,13 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     harness_options: Dict[str, Any] = {}
     out_dir: Optional[Path] = None
 
+    # --suppress: one code or a comma-separated list, given one or more times.
+    from npuwattch.diagnostics import suppress_problems
+    suppress = tuple(c.strip().upper() for item in (ns.suppress or [])
+                     for c in item.split(",") if c.strip())
+    for problem in suppress_problems(suppress):
+        parser.error(arg_error(1901, problem=problem))
+
     # The harness flags that the user gave: flag -> (entry, value).
     flags = _harness_flags()
     given = {flag: (entry, getattr(ns, entry["dest"]))
@@ -367,43 +407,35 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     info = _harness_info(ns.harness) if ns.harness else None
 
     if ns.harness and ns.description_files:
-        parser.error("--harness and -d/--description are mutually exclusive")
+        parser.error(arg_error(1102))
     if not ns.harness and given:
-        parser.error(f"{'/'.join(given)} require(s) --harness")
+        parser.error(arg_error(1103, flags="/".join(given)))
     for flag, (entry, _) in given.items():
         for decl in entry["by_harness"].values():
             needed = decl.get("requires")
             if needed and needed not in given_names:
                 needed_flag = next(
                     (f for f, e in flags.items() if e["name"] == needed), needed)
-                parser.error(f"{flag} requires {needed_flag}")
+                parser.error(arg_error(1104, flag=flag, needed_flag=needed_flag))
     if ns.vectorless_activity is not None:
         if ns.flatten or ns.train or ns.activity_logs:
-            parser.error(
-                "--vectorless-activity applies only to vectorless runs: -d "
-                "WITHOUT -l, or a harness with no activity reader "
-                "(it replaces the missing activity log)")
+            parser.error(arg_error(1105))
         for flag, (entry, _) in given.items():
             if any(decl.get("provides_activity")
                    for decl in entry["by_harness"].values()):
-                parser.error(
-                    f"--vectorless-activity: {flag} provides real activity; "
-                    f"the flag applies only to vectorless runs (-d without "
-                    f"-l, or a harness run without {flag})")
+                parser.error(arg_error(1106, flag=flag))
         if ns.harness and info is not None and not info.synthesizes_activity:
-            parser.error(
-                f"--vectorless-activity: the {ns.harness!r} harness reads real "
-                f"activity from its logs; the flag applies only to vectorless "
-                f"runs (-d without -l, or a harness that has no activity input)")
+            parser.error(arg_error(1107, harness=ns.harness))
         if not (0.0 < ns.vectorless_activity <= 1.0):
-            parser.error(
-                f"--vectorless-activity must be in (0, 1], got {ns.vectorless_activity}")
+            parser.error(arg_error(1108, value=ns.vectorless_activity))
 
     # Check the arguments that each mode requires.
-    if ns.flatten:
+    if ns.list_messages is not None:
+        pass                    # only lists the catalog: no mode inputs
+    elif ns.flatten:
         # Flatten mode
         if not ns.input_path:
-            parser.error("Flattener mode (-f/--flatten) requires -i/--input")
+            parser.error(arg_error(1109))
 
         in_yaml = Path(ns.input_path)
 
@@ -417,10 +449,11 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         required = ([decl.get("flag") for decl in info.inputs.values()
                      if decl.get("required", True)] if info else [])
         if ns.input_path:
-            hint = f" (or {info.usage_hint})" if info and info.usage_hint else ""
-            parser.error(
-                "-i is not a harness input; pass the named inputs of the "
-                f"harness: {' '.join(required) or 'see --help'}{hint}")
+            inputs = " ".join(required) or "see --help"
+            if info and info.usage_hint:
+                parser.error(arg_error(1111, inputs=inputs,
+                                       usage_hint=info.usage_hint))
+            parser.error(arg_error(1110, inputs=inputs))
         if info is not None:
             # Fail early if a required input is missing. `run_harness` does
             # the complete check (unknown inputs, path kinds).
@@ -430,9 +463,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
                 if decl.get("required", True) and decl.get("flag")
                 and decl["flag"] not in given]
             if missing:
-                parser.error(
-                    f"Harness mode (--harness {ns.harness}) requires "
-                    + "; ".join(missing))
+                parser.error(arg_error(1112, harness=ns.harness,
+                                       missing="; ".join(missing)))
         for flag, (entry, value) in given.items():
             if not entry["is_option"]:
                 # An input that the selected harness does not declare stays
@@ -441,18 +473,17 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
             elif info is None or ns.harness in entry["by_harness"]:
                 harness_options[entry["name"]] = value
             else:
-                parser.error(
-                    f"{flag} is not an option of the {ns.harness!r} harness")
+                parser.error(arg_error(1113, flag=flag, harness=ns.harness))
         out_dir = Path(ns.output_path) if ns.output_path else None
 
     elif ns.train:
         # Training mode
         if not ns.train_estimator:
-            parser.error("Training mode (-t/--train) requires --train-estimator")
+            parser.error(arg_error(1114, flag="--train-estimator"))
         if not ns.train_model_type:
-            parser.error("Training mode (-t/--train) requires --train-type")
+            parser.error(arg_error(1114, flag="--train-type"))
         if not ns.train_csv:
-            parser.error("Training mode (-t/--train) requires --train-csv")
+            parser.error(arg_error(1114, flag="--train-csv"))
 
         train_csv = Path(ns.train_csv)
         if ns.train_output:
@@ -461,7 +492,7 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     else:
         # Estimator mode (default)
         if not ns.description_files:
-            parser.error("Estimator mode requires -d/--description")
+            parser.error(arg_error(1115))
 
         desc = [Path(ns.description_files)]
         logs = [Path(p) for p in (ns.activity_logs or [])]
@@ -496,6 +527,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         voltage_offset_V=ns.voltage_offset_V,
         temperature_C=ns.temperature_C,
         clock_mhz=ns.clock_mhz,
+        suppress=suppress,
+        list_messages=ns.list_messages,
     )
 
 

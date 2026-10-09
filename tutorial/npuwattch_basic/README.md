@@ -18,6 +18,9 @@ source code. The file formats and the command lines are stable across
 releases. Where the text names a flag or a file, `npuwattch --help` and the
 example folders are the reference.
 
+The exercises in Parts 3 and 4 are also available as Jupyter notebooks in
+`../hands_on/`, with their output already in place.
+
 ## Before you start
 
 ```bash

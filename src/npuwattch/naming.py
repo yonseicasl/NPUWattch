@@ -47,6 +47,7 @@ Units                  A suffix only if the unit is not clear (``_bits``,
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError, warning
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -60,7 +61,7 @@ __all__ = [
 ]
 
 
-class NamingError(ValueError):
+class NamingError(NPUWattchError, ValueError):
     """A component attribute does not obey the naming rules."""
 
 
@@ -384,15 +385,10 @@ def validate_attributes(
             continue
         target = LEGACY_ALIASES.get(key)
         if target is not None:
-            raise NamingError(
-                f"{component} ({prim}): attribute '{key}' is a legacy alias; "
-                f"rename it to '{target}'. Estimators accept exactly one name "
-                f"per concept — see npuwattch.naming.CANONICAL."
-            )
-        warnings.append(
-            f"{component} ({prim}): unknown attribute '{key}' — not in the "
-            f"canonical vocabulary; no estimator will read it"
-        )
+            raise NamingError.nw(2001, component=component, primitive=prim,
+                                 key=key, target=target)
+        warnings.append(warning(2002, component=component, primitive=prim,
+                                key=key))
 
     if spec is None:
         return warnings
@@ -403,16 +399,13 @@ def validate_attributes(
     missing = [k for k in spec.required
                if k not in CONTEXT_NAMES and attributes.get(k) is None]
     if missing:
-        raise NamingError(
-            f"{component} ({prim}): missing required attribute(s) "
-            f"{', '.join(missing)}. Required: {', '.join(spec.required)}"
-        )
+        raise NamingError.nw(2003, component=component, primitive=prim,
+                             missing=", ".join(missing),
+                             required=", ".join(spec.required))
 
     extra = [k for k in attributes
              if k in CANONICAL and k not in spec.all() and k not in allowed]
     for key in sorted(extra):
-        warnings.append(
-            f"{component} ({prim}): '{key}' is canonical but not a "
-            f"{prim} parameter — it will be ignored"
-        )
+        warnings.append(warning(2004, component=component, primitive=prim,
+                                key=key))
     return warnings

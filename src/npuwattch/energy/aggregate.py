@@ -22,17 +22,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from npuwattch.catalog import about
+from npuwattch.diagnostics import NPUWattchError, warning
 from ..naming import validate_attributes
 from ..user_components import user_components_of
 from .unit_cost import NoModelError, TechContext, UnitCostProvider
 
 __all__ = [
+    "AggregateError",
     "ComponentEnergy",
     "WindowEnergy",
     "RunEnergy",
     "aggregate_native",
     "aggregate_run",
 ]
+
+
+class AggregateError(NPUWattchError, ValueError):
+    """The energy of a description cannot be calculated."""
 
 
 @dataclass(frozen=True)
@@ -151,17 +158,13 @@ def _book_idle_per_cycle(
         budget = float(instances) * e_idle_cycle * float(exec_cycles)
         idle = budget - n_total * displaced
         if idle < 0.0:
-            warnings.append(
-                f"{name}: {n_total:g} access events exceed the "
-                f"{instances} x {exec_cycles} cycles the component can serve "
-                f"— idle energy floored at 0")
+            warnings.append(warning(3101, component=name, events=n_total,
+                                    instances=instances, cycles=exec_cycles))
             idle = 0.0
         modes["idle"] = modes.get("idle", 0.0) + idle
         dyn[name] = sum(modes.values())
     if pending:
-        warnings.append(
-            "no exec cycles: clocked-idle energy of "
-            f"{', '.join(pending)} charged per access event")
+        warnings.append(warning(3102, components=", ".join(pending)))
 
 
 def _aggregate_one_window(
@@ -307,13 +310,14 @@ def aggregate_native(
     name of window ``i`` is ``window{i}``.
 
     If no provider has a model for the class of a component, the function
-    raises ``ValueError``. A component of the user component library (the
-    ``user_components`` block of the description) has no attributes to check.
+    raises ``NoModelError`` (a ``ValueError``). A component of the user
+    component library (the ``user_components`` block of the description) has
+    no attributes to check.
     """
     nw = description.get("npuwattch", {})
     clock = (nw.get("clock") or {}).get("frequency_MHz") or default_clock_mhz
     if not clock:
-        raise ValueError("native description has no clock.frequency_MHz (and no default_clock_mhz)")
+        raise AggregateError.nw(3103)
 
     # Each attribute has one NPUWattch name. A legacy alias of an attribute
     # name causes an error here. Without the error, the estimator uses a
@@ -337,7 +341,8 @@ def aggregate_native(
             provider.area(primitive, _features(attrs, tech,
                                                clock_mhz=float(clock)))
         except NoModelError as e:
-            raise ValueError(f"{c['name']}: {e}") from e
+            raise NoModelError.nw(3104, component=c["name"],
+                                  primitive=primitive) from e
 
     # A query can be outside the range that the estimators characterized.
     # Examples are a pipeline depth that the RTL does not have, and a clock
@@ -349,7 +354,7 @@ def aggregate_native(
             feats = _features(attrs, tech, clock_mhz=float(clock))
             feats["clock_check"] = clock_check
             for w in envelope_fn(primitive, feats):
-                warnings.append(f"{name}: {w}")
+                warnings.append(about(name, w))
 
     by_window: Dict[int, List[Mapping[str, Any]]] = {}
     for r in activity_rows:
