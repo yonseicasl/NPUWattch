@@ -73,7 +73,6 @@ MAC_PRIMITIVES = ("intmac", "fpmac", "mxfpmac")
 # use the config keys of that harness.
 # Thus the check at load time is only a syntax check: each token must have the
 # form of an identifier. An unknown symbol causes an error at resolution.
-_MAC_SYMBOLS = ("lanes", "bitwidth")
 _SYMBOL_RE = __import__("re").compile(r"[A-Za-z_]\w*$")
 
 
@@ -104,7 +103,7 @@ def _read_structured(path: Path, what: str) -> object:
             except json.JSONDecodeError:
                 obj = yaml.safe_load(text)
     except (json.JSONDecodeError, yaml.YAMLError) as e:
-        raise CompoundBundleError.nw(5302, what=what, error=e) from e
+        raise CompoundBundleError.nw(5302, what=what, path=p, error=e) from e
     if obj is None:
         raise CompoundBundleError.nw(5303, what=what, path=p)
     return obj
@@ -135,8 +134,7 @@ def _check_scalar_expr(expr: object, where: str) -> None:
             if f.isdigit() or _SYMBOL_RE.match(f):
                 continue
             raise CompoundBundleError.nw(
-                5305, where=where, token=f, expr=expr,
-                mac_symbols=", ".join(_MAC_SYMBOLS))
+                5305, where=where, token=f, expr=expr)
 
 
 def _resolve_scalar_expr(expr: Union[int, str], symbols: Mapping[str, int], where: str) -> int:

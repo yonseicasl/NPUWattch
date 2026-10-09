@@ -76,15 +76,59 @@ def show_tree(text):
         print(line)
 
 
-def show_messages(text, kinds=("WARNING",)):
-    """Print the [WARNING] and/or [INFO] lines of a run."""
-    found = False
+MESSAGE_LINE = re.compile(r"^(INFO|WARNING|ERROR|CRITICAL) \((NW-\d{4})\): ")
+
+
+def messages(text):
+    """Return the messages of a run as a list of (level, code, line) tuples.
+
+    A message line has the format "LEVEL (NW-nnnn): text".
+    """
+    found = []
     for line in text.splitlines():
-        if any(line.startswith(f"[{k}]") for k in kinds):
+        match = MESSAGE_LINE.match(line)
+        if match:
+            found.append((match.group(1), match.group(2), line))
+    return found
+
+
+def show_messages(text, kinds=("WARNING",), codes=None):
+    """Print the message lines of a run.
+
+    Use kinds to select levels, for example ("WARNING", "INFO").
+    Use codes to select message codes, for example ["NW-7222"].
+    If you give codes, the function ignores kinds.
+    """
+    found = False
+    for level, code, line in messages(text):
+        if (code in codes) if codes else (level in kinds):
             print(line)
             found = True
     if not found:
-        print(f"(no {' / '.join(kinds)} lines)")
+        print(f"(no {' / '.join(codes or kinds)} lines)")
+
+
+def show_summary(text):
+    """Print the message summary at the end of a run."""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if "Message summary:" in l), None)
+    if start is None:
+        print("(no message summary found)")
+        return
+    print(lines[start])
+    for line in lines[start + 1:]:
+        if not line.startswith("    NW-"):
+            break
+        print(line)
+
+
+def explain(code):
+    """Print the explanation of one message code (npuwattch --explain)."""
+    result = subprocess.run([npuwattch_binary(), "--explain", code],
+                            capture_output=True, text=True)
+    lines = (result.stdout + result.stderr).splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith(code)), 0)
+    print("\n".join(lines[start:]).rstrip())
 
 
 def show_totals(text):
@@ -163,16 +207,20 @@ def summary_row(rep, label):
 
 
 def show_report(example_dir, height=650):
-    """Show the HTML report of an example inside the notebook."""
-    from IPython.display import IFrame
+    """Show the HTML report of an example inside the notebook.
+
+    The report is one self-contained HTML file. This function puts the
+    content of the file into the frame (srcdoc), and does not give a path.
+    Thus the report shows in VS Code and in Jupyter, and the saved notebook
+    keeps it.
+    """
+    import html
+    from IPython.display import HTML
 
     path = pathlib.Path(example_dir) / "out" / "report.html"
-    here = pathlib.Path.cwd()
-    try:
-        rel = path.resolve().relative_to(here.resolve())
-    except ValueError:
-        rel = pathlib.Path(*([".."] * len(here.resolve().relative_to(TUTORIAL_ROOT).parts))) / path.resolve().relative_to(TUTORIAL_ROOT)
-    return IFrame(src=str(rel), width="100%", height=height)
+    doc = html.escape(path.read_text(encoding="utf-8"), quote=True)
+    return HTML(f'<div><iframe srcdoc="{doc}" width="100%" height="{height}" '
+                f'style="border:0"></iframe></div>')
 
 
 def show_file(path, max_lines=None):

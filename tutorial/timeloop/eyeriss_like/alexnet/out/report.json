@@ -1,7 +1,7 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "arch",
- "timestamp": "2026-10-05 23:53:00",
+ "timestamp": "2026-10-10 06:00:57",
  "version": "0.9",
  "git_commit": "n/a",
  "tech": {
@@ -561,22 +561,132 @@
   ],
   "warnings": [],
   "notes": [
-   "system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml (override with --energy-table)",
-   "system_top_level.DRAM (hbm): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
-   "system_top_level.eyeriss.shared_glb (sram): depth 16384 is the Accelergy total over 32 banks \u2192 mem_depth_per_bank 512 (128 KB total)",
-   "system_top_level.eyeriss.shared_glb (sram): no port count declared \u2014 assuming a single shared read-or-write port",
-   "system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) \u2192 up to 2 bank accesses per cycle; each is charged as one access event",
-   "system_top_level.eyeriss.shared_glb (sram): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
-   "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
-   "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
-   "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count declared \u2014 assuming a single shared read-or-write port",
-   "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): ignored Accelergy attribute(s) datawidth \u2014 no NPUWattch attribute corresponds",
-   "system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): ignored Accelergy attribute(s) datawidth, update_fifo_depth \u2014 no NPUWattch attribute corresponds",
-   "the description declares technology 65nm but the run is evaluated at 7nm (--node); NPUWattch models the node it is told to",
-   "user component 'example_68000_cpu_core' (user_components.yaml): parsed, but not used",
-   "compound component 'counter' (compound_components.yaml): parsed, but not used",
-   "Timeloop stats: 8 file(s), 6463520 cycles, 6/6 description component(s) charged (windows mode); compute charged in the weight-stationary mode (Computes -> hold_b)"
+   "(NW-7403): system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.",
+   "(NW-7301): system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7306): system_top_level.eyeriss.shared_glb (sram): depth 16384 is the total of 32 banks, so mem_depth_per_bank is 512 (128 KB total).",
+   "(NW-7307): system_top_level.eyeriss.shared_glb (sram): no port count is declared, so NPUWattch uses one shared read-write port.",
+   "(NW-7308): system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.",
+   "(NW-7301): system_top_level.eyeriss.shared_glb (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7307): system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7307): system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth, update_fifo_depth.",
+   "(NW-7116): The description declares technology 65nm, but the run uses 7nm from --node.",
+   "(NW-2116): User component 'example_68000_cpu_core' (user_components.yaml) is in the library, but the run does not use it.",
+   "(NW-7101): Compound component 'counter' (compound_components.yaml) is parsed, but no component uses it.",
+   "(NW-7218): Timeloop stats: 8 file(s), 6463520 cycles, 6/6 description components charged (windows mode)."
   ],
+  "diagnostics": {
+   "warnings": [],
+   "notes": [
+    {
+     "code": "NW-7403",
+     "level": "INFO",
+     "message": "system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.",
+     "count": 1,
+     "explain": "To use a different table, give --energy-table."
+    },
+    {
+     "code": "NW-7301",
+     "level": "INFO",
+     "message": "system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "count": 1,
+     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+    },
+    {
+     "code": "NW-7306",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.shared_glb (sram): depth 16384 is the total of 32 banks, so mem_depth_per_bank is 512 (128 KB total).",
+     "count": 1,
+     "explain": "In Accelergy, the depth is the total for all banks. NPUWattch divides it by the number of banks."
+    },
+    {
+     "code": "NW-7307",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.shared_glb (sram): no port count is declared, so NPUWattch uses one shared read-write port.",
+     "count": 1,
+     "explain": ""
+    },
+    {
+     "code": "NW-7308",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.",
+     "count": 1,
+     "explain": "NPUWattch charges each bank access as one access event."
+    },
+    {
+     "code": "NW-7301",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.shared_glb (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "count": 1,
+     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+    },
+    {
+     "code": "NW-7307",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
+     "count": 1,
+     "explain": ""
+    },
+    {
+     "code": "NW-7301",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "count": 1,
+     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+    },
+    {
+     "code": "NW-7307",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
+     "count": 1,
+     "explain": ""
+    },
+    {
+     "code": "NW-7301",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "count": 1,
+     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+    },
+    {
+     "code": "NW-7301",
+     "level": "INFO",
+     "message": "system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth, update_fifo_depth.",
+     "count": 1,
+     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+    },
+    {
+     "code": "NW-7116",
+     "level": "INFO",
+     "message": "The description declares technology 65nm, but the run uses 7nm from --node.",
+     "count": 1,
+     "explain": "NPUWattch models the node that --node gives. The technology in the description has no effect."
+    },
+    {
+     "code": "NW-2116",
+     "level": "INFO",
+     "message": "User component 'example_68000_cpu_core' (user_components.yaml) is in the library, but the run does not use it.",
+     "count": 1,
+     "explain": "No component of the run has this class. No action is necessary."
+    },
+    {
+     "code": "NW-7101",
+     "level": "INFO",
+     "message": "Compound component 'counter' (compound_components.yaml) is parsed, but no component uses it.",
+     "count": 1,
+     "explain": "The compound component file defines this compound component. No component of the description has this class. No action is necessary."
+    },
+    {
+     "code": "NW-7218",
+     "level": "INFO",
+     "message": "Timeloop stats: 8 file(s), 6463520 cycles, 6/6 description components charged (windows mode).",
+     "count": 1,
+     "explain": "NPUWattch charges the compute components in the weight-stationary mode. The Timeloop Computes count becomes the hold_b action."
+    }
+   ]
+  },
   "windows": []
  }
 }

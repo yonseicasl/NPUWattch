@@ -65,6 +65,8 @@
   .tree .lbl{color:var(--muted)}
   table.msgs th,table.msgs td{text-align:left;vertical-align:top;font-size:12.5px}
   table.msgs td:nth-child(3){white-space:normal}
+  details.why summary{cursor:pointer}
+  details.why{color:var(--muted)} details.why summary{color:var(--ink)}
   table.msgs th:last-child,table.msgs td:last-child{text-align:right}
   table.msgs tr.lvl-warning td:nth-child(2){color:var(--warn-ink);font-weight:600}
   table.msgs tr.lvl-error td:nth-child(2),table.msgs tr.lvl-critical td:nth-child(2){color:var(--err-ink);font-weight:600}
@@ -320,7 +322,7 @@
       <div class="tblwrap"><table class="msgs">
         <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
         {% for m in dw %}<tr class="lvl-{{ m.level|lower }}"><td><code>{{ m.code or "—" }}</code></td>
-          <td>{{ m.level }}</td><td>{{ m.message }}</td><td>{{ m.count }}</td></tr>
+          <td>{{ m.level }}</td><td>{% if m.explain %}<details class="why"><summary>{{ m.message }}</summary>{{ m.explain }}</details>{% else %}{{ m.message }}{% endif %}</td><td>{{ m.count }}</td></tr>
         {% endfor %}
       </table></div></details>
     {% endif %}
@@ -331,7 +333,7 @@
       <div class="tblwrap"><table class="msgs">
         <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
         {% for m in dn %}<tr class="lvl-{{ m.level|lower }}"><td><code>{{ m.code or "—" }}</code></td>
-          <td>{{ m.level }}</td><td>{{ m.message }}</td><td>{{ m.count }}</td></tr>
+          <td>{{ m.level }}</td><td>{% if m.explain %}<details class="why"><summary>{{ m.message }}</summary>{{ m.explain }}</details>{% else %}{{ m.message }}{% endif %}</td><td>{{ m.count }}</td></tr>
         {% endfor %}
       </table></div></details>
     {% endif %}

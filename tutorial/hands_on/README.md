@@ -28,7 +28,8 @@ place. They write a few extra files next to the examples (`native/`,
 `out_*/`, `out/console*.txt`) and a `work/` folder here, all ignored by git.
 
 `tutorial_helpers.py` holds the small functions the notebooks call: run an
-example, show the tree or the messages, load `report.json` into a table, show
-`report.html` inside the notebook.
+example, show the tree, the messages or the message summary, explain a
+message code, load `report.json` into a table, show `report.html` inside the
+notebook.
 
 The background reading is in `../npuwattch_basic/`.

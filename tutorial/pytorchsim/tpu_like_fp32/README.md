@@ -56,37 +56,45 @@ core_spad_size_kb: 16384
 ```
 
 PyTorchSim doesn't use this key, but NPUWattch needs it to size the VMEM SRAM.
-Without it, NPUWattch skips the VMEM component and prints a warning.
+Without it, NPUWattch skips the VMEM component and prints warning NW-6006.
 TPUv2, v3, and v4 all have 16 MB of VMEM, so the value is 16384 KB. The rest
 of `config.yml` is exactly what the simulator ran with.
 
 ## Messages you'll see, and why
 
+Each message line has the format `LEVEL (NW-nnnn): text`. To read more
+about a message, run `npuwattch --explain NW-nnnn`.
+
 The run prints five warnings. Each one tells you what NPUWattch assumed or
 extrapolated. None of them stops the run.
 
-- `capacity-only SRAM spec ... auto-applied macro template(s)` (vmem,
-  vpu_spad, icnt_buf): the config gives only a capacity, not a macro layout.
-  So NPUWattch builds each memory from characterized macros and reports the
-  utilization it got.
-- `kernel-total events attributed per array in proportion to each array's
-  active cycles`: gem5 counts `CustomMatMulwVpush` once for the whole kernel,
-  not per array. With two arrays, NPUWattch splits the count based on how busy
-  each array was.
-- `core0.vrf: width=256 is outside the characterized 8-128 for regfile —
-  extrapolated`: the vector register file is 256 bits wide
+- `WARNING (NW-8212): vmem: The SRAM of 134217728 bits uses the macro
+  templates 512x sram_256k in banks of at most 16 macros (utilization
+  100.0%).` The same warning occurs for vpu_spad and icnt_buf. The config
+  gives only a capacity, not a macro layout. So NPUWattch builds each memory
+  from characterized macros and reports the utilization it got.
+- `WARNING (NW-6607): CustomMatMulwVpush: NPUWattch divides the kernel total
+  between the arrays by their active cycles.` gem5 counts
+  `CustomMatMulwVpush` once for the whole kernel, not per array. With two
+  arrays, NPUWattch splits the count based on how busy each array was.
+- `WARNING (NW-8111): core0.vrf: width=256 is outside the characterized range
+  8-128 of regfile.` The vector register file is 256 bits wide
   (`vpu_vector_length_bits`). The regfile model is trained on widths from 8 to
   128 bits, so NPUWattch extrapolates to 256 bits.
 
 The INFO messages:
 
-- The long list of items that are *not* included in the totals: the scalar
+- `INFO (NW-6008): Out of scope: ...` and `INFO (NW-2209): Activity stat
+  ... is not charged, because projection 'pytorchsim' waives it: ...`: the
+  list of items that are *not* included in the totals. These are the scalar
   RISC-V core and its caches (left out on the advice of the PyTorchSim
   authors, since their energy is very small next to the datapath), the VCIX
   serializer, barrier instructions, DRAM standby power, and activity counters
-  that would count work already charged somewhere else.
-- `user component 'example_68000_cpu_core' (user_components.yaml): parsed, but
-  not used`: for custom blocks, such as control logic or a CPU core, you
+  that would count work already charged somewhere else. The text after
+  `Out of scope:` comes from `projection.yaml`.
+- `INFO (NW-2116): User component 'example_68000_cpu_core'
+  (user_components.yaml) is in the library, but the run does not use it.`
+  For custom blocks, such as control logic or a CPU core, you
   provide the area and the energy of each action in a user component library.
   Here that's `user_components.yaml` in this folder
   (`--user-components my_lib.yaml` picks a different file). The file has one

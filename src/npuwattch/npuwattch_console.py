@@ -766,6 +766,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.list_messages is not None:
         return _print_catalog(args.list_messages)
+    if args.explain is not None:
+        try:
+            print(diagnostics.explain(args.explain))  # nw-lint: text
+        except ValueError as e:
+            error(1904, problem=e).emit()
+            return 1
+        return 0
     diagnostics.suppress(args.suppress)     # the parser checked the codes
 
     try:

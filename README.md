@@ -70,9 +70,9 @@ Useful flags:
   (DRAM cost table, e.g. `hbm2.yml`).
 - Any run without activity data falls back to a vectorless estimate (25% of random switching,
   tunable with `--vectorless-activity`) and is labeled accordingly.
-- Messages: each line has a code, `WARNING: (NW-7221): ...`, and the run ends with a
+- Messages: each line has a code, `WARNING (NW-7221): ...`, and the run ends with a
   message summary. `--list-messages [PREFIX]` lists the catalog
-  ([docs/MESSAGES.md](docs/MESSAGES.md)); `--suppress NW-7221[,...]` hides INFO/WARNING codes.
+  ([MESSAGES.md](MESSAGES.md)); `--suppress NW-7221[,...]` hides INFO/WARNING codes.
 
 ## Citation
 NPUWattch :

@@ -66,10 +66,10 @@ to skip levels you don't want charged.
 n_banks: 32`. In Accelergy (and in CACTI, which Accelergy uses), `depth ×
 width` is the size of the whole buffer (128 KB here), and `n_banks` splits it
 into banks. NPUWattch's `mem_depth_per_bank` is the depth of one bank, so the
-harness divides the depth by the number of banks. This note shows what it did:
+harness divides the depth by the number of banks. This message shows what it did:
 
 ```
-shared_glb (sram): depth 16384 is the Accelergy total over 32 banks → mem_depth_per_bank 512 (128 KB total)
+INFO (NW-7306): system_top_level.eyeriss.shared_glb (sram): depth 16384 is the total of 32 banks, so mem_depth_per_bank is 512 (128 KB total).
 ```
 
 The `--tree` label also ends with the resulting capacity (`= 128 KB`). If the
@@ -115,46 +115,53 @@ window instead.
 
 ## Messages you'll see, and why
 
-The run prints no warnings.
+Each message line has the format `LEVEL (NW-nnnn): text`. To read more
+about a message, run `npuwattch --explain NW-nnnn`. The run prints no
+warnings. The run ends with this summary:
+`INFO (NW-1902): Message summary: 0 CRITICAL, 0 ERROR, 0 WARNING, 25 INFO.`
 
-- `no port count declared — assuming a single shared read-or-write port`: a
-  buffer without `n_rw_ports`, `n_rd_ports`, or `n_wr_ports` gets one port.
+- `INFO (NW-7307): ... no port count is declared, so NPUWattch uses one
+  shared read-write port.` A buffer without `n_rw_ports`, `n_rd_ports`, or
+  `n_wr_ports` gets one port.
   NPUWattch checks this port count against the bandwidth the mapping needs.
   `psum_spad` reads a partial sum and writes the updated value in the same
   cycle, so one shared port isn't enough. That's why `arch.yaml` declares
   `n_rd_ports: 1` and `n_wr_ports: 1` for `psum_spad` (see "How the sample
   data was made"). If you remove these two lines, the run prints this warning:
-  `psum_spad (regfile): bandwidth 2 words/cycle needs 2 accesses/cycle, more
-  than 1 bank(s) × 1 port(s) = 1`.
-- `user component 'example_68000_cpu_core' (user_components.yaml): parsed, but
-  not used`: for custom blocks, such as control logic or a CPU core, you
+  `WARNING (NW-7309): system_top_level.eyeriss.PE_column.PE.psum_spad
+  (regfile): bandwidth 2 words/cycle needs 2 accesses/cycle, but 1 bank(s) ×
+  1 port(s) give 1 (needs 2 banks).`
+- `INFO (NW-2116): User component 'example_68000_cpu_core'
+  (user_components.yaml) is in the library, but the run does not use it.`
+  For custom blocks, such as control logic or a CPU core, you
   provide the area and the energy of each action in a user component library.
   Here that's `user_components.yaml` next to `arch.yaml`
   (`--user-components my_lib.yaml` picks a different file). The file has one
   example entry that this design doesn't use, so the run prints this reminder.
   It doesn't affect the result.
-- `compound component 'counter' (compound_components.yaml): parsed, but not
-  used`: a compound component maps one Accelergy class to several NPUWattch
-  primitives (here, `counter` is an adder plus a register). NPUWattch reads
-  `compound_components.yaml` and `projection.yaml` from the folder with
-  `arch.yaml` automatically (`--compound-components` and `--projection`
-  select other files). `arch.yaml` has no `counter`, so this is also just a
-  reminder. To see it in action, add a component with `class: counter` and
-  `attributes: {width: 12}`. It will show up as two rows.
-- `DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml`:
-  `arch.yaml` declares an LPDDR4 DRAM, so NPUWattch reads the energy constants
-  from its LPDDR4 table. DRAM is priced with table constants instead of a
-  trained model, and it's marked `const` in the summary. A DRAM with no `type`
-  uses the LPDDR4 table and prints a warning. Use `--energy-table` to supply
-  your own table.
+- `INFO (NW-7101): Compound component 'counter' (compound_components.yaml) is
+  parsed, but no component uses it.` A compound component maps one Accelergy
+  class to several NPUWattch primitives (here, `counter` is an adder plus a
+  register). NPUWattch reads `compound_components.yaml` and `projection.yaml`
+  from the folder with `arch.yaml` automatically (`--compound-components` and
+  `--projection` select other files). `arch.yaml` has no `counter`, so this is
+  also just a reminder. To see it in action, add a component with `class:
+  counter` and `attributes: {width: 12}`. It will show up as two rows.
+- `INFO (NW-7403): system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from
+  the shipped table lpddr4.yml.` `arch.yaml` declares an LPDDR4 DRAM, so
+  NPUWattch reads the energy constants from its LPDDR4 table. DRAM is priced
+  with table constants instead of a trained model, and it's marked `const` in
+  the summary. A DRAM with no `type` uses the LPDDR4 table and prints warning
+  NW-7405. Use `--energy-table` to supply your own table.
 - No message for `mac`: Accelergy's `intmac` class declares
   `multiplier_width: 8` and `adder_width: 16`. NPUWattch uses these as the
   operand width and the accumulator width of its `intmac` primitive. If you
-  remove them, the run prints the warning `no operand width declared — assuming
-  8 bits`.
-- `the description declares technology 65nm but the run is evaluated at 7nm`:
-  the `technology:` attribute in an Accelergy file is only a label. NPUWattch
-  models the node you pass with `--node`.
+  remove them, the run prints the warning `WARNING (NW-7311):
+  system_top_level.eyeriss.PE_column.PE.mac (intmac): no operand width is
+  declared, so NPUWattch uses 8 bits.`
+- `INFO (NW-7116): The description declares technology 65nm, but the run
+  uses 7nm from --node.` The `technology:` attribute in an Accelergy file is
+  only a label. NPUWattch models the node you pass with `--node`.
 
 ## How the sample data was made
 

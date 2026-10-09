@@ -117,7 +117,7 @@ def available_harnesses() -> Dict[str, HarnessInfo]:
             continue
         name = spec.get("name")
         if not name:
-            raise HarnessError.nw(5001)
+            raise HarnessError.nw(5001, package=mod_info.name)
         inputs = spec.get("inputs")
         if not isinstance(inputs, dict) or not inputs:
             raise HarnessError.nw(5002, harness=name)

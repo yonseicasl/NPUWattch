@@ -93,6 +93,8 @@ class NPUWattchArgs:
     suppress: Tuple[str, ...] = ()
     # --list-messages PREFIX: list the catalog and stop ("" = all codes).
     list_messages: Optional[str] = None
+    # --explain CODE: show the explanation of one code and stop.
+    explain: Optional[str] = None
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -336,6 +338,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     common_group.add_argument(
+        "--explain",
+        metavar="CODE",
+        default=None,
+        help="Show the explanation of one message code (e.g. NW-7221) and "
+             "stop.",
+    )
+
+    common_group.add_argument(
         "--list-messages",
         nargs="?",
         const="",
@@ -343,7 +353,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         metavar="PREFIX",
         help="List the message catalog (code, level, text) and stop. "
              "PREFIX selects codes, e.g. NW-6 for the PyTorchSim harness. "
-             "See docs/MESSAGES.md.",
+             "See MESSAGES.md.",
     )
 
     return parser
@@ -430,8 +440,8 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
             parser.error(arg_error(1108, value=ns.vectorless_activity))
 
     # Check the arguments that each mode requires.
-    if ns.list_messages is not None:
-        pass                    # only lists the catalog: no mode inputs
+    if ns.list_messages is not None or ns.explain is not None:
+        pass                    # only shows the catalog: no mode inputs
     elif ns.flatten:
         # Flatten mode
         if not ns.input_path:
@@ -529,6 +539,7 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
         clock_mhz=ns.clock_mhz,
         suppress=suppress,
         list_messages=ns.list_messages,
+        explain=ns.explain,
     )
 
 

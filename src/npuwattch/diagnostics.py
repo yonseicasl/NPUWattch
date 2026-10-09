@@ -7,7 +7,7 @@ and you can find all the messages of the tool in the catalog modules.
 
 A message line has this format (the format of the commercial EDA tools)::
 
-    WARNING: (NW-6101): kernel conv_3 has no MAC configuration
+    WARNING (NW-6101): kernel conv_3 has no MAC configuration
 
 The level states who must do something:
 
@@ -112,6 +112,7 @@ class Entry:
     kind: str            # a level (message entry) or an exception class name
     template: str
     source: str = ""     # the catalog module that registered the entry
+    explain: str = ""    # what the message means and what to do (--explain)
 
     @property
     def code(self) -> str:
@@ -148,7 +149,8 @@ def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
              retired: Iterable[int] = (), source: str = "") -> None:
     """Add the entries of one catalog module.
 
-    ``entries`` maps a number to ``(kind, template)``. The kind is a level
+    ``entries`` maps a number to ``(kind, template)`` or to
+    ``(kind, template, explain)``. The kind is a level
     (``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``) or the name of an
     exception class. ``retired`` gives the numbers that this module used
     before. These numbers cannot be registered again.
@@ -157,7 +159,12 @@ def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
         raise ValueError(f"message space {space!r} must be an upper-case identifier")
     for number in retired:
         RETIRED[(space, int(number))] = source
-    for number, (kind, template) in entries.items():
+    for number, item in entries.items():
+        if not isinstance(item, tuple) or len(item) not in (2, 3):
+            raise ValueError(f"{space}-{number}: give (kind, template) or "
+                             f"(kind, template, explain)")
+        kind, template = item[0], item[1]
+        explain = " ".join(item[2].split()) if len(item) == 3 else ""
         key = (space, number)
         if not isinstance(number, int) or number <= 0:
             raise ValueError(f"{space}: message number {number!r} must be a positive int")
@@ -171,7 +178,7 @@ def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
         if kind not in LEVELS and not (kind.isidentifier() and kind[:1].isupper()):
             raise ValueError(f"{space}-{number}: kind {kind!r} is not a level "
                              f"or an exception class name")
-        CATALOG[key] = Entry(space, number, kind, template, source)
+        CATALOG[key] = Entry(space, number, kind, template, source, explain)
 
 
 def load_builtin_catalogs() -> None:
@@ -263,7 +270,7 @@ class Diagnostic(str):
 
     @property
     def line(self) -> str:
-        return f"{self.level}: {self}"
+        return f"{self.level} {self}"
 
     def as_dict(self) -> Dict[str, object]:
         """Return the JSON form of the message."""
@@ -367,7 +374,7 @@ class NPUWattchError(Exception):
 
     @property
     def line(self) -> str:
-        return f"{self.level}: {self}"
+        return f"{self.level} {self}"
 
     def as_diagnostic(self) -> Diagnostic:
         """Return the exception as a message with the same code and level."""
@@ -464,13 +471,19 @@ def group(messages: Iterable[object], level: str = WARNING) -> List[Dict[str, ob
         if key in out:
             out[key]["count"] += 1
         else:
+            why = ""
+            if code is not None:
+                try:
+                    why = lookup(m.number, m.space).explain
+                except ValueError:
+                    pass
             out[key] = {"code": code, "level": getattr(m, "level", level),
-                        "message": text, "count": 1}
+                        "message": text, "count": 1, "explain": why}
     return list(out.values())
 
 
 # ---------------------------------------------------------------------------
-# The catalog as a list (--list-messages, docs/MESSAGES.md)
+# The catalog as a list (--list-messages, MESSAGES.md)
 # ---------------------------------------------------------------------------
 
 #: The modules that define the exception classes of the NW entries. The
@@ -529,18 +542,36 @@ def listing(prefix: str = "") -> List[Tuple[str, str, str, str]]:
     return rows
 
 
+def explain(code: str) -> str:
+    """Return the ``--explain`` text of a code: the level, the message
+    template, the exception class, the explanation and the source module.
+
+    Raises ``ValueError`` if the code is not correct or has no entry."""
+    space, number = parse_code(code)
+    e = lookup(number, space)
+    level = exception_levels().get(e.kind, ERROR) if e.is_exception else e.kind
+    out = [f"{e.code}  {level}", "", f"  Message:   {e.template}"]
+    if e.is_exception:
+        out.append(f"  Exception: {e.kind}")
+    out.append(f"  Source:    {e.source}")
+    out.append("")
+    out.append("  " + (e.explain or "No explanation is available for this message."))
+    return "\n".join(out)
+
+
 def catalog_markdown() -> str:
-    """Return the catalog as the Markdown page ``docs/MESSAGES.md``."""
+    """Return the catalog as the Markdown page ``MESSAGES.md``."""
     out = [
         "# NPUWattch messages",
         "",
         "<!-- Generated from the catalog modules. Do not edit. Update with:",
-        "     python -m npuwattch.diagnostics --markdown > docs/MESSAGES.md -->",
+        "     python -m npuwattch.diagnostics --markdown > MESSAGES.md -->",
         "",
         "Each message that NPUWattch gives has a code. A console line has the",
-        "format `LEVEL: (CODE): text`. `npuwattch --list-messages [PREFIX]`",
-        "shows the same list. `--suppress CODE[,CODE...]` hides INFO and",
-        "WARNING messages. In a template, `{name}` is a value of the run.",
+        "format `LEVEL (CODE): text`. `npuwattch --list-messages [PREFIX]`",
+        "shows the same list. `npuwattch --explain CODE` shows one entry.",
+        "`--suppress CODE[,CODE...]` hides INFO and WARNING messages. In a",
+        "message, `{name}` is a value of the run.",
         "",
         "| Level | Meaning |",
         "|---|---|",
@@ -558,10 +589,14 @@ def catalog_markdown() -> str:
         if not block:
             continue
         out += ["", f"## NW-{lo}..{hi}: {title}", "",
-                "| Code | Level | Exception | Message |", "|---|---|---|---|"]
+                "| Code | Level | Message | Explanation |", "|---|---|---|---|"]
         for code, level, kind, template in block:
+            entry = lookup(int(code[3:]))
             text = template.replace("|", "\\|").replace("\n", " ")
-            out.append(f"| {code} | {level} | {kind} | {text} |")
+            if kind:
+                level = f"{level} ({kind})"
+            why = entry.explain.replace("|", "\\|")
+            out.append(f"| {code} | {level} | {text} | {why} |")
     return "\n".join(out) + "\n"
 
 

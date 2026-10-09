@@ -165,7 +165,7 @@ names are shown relative to the hierarchy prefix they all share, which is
 printed above the table:
 
 ```
-[INFO] Per-window component energy (dynamic, pJ)
+INFO (NW-1037): Per-window component energy (dynamic, pJ):
        component names relative to 'system_top_level'
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ component                         ┃  01_conv1 ┃  02_conv2 ┃    06_fc6 ┃    08_fc8 ┃
@@ -238,8 +238,8 @@ Result: **6.13 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
 2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
 dynamic energy and DRAM for 8%, which is what you'd expect from a matmul.
 
-The long `[INFO]` block in this run is worth a look. It lists the parts that
-are *not* included in the totals (the scalar core and its caches, the VCIX
+The long INFO block in this run (`NW-6008` and `NW-2209`) is worth a look.
+It lists the parts that are *not* included in the totals (the scalar core and its caches, the VCIX
 serializer, and DRAM standby power), so you always know what the numbers
 cover.
 
@@ -269,9 +269,9 @@ float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
 1. `--tree`: the hardware as NPUWattch read it from your input. Check this
    first. If a component is missing or has the wrong size, all the numbers
    after it will be off.
-2. `[WARNING]` / `[INFO]`: every assumption NPUWattch made for you, such as
-   default values, ignored attributes, and activity counters that are left out
-   on purpose.
+2. `WARNING` / `INFO` lines: every assumption NPUWattch made for you, such
+   as default values, ignored attributes, and activity counters that are left
+   out on purpose. See "Messages" below.
 3. **Per-window energy**: one row per layer (Timeloop) or per kernel
    (PyTorchSim).
 4. **Per-window component energy**: where the energy went in each window.
@@ -280,6 +280,7 @@ float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
    `const` for a table constant (DRAM devices, die-to-die links), and `user`
    for a block priced from your `user_components.yaml`.
 6. The run totals, and the list of available primitives.
+7. The message summary.
 
 **`out/report.html`** shows the same information as a self-contained page (no
 internet connection or extra files needed). It includes charts for the energy
@@ -288,6 +289,48 @@ windows, the component table, the instance tree, and a provenance section that
 lists every input file, warning, and note.
 
 **`out/report.json`** has the same numbers in plain JSON, for use in scripts.
+
+### Messages
+
+Each message has a level and a code. The format is `LEVEL (NW-nnnn): text`:
+
+```
+WARNING (NW-8111): core0.vrf: width=256 is outside the characterized range 8-128 of regfile.
+```
+
+The level tells you what to do:
+
+| Level | Meaning |
+| --- | --- |
+| `INFO` | A fact about the run. No action is necessary. |
+| `WARNING` | The run continues, but the result can be approximate. Read the message. |
+| `ERROR` | A problem in the input. The run stops. Correct the input. |
+| `CRITICAL` | A problem in NPUWattch. The run stops. Please report it. |
+
+The code does not change from release to release. Use it to get more
+information:
+
+```bash
+npuwattch --explain NW-8111         # the full explanation of one message
+npuwattch --list-messages NW-6      # all messages that start with NW-6 (PyTorchSim harness)
+./run --suppress NW-8212            # do not print this INFO or WARNING message
+```
+
+You cannot suppress an `ERROR` or a `CRITICAL` message. The run ends with a
+message summary. It gives the number of messages at each level, and one row
+for each WARNING code:
+
+```
+INFO (NW-1902): Message summary: 0 CRITICAL, 0 ERROR, 5 WARNING, 18 INFO.
+    NW-6607   WARNING  x1
+    NW-8111   WARNING  x1
+    NW-8212   WARNING  x3
+```
+
+Suppressed messages are counted in the summary, but the report does not show
+them. In `report.html`, the message table shows the code, the level, the text,
+and the count. Click a message to see its explanation. `MESSAGES.md` in the
+repository root lists all messages.
 
 ---
 

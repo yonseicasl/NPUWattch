@@ -144,19 +144,27 @@ processes.
 
 The run prints no warnings. The INFO messages:
 
-- `sdp: attribute user_component 'nvdla_sdp' — the user component library
-  entry gives its cost`: the link from item 1 above.
-- `stats level 'DRAM' fans out per --stats-map: ... sdp ×8 as 'process'`: the
-  mapping from item 3.
-- `depth 8192 is the Accelergy total over 16 banks → mem_depth_per_bank 512`:
-  in Accelergy, `depth` is the size of the whole buffer, so NPUWattch divides
-  it by `n_banks`.
-- `bandwidth 16 words/cycle (8 words per access) → up to 2 bank accesses per
-  cycle`: a CBUF row has 8 int8 words, so Timeloop's 16 words/cycle means two
+- `INFO (NW-7109): system_top_level.nvdla.sdp: the user component library
+  entry 'nvdla_sdp' gives the cost, not the class 'dummy_storage'.` This is
+  the link from item 1 above.
+- `INFO (NW-7222): Stats level 'DRAM' charges more than one component: ...
+  system_top_level.nvdla.sdp ×8 as 'process'`. This is the mapping from
+  item 3.
+- `INFO (NW-7306): system_top_level.nvdla.cbuf (sram): depth 8192 is the
+  total of 16 banks, so mem_depth_per_bank is 512 (64 KB total).` In
+  Accelergy, `depth` is the size of the whole buffer, so NPUWattch divides it
+  by `n_banks`.
+- `INFO (NW-7308): system_top_level.nvdla.cbuf (sram): bandwidth 16
+  words/cycle (8 words per access) gives up to 2 bank accesses per cycle.`
+  A CBUF row has 8 int8 words, so Timeloop's 16 words/cycle means two
   bank accesses. NPUWattch charges each access as one read or write event.
-- `no port count declared — assuming a single shared read-or-write port`:
-  `arch.yaml` has no port attributes, so NPUWattch uses one port.
-- `ignored Accelergy attribute(s) datawidth`: `datawidth` is a Timeloop
-  attribute. NPUWattch uses `width` for the row size.
-- `parsed, but not used`: the example entries in `user_components.yaml` and
-  `compound_components.yaml`.
+- `INFO (NW-7307): ... no port count is declared, so NPUWattch uses one
+  shared read-write port.` `arch.yaml` has no port attributes, so NPUWattch
+  uses one port.
+- `INFO (NW-7301): ... NPUWattch ignores the Accelergy attribute(s)
+  datawidth.` `datawidth` is a Timeloop attribute. NPUWattch uses `width` for
+  the row size.
+- `INFO (NW-2116): User component ... is in the library, but the run does
+  not use it.` and `INFO (NW-7101): Compound component 'counter' ... is
+  parsed, but no component uses it.` These are the example entries in
+  `user_components.yaml` and `compound_components.yaml`.

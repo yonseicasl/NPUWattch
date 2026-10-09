@@ -63,6 +63,13 @@
   .tree .leaf::before{content:"\00B7  ";color:var(--muted)}
   .tree .cnt{color:var(--accent);font-weight:600}
   .tree .lbl{color:var(--muted)}
+  table.msgs th,table.msgs td{text-align:left;vertical-align:top;font-size:12.5px}
+  table.msgs td:nth-child(3){white-space:normal}
+  details.why summary{cursor:pointer}
+  details.why{color:var(--muted)} details.why summary{color:var(--ink)}
+  table.msgs th:last-child,table.msgs td:last-child{text-align:right}
+  table.msgs tr.lvl-warning td:nth-child(2){color:var(--warn-ink);font-weight:600}
+  table.msgs tr.lvl-error td:nth-child(2),table.msgs tr.lvl-critical td:nth-child(2){color:var(--err-ink);font-weight:600}
   ul.warnings{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted)}
   footer{color:var(--muted);font-size:11px;margin:24px 0}
   code{background:#f0efec;border-radius:4px;padding:0 4px;font-size:12px}
@@ -74,7 +81,7 @@
   <!-- 1. Header -->
   <h1>NPUWattch PPA Report — arch</h1>
   <div class="sub">
-    Generated 2026-10-05 23:53:00 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-10 06:00:57 · NPUWattch 0.9 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 1000.0 MHz ·
@@ -333,10 +340,41 @@
     <div class="sub">
       inputs: arch.yaml <code>121a80f6c4e5</code>, stats: stats    </div>
     <details><summary style="cursor:pointer;font-size:13px">
-      15 declared exclusions (INFO — deliberate,
-      not modeling gaps)</summary>
-      <ul class="warnings">
-<li>system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml (override with --energy-table)</li><li>system_top_level.DRAM (hbm): ignored Accelergy attribute(s) datawidth — no NPUWattch attribute corresponds</li><li>system_top_level.eyeriss.shared_glb (sram): depth 16384 is the Accelergy total over 32 banks → mem_depth_per_bank 512 (128 KB total)</li><li>system_top_level.eyeriss.shared_glb (sram): no port count declared — assuming a single shared read-or-write port</li><li>system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) → up to 2 bank accesses per cycle; each is charged as one access event</li><li>system_top_level.eyeriss.shared_glb (sram): ignored Accelergy attribute(s) datawidth — no NPUWattch attribute corresponds</li><li>system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count declared — assuming a single shared read-or-write port</li><li>system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): ignored Accelergy attribute(s) datawidth — no NPUWattch attribute corresponds</li><li>system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count declared — assuming a single shared read-or-write port</li><li>system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): ignored Accelergy attribute(s) datawidth — no NPUWattch attribute corresponds</li><li>system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): ignored Accelergy attribute(s) datawidth, update_fifo_depth — no NPUWattch attribute corresponds</li><li>the description declares technology 65nm but the run is evaluated at 7nm (--node); NPUWattch models the node it is told to</li><li>user component &#39;example_68000_cpu_core&#39; (user_components.yaml): parsed, but not used</li><li>compound component &#39;counter&#39; (compound_components.yaml): parsed, but not used</li><li>Timeloop stats: 8 file(s), 6463520 cycles, 6/6 description component(s) charged (windows mode); compute charged in the weight-stationary mode (Computes -&gt; hold_b)</li>      </ul></details>
+      15 declared exclusions and notes (INFO —
+      deliberate, not modeling gaps)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+<tr class="lvl-info"><td><code>NW-7403</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.</summary>To use a different table, give --energy-table.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7301</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7306</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.shared_glb (sram): depth 16384 is the total of 32 banks, so mem_depth_per_bank is 512 (128 KB total).</summary>In Accelergy, the depth is the total for all banks. NPUWattch divides it by the number of banks.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7307</code></td>
+          <td>INFO</td><td>system_top_level.eyeriss.shared_glb (sram): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7308</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.</summary>NPUWattch charges each bank access as one access event.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7301</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.shared_glb (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7307</code></td>
+          <td>INFO</td><td>system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7301</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7307</code></td>
+          <td>INFO</td><td>system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7301</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7301</code></td>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth, update_fifo_depth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7116</code></td>
+          <td>INFO</td><td><details class="why"><summary>The description declares technology 65nm, but the run uses 7nm from --node.</summary>NPUWattch models the node that --node gives. The technology in the description has no effect.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2116</code></td>
+          <td>INFO</td><td><details class="why"><summary>User component &#39;example_68000_cpu_core&#39; (user_components.yaml) is in the library, but the run does not use it.</summary>No component of the run has this class. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7101</code></td>
+          <td>INFO</td><td><details class="why"><summary>Compound component &#39;counter&#39; (compound_components.yaml) is parsed, but no component uses it.</summary>The compound component file defines this compound component. No component of the description has this class. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7218</code></td>
+          <td>INFO</td><td><details class="why"><summary>Timeloop stats: 8 file(s), 6463520 cycles, 6/6 description components charged (windows mode).</summary>NPUWattch charges the compute components in the weight-stationary mode. The Timeloop Computes count becomes the hold_b action.</details></td><td>1</td></tr>
+      </table></div></details>
   </div>
 
   <footer>NPUWattch — ML-based power, area, and timing modeling for neural

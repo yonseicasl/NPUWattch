@@ -184,6 +184,11 @@ the activity rows, the instance tree, and two kinds of messages:
 - **INFO**: a convention or exclusion you should know about, such as a
   counter that is left out on purpose. Nothing is wrong.
 
+Each message has a level and a code, for example
+`WARNING (NW-8111): core0.vrf: width=256 is outside the characterized range 8-128 of regfile.`
+To read the full explanation of a code, run `npuwattch --explain NW-8111`.
+`MESSAGES.md` in the repository root lists all messages.
+
 Read the warnings before you read the numbers.
 
 ### 3.1 The three definition files
@@ -381,14 +386,16 @@ In the console, from top to bottom:
 1. **`--tree`**: the hardware as NPUWattch understood it. Check this
    first. If a component is missing or has the wrong size here, every
    number after it will be off.
-2. **WARNING and INFO lines**: every assumption, extrapolation, and
-   exclusion.
+2. **WARNING and INFO lines** (`LEVEL (NW-nnnn): text`): every
+   assumption, extrapolation, and exclusion.
 3. **Per-window energy** and **per-window component energy**: one row per
    layer or kernel.
 4. **Energy summary**: totals per component with area and leakage, and the
    `model` column (`cal`, `const`, `user`).
 5. **Run totals**: energy, time, average power, area, and energy per
    operation.
+6. **Message summary**: the number of messages at each level, and the
+   count of each WARNING, ERROR, and CRITICAL code.
 
 `report.html` shows the same data as a single self-contained page with
 breakdown charts, the cycle-level energy across windows, the component

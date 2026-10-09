@@ -48,9 +48,7 @@ waivers:
 out_of_scope:
   - >-
     scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is
-    excluded from the energy model per PyTorchSim author guidance (2026-07-25,
-    negligible area/power vs the systolic/vector datapath); gem5 stats are read
-    only for numCycles and the instruction counts matching
+    excluded from the energy model; gem5 stats are read only for numCycles and the instruction counts matching
     CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)
   - >-
     CustomVlaneIdx instruction counts are deliberately not collected: it is

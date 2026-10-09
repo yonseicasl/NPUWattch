@@ -7,7 +7,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>NPUWattch PPA Report — pytorchsim</title>
+<title>NPUWattch PPA Report — tpu_like_fp32</title>
 <style>
   :root{
     --bg:#f7f7f5; --card:#ffffff; --ink:#1c1c1c; --muted:#6b6b6b;
@@ -63,6 +63,13 @@
   .tree .leaf::before{content:"\00B7  ";color:var(--muted)}
   .tree .cnt{color:var(--accent);font-weight:600}
   .tree .lbl{color:var(--muted)}
+  table.msgs th,table.msgs td{text-align:left;vertical-align:top;font-size:12.5px}
+  table.msgs td:nth-child(3){white-space:normal}
+  details.why summary{cursor:pointer}
+  details.why{color:var(--muted)} details.why summary{color:var(--ink)}
+  table.msgs th:last-child,table.msgs td:last-child{text-align:right}
+  table.msgs tr.lvl-warning td:nth-child(2){color:var(--warn-ink);font-weight:600}
+  table.msgs tr.lvl-error td:nth-child(2),table.msgs tr.lvl-critical td:nth-child(2){color:var(--err-ink);font-weight:600}
   ul.warnings{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted)}
   footer{color:var(--muted);font-size:11px;margin:24px 0}
   code{background:#f0efec;border-radius:4px;padding:0 4px;font-size:12px}
@@ -72,9 +79,9 @@
 <main>
 
   <!-- 1. Header -->
-  <h1>NPUWattch PPA Report — pytorchsim</h1>
+  <h1>NPUWattch PPA Report — tpu_like_fp32</h1>
   <div class="sub">
-    Generated 2026-10-05 23:52:36 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-10 06:00:46 · NPUWattch 0.9 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 940.0 MHz ·
@@ -431,14 +438,45 @@
     <div class="sub">
       inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>06fb4965833a</code>    </div>
     <details><summary style="cursor:pointer;font-size:13px">
-      5 warnings recorded during this run</summary>
-      <ul class="warnings">
-<li>vmem: capacity-only SRAM spec (134217728 bits): auto-applied macro template(s) 512x sram_256k grouped into banks of &lt;= 16 macros; utilization 100.0%</li><li>vpu_spad: capacity-only SRAM spec (1048576 bits): auto-applied macro template(s) 4x sram_256k grouped into banks of &lt;= 16 macros; utilization 100.0%</li><li>icnt_buf: capacity-only SRAM spec (65536 bits): auto-applied macro template(s) 1x sram_64k grouped into banks of &lt;= 16 macros; utilization 100.0%</li><li>CustomMatMulwVpush: kernel-total events attributed per array in proportion to each array&#39;s active cycles</li><li>core0.vrf: width=256 is outside the characterized 8-128 for regfile — extrapolated</li>      </ul></details>
+      5 warnings recorded during this run
+      (5 distinct)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+<tr class="lvl-warning"><td><code>NW-8212</code></td>
+          <td>WARNING</td><td><details class="why"><summary>vmem: The SRAM of 134217728 bits uses the macro templates 512x sram_256k in banks of at most 16 macros (utilization 100.0%).</summary>The description gives only the capacity of this SRAM. NPUWattch selected the macro templates for this capacity. Give the SRAM shape in the description to use a different structure.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8212</code></td>
+          <td>WARNING</td><td><details class="why"><summary>vpu_spad: The SRAM of 1048576 bits uses the macro templates 4x sram_256k in banks of at most 16 macros (utilization 100.0%).</summary>The description gives only the capacity of this SRAM. NPUWattch selected the macro templates for this capacity. Give the SRAM shape in the description to use a different structure.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8212</code></td>
+          <td>WARNING</td><td><details class="why"><summary>icnt_buf: The SRAM of 65536 bits uses the macro templates 1x sram_64k in banks of at most 16 macros (utilization 100.0%).</summary>The description gives only the capacity of this SRAM. NPUWattch selected the macro templates for this capacity. Give the SRAM shape in the description to use a different structure.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6607</code></td>
+          <td>WARNING</td><td><details class="why"><summary>CustomMatMulwVpush: NPUWattch divides the kernel total between the arrays by their active cycles.</summary>The log gives this stat as one total for the kernel. NPUWattch divides it between the arrays in proportion to the active cycles of each array. The per-array energy is approximate. The total energy does not change.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8111</code></td>
+          <td>WARNING</td><td><details class="why"><summary>core0.vrf: width=256 is outside the characterized range 8-128 of regfile.</summary>The model of this primitive has training data only in this range. NPUWattch extrapolates the value. The result of this component is less accurate.</details></td><td>1</td></tr>
+      </table></div></details>
     <details><summary style="cursor:pointer;font-size:13px">
-      9 declared exclusions (INFO — deliberate,
-      not modeling gaps)</summary>
-      <ul class="warnings">
-<li>scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is excluded from the energy model per PyTorchSim author guidance (2026-07-25, negligible area/power vs the systolic/vector datapath); gem5 stats are read only for numCycles and the instruction counts matching CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)</li><li>CustomVlaneIdx instruction counts are deliberately not collected: it is lane-index generation, not an SFU op, and its energy is negligible</li><li>BAR / MEMORY_BAR (barrier) instruction counters are not collected: synchronization is control-side work (scalar-core scope) and the stall time it causes is already inside total_exec_cycles, so it is charged as leakage over the window</li><li>VCIX serializer/deserializer (the vector &lt;-&gt; systolic-array interface) is not modeled as a separate component: its push/pop events are already charged at both endpoints (w_reg writes, vpu_spad reads/writes), and PyTorchSim exposes no serdes size parameters — the remaining mux/wire datapath is second-order</li><li>DRAM background/standby power and the NPU-side memory controller / HBM PHY are not charged: vendor IDD/standby currents for HBM are not public (no open HBM power tool exists), so the dram compound charges command energies only (activate / read / write / refresh, constants cited from O&#39;Connor &amp; Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic (VMEM fills/drains, DMA engine, NoC flits) are charged by their own compounds</li><li>activity stat &#39;CustomMatMul&#39; (total 2 across 1 window(s)) is not charged — waived in projection &#39;pytorchsim&#39;: compute is charged per systolic active cycle (Option A: systolic_active_cycles x lanes^2 = MACs); this instruction count is a redundant counter of the same work</li><li>activity stat &#39;comp_gemm_ops&#39; (total 576 across 1 window(s)) is not charged — waived in projection &#39;pytorchsim&#39;: COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count</li><li>activity stat &#39;comp_vector_ops&#39; (total 1 across 1 window(s)) is not charged — waived in projection &#39;pytorchsim&#39;: COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count</li><li>user component &#39;example_68000_cpu_core&#39; (user_components.yaml): parsed, but not used</li>      </ul></details>
+      9 declared exclusions and notes (INFO —
+      deliberate, not modeling gaps)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is excluded from the energy model; gem5 stats are read only for numCycles and the instruction counts matching CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: CustomVlaneIdx instruction counts are deliberately not collected: it is lane-index generation, not an SFU op, and its energy is negligible</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: BAR / MEMORY_BAR (barrier) instruction counters are not collected: synchronization is control-side work (scalar-core scope) and the stall time it causes is already inside total_exec_cycles, so it is charged as leakage over the window</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: VCIX serializer/deserializer (the vector &lt;-&gt; systolic-array interface) is not modeled as a separate component: its push/pop events are already charged at both endpoints (w_reg writes, vpu_spad reads/writes), and PyTorchSim exposes no serdes size parameters — the remaining mux/wire datapath is second-order</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: DRAM background/standby power and the NPU-side memory controller / HBM PHY are not charged: vendor IDD/standby currents for HBM are not public (no open HBM power tool exists), so the dram compound charges command energies only (activate / read / write / refresh, constants cited from O&#39;Connor &amp; Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic (VMEM fills/drains, DMA engine, NoC flits) are charged by their own compounds</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;CustomMatMul&#39; (total 2 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: compute is charged per systolic active cycle (Option A: systolic_active_cycles x lanes^2 = MACs); this instruction count is a redundant counter of the same work</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_gemm_ops&#39; (total 576 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_vector_ops&#39; (total 1 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2116</code></td>
+          <td>INFO</td><td><details class="why"><summary>User component &#39;example_68000_cpu_core&#39; (user_components.yaml) is in the library, but the run does not use it.</summary>No component of the run has this class. No action is necessary.</details></td><td>1</td></tr>
+      </table></div></details>
   </div>
 
   <footer>NPUWattch — ML-based power, area, and timing modeling for neural

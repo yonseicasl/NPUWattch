@@ -79,12 +79,17 @@ inputs and weights far less often than on the NVDLA-like design (1 KB CACC).
 The run prints no warnings. The INFO messages are the same kinds as in
 `../eyeriss_like/README.md`:
 
-- `depth 16384 is the Accelergy total over 4 banks → mem_depth_per_bank 4096`:
-  in Accelergy, `depth` is the size of the whole buffer, so NPUWattch divides
+- `INFO (NW-7306): system_top_level.gemmini.scratchpad (sram): depth 16384
+  is the total of 4 banks, so mem_depth_per_bank is 4096 (256 KB total).`
+  In Accelergy, `depth` is the size of the whole buffer, so NPUWattch divides
   it by `n_banks`.
-- `no port count declared — assuming a single shared read-or-write port`:
-  `arch.yaml` has no port attributes, so NPUWattch uses one port.
-- `ignored Accelergy attribute(s) datawidth`: `datawidth` is a Timeloop
-  attribute. NPUWattch uses `width` for the row size.
-- `parsed, but not used`: the example entries in `user_components.yaml` and
-  `compound_components.yaml`.
+- `INFO (NW-7307): ... no port count is declared, so NPUWattch uses one
+  shared read-write port.` `arch.yaml` has no port attributes, so NPUWattch
+  uses one port.
+- `INFO (NW-7301): ... NPUWattch ignores the Accelergy attribute(s)
+  datawidth.` `datawidth` is a Timeloop attribute. NPUWattch uses `width` for
+  the row size.
+- `INFO (NW-2116): User component ... is in the library, but the run does
+  not use it.` and `INFO (NW-7101): Compound component 'counter' ... is
+  parsed, but no component uses it.` These are the example entries in
+  `user_components.yaml` and `compound_components.yaml`.
