@@ -52,14 +52,22 @@ catalog modules of NPUWattch are in ``BUILTIN_CATALOGS``. They load the first
 time that a code is looked up. A plugin calls :func:`register` when it is
 imported.
 
+A catalog module also declares its *blocks*: the range of numbers that each
+module of the package uses. The blocks are data, thus the lint can check
+that a call site uses a number of its own block.
+
 The test ``tests/test_diagnostics.py`` checks each call site statically: the
-code must exist, the kind must agree, and the keyword fields must be the
-template fields.
+code must exist, the kind must agree, the keyword fields must be the
+template fields, and the number must be in the block of the module.
+
+A subclass of :class:`NPUWattchError` registers its name and its level when
+its class statement runs. Thus no list of exception modules is necessary.
 """
 
 from __future__ import annotations
 
 import importlib
+import pkgutil
 import string
 import sys
 from collections import Counter
@@ -133,6 +141,10 @@ CATALOG: Dict[Tuple[str, int], Entry] = {}
 #: (space, number) of the retired entries. A retired number is not used again.
 RETIRED: Dict[Tuple[str, int], str] = {}
 
+#: (space, lo, hi) -> the modules that use the numbers lo..hi. A name that is
+#: a package covers each module in the package.
+BLOCKS: Dict[Tuple[str, int, int], Tuple[str, ...]] = {}
+
 _builtin_loaded = False
 
 
@@ -146,7 +158,8 @@ def template_fields(template: str) -> FrozenSet[str]:
 
 
 def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
-             retired: Iterable[int] = (), source: str = "") -> None:
+             retired: Iterable[int] = (), source: str = "",
+             blocks: Optional[Mapping[Tuple[int, int], object]] = None) -> None:
     """Add the entries of one catalog module.
 
     ``entries`` maps a number to ``(kind, template)`` or to
@@ -154,11 +167,18 @@ def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
     (``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``) or the name of an
     exception class. ``retired`` gives the numbers that this module used
     before. These numbers cannot be registered again.
+
+    ``blocks`` maps ``(lo, hi)`` to the module, or the modules, that use the
+    numbers ``lo..hi``. A name that is a package covers each module in the
+    package. When ``blocks`` is given, each entry must be in one block, and
+    the lint checks that each call site is in a module of its block.
     """
     if not space.isidentifier() or not space.isupper():
         raise ValueError(f"message space {space!r} must be an upper-case identifier")
     for number in retired:
         RETIRED[(space, int(number))] = source
+    for (lo, hi), modules in (blocks or {}).items():
+        _register_block(space, int(lo), int(hi), modules)
     for number, item in entries.items():
         if not isinstance(item, tuple) or len(item) not in (2, 3):
             raise ValueError(f"{space}-{number}: give (kind, template) or "
@@ -178,7 +198,42 @@ def register(space: str, entries: Mapping[int, Tuple[str, str]], *,
         if kind not in LEVELS and not (kind.isidentifier() and kind[:1].isupper()):
             raise ValueError(f"{space}-{number}: kind {kind!r} is not a level "
                              f"or an exception class name")
+        if blocks and block_of(number, space) is None:
+            raise ValueError(f"{space}-{number} is in no block of {source or space}")
         CATALOG[key] = Entry(space, number, kind, template, source, explain)
+
+
+def _register_block(space: str, lo: int, hi: int, modules: object) -> None:
+    names = (modules,) if isinstance(modules, str) else tuple(modules)  # type: ignore[arg-type]
+    if lo > hi or not names:
+        raise ValueError(f"{space}-{lo}..{hi}: a block has lo <= hi and one or "
+                         f"more modules")
+    if space == NW and not any(a <= lo and hi <= b for a, b in NW_BLOCKS.values()):
+        raise ValueError(f"NW-{lo}..{hi}: the block is not inside one NW area")
+    for (other_space, lo2, hi2), other in BLOCKS.items():
+        if other_space == space and lo <= hi2 and lo2 <= hi:
+            raise ValueError(f"{space}-{lo}..{hi} overlaps the block "
+                             f"{lo2}..{hi2} of {', '.join(other)}")
+    BLOCKS[(space, lo, hi)] = names
+
+
+def block_of(number: int, space: str = NW) -> Optional[Tuple[int, int, Tuple[str, ...]]]:
+    """Return ``(lo, hi, modules)`` of the block that holds the number, or
+    ``None`` if the catalog declares no block for it."""
+    for (s, lo, hi), modules in BLOCKS.items():
+        if s == space and lo <= number <= hi:
+            return lo, hi, modules
+    return None
+
+
+def in_block(module: str, number: int, space: str = NW) -> bool:
+    """True if ``module`` may use the number: the catalog declares no block
+    for it, or ``module`` is one of the block's modules or is in one of its
+    packages."""
+    found = block_of(number, space)
+    if found is None:
+        return True
+    return any(module == m or module.startswith(m + ".") for m in found[2])
 
 
 def load_builtin_catalogs() -> None:
@@ -338,6 +393,11 @@ def critical(number: int, /, **fields: object) -> Diagnostic:
 # Exceptions
 # ---------------------------------------------------------------------------
 
+#: Class name -> level, of each subclass of NPUWattchError that Python has
+#: loaded. :func:`exception_levels` loads the built-in packages first.
+EXCEPTION_LEVELS: Dict[str, str] = {}
+
+
 class NPUWattchError(Exception):
     """The base of each exception that has a catalog entry.
 
@@ -353,6 +413,10 @@ class NPUWattchError(Exception):
     number: Optional[int] = None
     text: str = ""
     fields: Dict[str, object] = {}
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        EXCEPTION_LEVELS[cls.__name__] = cls.level
 
     @classmethod
     def nw(cls, number: int, /, **fields: object) -> "NPUWattchError":
@@ -382,6 +446,42 @@ class NPUWattchError(Exception):
                           self.text or str(self), self.fields)
 
 
+def as_diagnostic(message: object, level: str = WARNING) -> Diagnostic:
+    """Return ``message`` as a catalog message.
+
+    A :class:`Diagnostic` does not change. An exception with a catalog entry
+    becomes the message of its entry. A plain ``str`` (from a third-party
+    plugin that does not use the catalog yet) gets the generic entry of
+    ``level`` (NW-1801 INFO, NW-1802 WARNING, NW-1803 ERROR). Thus each
+    printed line has a code.
+    """
+    if isinstance(message, Diagnostic):
+        return message
+    if isinstance(message, NPUWattchError) and message.number is not None:
+        return message.as_diagnostic()
+    text = str(message)
+    if level == INFO:
+        return info(1801, message=text)
+    if level == ERROR:
+        return error(1803, message=text)
+    return warning(1802, message=text)
+
+
+def about(subject: str, message: object) -> Diagnostic:
+    """Return ``message`` with the prefix ``"<subject>: "``.
+
+    The message is about one component or element (for example, an envelope
+    warning of an estimator). A :class:`Diagnostic` keeps its code and its
+    level; only its text gets the prefix. A plain ``str`` gets the generic
+    entry NW-1804 (WARNING).
+    """
+    if isinstance(message, Diagnostic):
+        return Diagnostic(message.space, message.number, message.level,
+                          f"{subject}: {message.text}",
+                          {**message.fields, "subject": subject})
+    return warning(1804, subject=subject, message=str(message))
+
+
 # ---------------------------------------------------------------------------
 # Output: suppression and the message summary
 # ---------------------------------------------------------------------------
@@ -401,39 +501,26 @@ def reset() -> None:
     _hidden.clear()
 
 
-def _suppressible(code: str) -> Tuple[Optional[str], Optional[str]]:
-    """Return ``(code, None)`` for a code that can be suppressed, else
-    ``(None, problem)``."""
-    try:
-        space, number = parse_code(code)
-        entry = lookup(number, space)
-    except ValueError as e:
-        return None, str(e)
-    if entry.kind not in (INFO, WARNING):
-        return None, (f"{entry.code} is a {entry.kind} entry; only INFO "
-                      f"and WARNING messages can be suppressed")
-    return entry.code, None
-
-
-def suppress_problems(codes: Iterable[str]) -> List[str]:
-    """Return the problems of a ``--suppress`` list. Nothing changes."""
-    return [p for p in (_suppressible(c)[1] for c in codes) if p]
-
-
-def suppress(codes: Iterable[str]) -> List[str]:
-    """Hide the messages with these codes. Return the problems.
+def suppressible(code: str) -> str:
+    """Return the normalized code of a message that ``--suppress`` can hide.
 
     Only INFO and WARNING entries can be suppressed. An ERROR or a CRITICAL
-    message always stops the run, thus it is always printed.
+    message always stops the run, thus it is always printed. Raises
+    ``ValueError`` if the code is not correct, has no entry, or is not an
+    INFO or WARNING entry. The argument parser checks each code with this
+    function one time, then :func:`suppress` stores the codes.
     """
-    problems = []
-    for code in codes:
-        ok, problem = _suppressible(code)
-        if ok:
-            _suppressed.add(ok)
-        else:
-            problems.append(problem)
-    return problems
+    space, number = parse_code(code)
+    entry = lookup(number, space)
+    if entry.kind not in (INFO, WARNING):
+        raise ValueError(f"{entry.code} is a {entry.kind} entry; only INFO "
+                         f"and WARNING messages can be suppressed")
+    return entry.code
+
+
+def suppress(codes: Iterable[str]) -> None:
+    """Hide the messages with these codes (normalized by :func:`suppressible`)."""
+    _suppressed.update(codes)
 
 
 def is_suppressed(code: Optional[str]) -> bool:
@@ -486,60 +573,28 @@ def group(messages: Iterable[object], level: str = WARNING) -> List[Dict[str, ob
 # The catalog as a list (--list-messages, MESSAGES.md)
 # ---------------------------------------------------------------------------
 
-#: The modules that define the exception classes of the NW entries. The
-#: listing imports them to find the level of each class. A test makes sure
-#: that each exception entry has its class here.
-EXCEPTION_MODULES: Tuple[str, ...] = (
-    "npuwattch.arch_synth",
-    "npuwattch.energy.aggregate",
-    "npuwattch.energy.dram_table",
-    "npuwattch.energy.node_scaling",
-    "npuwattch.energy.unit_cost",
-    "npuwattch.energy.vectorless",
-    "npuwattch.naming",
-    "npuwattch.npuwattch_estimator_host",
-    "npuwattch.report.html",
-    "npuwattch.user_components",
-    "npuwattch_estimators.errors",
-    "npuwattch_harness.compounds.loader",
-    "npuwattch_harness.pytorchsim.booksim",
-    "npuwattch_harness.pytorchsim.mac_config",
-    "npuwattch_harness.pytorchsim.run_config",
-    "npuwattch_harness.pytorchsim.togsim_log",
-    "npuwattch_harness.registry",
-    "npuwattch_harness.timeloop.stats",
-    "npuwattch_harness.vocabulary",
-)
-
-
 def exception_levels() -> Dict[str, str]:
-    """Return the level of each loaded exception class, by class name."""
-    for name in EXCEPTION_MODULES:
-        importlib.import_module(name)
-    levels: Dict[str, str] = {}
-    todo = [NPUWattchError]
-    while todo:
-        cls = todo.pop()
-        for sub in cls.__subclasses__():
-            levels[sub.__name__] = sub.level
-            todo.append(sub)
-    return levels
+    """Return the level of each exception class, by class name.
+
+    A subclass of :class:`NPUWattchError` registers itself when Python runs
+    its class statement. This function imports each module of the built-in
+    packages first, thus each built-in class is registered. A plugin
+    registers its classes when it is imported.
+    """
+    for top in sorted({name.split(".", 1)[0] for name in BUILTIN_CATALOGS}):
+        package = importlib.import_module(top)
+        for module in pkgutil.walk_packages(package.__path__, top + "."):
+            importlib.import_module(module.name)
+    return dict(EXCEPTION_LEVELS)
 
 
-def listing(prefix: str = "") -> List[Tuple[str, str, str, str]]:
-    """Return ``(code, level, class, template)`` for each entry whose code
-    starts with ``prefix`` (case is ignored). ``class`` is empty for a
-    message entry."""
+def listing(prefix: str = "") -> List[Tuple[Entry, str]]:
+    """Return ``(entry, level)`` for each entry whose code starts with
+    ``prefix`` (case is ignored). The level of an exception entry is the
+    level of its class."""
     levels = exception_levels()
-    rows = []
-    for e in entries():
-        if not e.code.upper().startswith(prefix.upper()):
-            continue
-        if e.is_exception:
-            rows.append((e.code, levels.get(e.kind, ERROR), e.kind, e.template))
-        else:
-            rows.append((e.code, e.kind, "", e.template))
-    return rows
+    return [(e, levels.get(e.kind, ERROR) if e.is_exception else e.kind)
+            for e in entries() if e.code.upper().startswith(prefix.upper())]
 
 
 def explain(code: str) -> str:
@@ -582,21 +637,19 @@ def catalog_markdown() -> str:
         "| CRITICAL | NPUWattch or its models are not correct. The run stops. "
         "Please report it. |",
     ]
-    rows = listing()
+    rows = listing(f"{NW}-")
     for title, (lo, hi) in NW_BLOCKS.items():
-        block = [r for r in rows
-                 if r[0].startswith("NW-") and lo <= int(r[0][3:]) <= hi]
+        block = [(e, level) for e, level in rows if lo <= e.number <= hi]
         if not block:
             continue
         out += ["", f"## NW-{lo}..{hi}: {title}", "",
                 "| Code | Level | Message | Explanation |", "|---|---|---|---|"]
-        for code, level, kind, template in block:
-            entry = lookup(int(code[3:]))
-            text = template.replace("|", "\\|").replace("\n", " ")
-            if kind:
-                level = f"{level} ({kind})"
-            why = entry.explain.replace("|", "\\|")
-            out.append(f"| {code} | {level} | {text} | {why} |")
+        for e, level in block:
+            text = e.template.replace("|", "\\|").replace("\n", " ")
+            if e.is_exception:
+                level = f"{level} ({e.kind})"
+            why = e.explain.replace("|", "\\|")
+            out.append(f"| {e.code} | {level} | {text} | {why} |")
     return "\n".join(out) + "\n"
 
 

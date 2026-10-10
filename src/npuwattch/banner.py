@@ -1,3 +1,5 @@
+"""The console banner of the NPUWattch CLI."""
+
 from npuwattch import __version__
 
 _BANNER = r"""
@@ -10,10 +12,11 @@ _BANNER = r"""
 """
 
 
-def _print_intro() -> None:
+def print_banner() -> None:
+    """Print the NPUWattch banner and the version line."""
     print(_BANNER)
     print(f"                         NPUWattch v{__version__}                ")  # nw-lint: text
-    print("2025-2026 Yonsei University Computer Architecture and Systems Lab")  # nw-lint: text
-    print("                     ikamusume@yonsei.ac.kr                      ")  # nw-lint: text
-    print()
-    print()
+    print ("2025-2026 Yonsei University Computer Architecture and Systems Lab")  # nw-lint: text
+    print ("                     ikamusume@yonsei.ac.kr                      ")  # nw-lint: text
+    print ()
+    print ()

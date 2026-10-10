@@ -402,11 +402,12 @@ def parse_args(argv: Optional[List[str]] = None) -> NPUWattchArgs:
     out_dir: Optional[Path] = None
 
     # --suppress: one code or a comma-separated list, given one or more times.
-    from npuwattch.diagnostics import suppress_problems
-    suppress = tuple(c.strip().upper() for item in (ns.suppress or [])
-                     for c in item.split(",") if c.strip())
-    for problem in suppress_problems(suppress):
-        parser.error(arg_error(1901, problem=problem))
+    from npuwattch.diagnostics import suppressible
+    try:
+        suppress = tuple(suppressible(c) for item in (ns.suppress or [])
+                         for c in item.split(",") if c.strip())
+    except ValueError as e:
+        parser.error(arg_error(1901, problem=e))
 
     # The harness flags that the user gave: flag -> (entry, value).
     flags = _harness_flags()

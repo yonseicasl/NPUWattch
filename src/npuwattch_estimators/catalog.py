@@ -1,17 +1,9 @@
 """The message catalog of the built-in estimators (NW-8000 to NW-8999).
 
 See ``npuwattch.diagnostics`` for the rules. The exception classes are in
-``npuwattch_estimators.errors``. Blocks:
-
-- 8000-8099 common: the messages that two or more estimators use
-  (``errors.py`` and the shared texts of the providers and trainers).
-- 8100-8199 logic:
-  8100-8149 ``logic/logic.py``, 8150-8179 ``logic/logic_mlp.py``,
-  8180-8199 ``logic/train_logic.py``.
-- 8200-8299 sram:
-  8200-8249 ``sram/sram.py``, 8250-8279 ``sram/sram_mlp.py``,
-  8280-8299 ``sram/train_sram.py``.
-- 8300-8399 custom: ``custom/custom.py`` and ``custom/scaler.py``.
+``npuwattch_estimators.errors``. The ``blocks`` argument of ``register``
+below gives the block of each module. In a block, the numbers are in the
+source order of the module.
 
 Add a new entry at the end of its block. Do not renumber an entry and do not
 use a number again: add a removed number to ``retired``.
@@ -19,7 +11,18 @@ use a number again: add a removed number to ``retired``.
 
 from npuwattch.diagnostics import ERROR, INFO, WARNING, register
 
-register("NW", {
+_E = "npuwattch_estimators."
+
+register("NW", blocks={
+    (8000, 8099): _E[:-1],                  # common: any estimator module
+    (8100, 8149): _E + "logic.logic",
+    (8150, 8179): _E + "logic.logic_mlp",
+    (8180, 8199): _E + "logic.train_logic",
+    (8200, 8249): _E + "sram.sram",
+    (8250, 8279): _E + "sram.sram_mlp",
+    (8280, 8299): _E + "sram.train_sram",
+    (8300, 8399): _E + "custom",
+}, entries={
     # -- 80xx common ------------------------------------------------------
     8001: ("EstimatorQueryError",
            "The {provider} provider does not serve primitive {primitive!r} "

@@ -15,12 +15,13 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-import npuwattch.npuwattch_messages as msg
-from npuwattch.catalog import as_diagnostic
+from npuwattch.banner import print_banner
 from npuwattch.diagnostics import (
     INFO,
     WARNING,
+    Diagnostic,
     NPUWattchError,
+    as_diagnostic,
     critical,
     emit,
     error,
@@ -53,21 +54,17 @@ def _emit_messages(messages: Iterable, level: str = WARNING) -> None:
         as_diagnostic(m, level).emit()
 
 
-def _emit_exception(e: BaseException, fallback: int) -> None:
+def _emit_exception(e: BaseException, fallback: Diagnostic) -> None:
     """Print the line of an exception that stops the run.
 
     An exception with a catalog entry prints its own line. Any other
-    exception gets the catalog entry ``fallback``, with its text in the
-    field ``error``.
+    exception prints ``fallback``, the message that the call site made from
+    its text.
     """
     if isinstance(e, NPUWattchError) and e.number is not None:
         emit(e)
-    elif fallback == 1018:
-        error(1018, error=e).emit()
-    elif fallback == 1019:
-        critical(1019, error=e).emit()
     else:
-        critical(1027, error=e).emit()
+        fallback.emit()
 
 
 def _run_flattener(args) -> int:
@@ -231,7 +228,7 @@ def _run_native_estimator(args, description) -> int:
         try:
             rows, notes = vectorless_activity_rows(description, activity=activity)
         except ValueError as e:
-            _emit_exception(e, 1018)
+            _emit_exception(e, error(1018, error=e))
             return 1
         _emit_messages(notes, INFO)
 
@@ -247,10 +244,10 @@ def _run_native_estimator(args, description) -> int:
             clock_check=args.show_fmax,
         )
     except ValueError as e:                 # catalog errors and user input
-        _emit_exception(e, 1018)
+        _emit_exception(e, error(1018, error=e))
         return 1
     except Exception as e:
-        _emit_exception(e, 1019)
+        _emit_exception(e, critical(1019, error=e))
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
@@ -375,10 +372,10 @@ def _run_harness(args) -> int:
         # the 200 MHz default.
         emitted = run_harness(args.harness, harness_inputs, tech, **opts)
     except (HarnessError, NPUWattchError) as e:   # a catalog error
-        _emit_exception(e, 1018)
+        _emit_exception(e, error(1018, error=e))
         return 1
     except Exception as e:
-        _emit_exception(e, 1027)
+        _emit_exception(e, critical(1027, error=e))
         if args.verbose >= 2:
             import traceback
             traceback.print_exc()
@@ -431,7 +428,7 @@ def _run_harness(args) -> int:
             clock_check=args.show_fmax,
         )
     except ValueError as e:
-        _emit_exception(e, 1018)
+        _emit_exception(e, error(1018, error=e))
         return 1
     _emit_messages(energy_warnings, WARNING)
     # If a harness makes synthetic activity, each output must show
@@ -721,9 +718,9 @@ def _print_catalog(prefix: str) -> int:
     from npuwattch import diagnostics
 
     rows = diagnostics.listing(prefix)
-    for code, level, kind, template in rows:
-        owner = f" [{kind}]" if kind else ""
-        print(f"{code:<9} {level:<8} {template}{owner}")  # nw-lint: text
+    for e, level in rows:
+        owner = f" [{e.kind}]" if e.is_exception else ""
+        print(f"{e.code:<9} {level:<8} {e.template}{owner}")  # nw-lint: text
     print(f"{len(rows)} message(s)")  # nw-lint: text
     return 0
 
@@ -754,7 +751,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Run the NPUWattch CLI and return the exit code."""
     from npuwattch import diagnostics
 
-    msg._print_intro()
+    print_banner()
     diagnostics.reset()
 
     argv_list: List[str] = list(sys.argv[1:] if argv is None else argv)
@@ -773,7 +770,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             error(1904, problem=e).emit()
             return 1
         return 0
-    diagnostics.suppress(args.suppress)     # the parser checked the codes
+    diagnostics.suppress(args.suppress)
 
     try:
         # Training mode uses the estimator host.

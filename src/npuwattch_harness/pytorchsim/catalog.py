@@ -1,22 +1,8 @@
 """The message catalog of the PyTorchSim harness (NW-6000 to NW-6999).
 
-See ``npuwattch.diagnostics`` for the rules. Each module has one block of
-100 numbers. In a block, the numbers are in the source order of the module:
-
-========= ==============================================================
-block     module
-========= ==============================================================
-60xx      ``ingest`` (representative MAC, run checks, entry point)
-61xx      ``mac_config`` (MAC configuration from the codegen files)
-62xx      ``activity`` (``read_run``, ``bind_window``)
-63xx      ``togsim_log`` (TOGSim log parser)
-64xx      ``booksim`` (NoC topology and flit traffic)
-65xx      ``dram`` (DRAM energy table, DRAM stats)
-66xx      ``instances`` (division of the activity between instances)
-67xx      ``run_config`` (``config.yml`` reader)
-68xx-69xx  not used (``gem5_stats``, ``hierarchy``, ``definitions`` and
-          ``__init__`` give no messages)
-========= ==============================================================
+See ``npuwattch.diagnostics`` for the rules. The ``blocks`` argument of
+``register`` below gives the block of each module. In a block, the numbers
+are in the source order of the module.
 
 Add a new entry at the end of its block. Do not renumber an entry and do not
 use a number again: add a removed number to ``retired``.
@@ -27,7 +13,18 @@ kernel (the window) that the message is about.
 
 from npuwattch.diagnostics import INFO, WARNING, register
 
-register("NW", {
+_P = "npuwattch_harness.pytorchsim."
+
+register("NW", blocks={
+    (6000, 6099): _P + "ingest",
+    (6100, 6199): _P + "mac_config",
+    (6200, 6299): _P + "activity",
+    (6300, 6399): _P + "togsim_log",
+    (6400, 6499): _P + "booksim",
+    (6500, 6599): _P + "dram",
+    (6600, 6699): _P + "instances",
+    (6700, 6799): _P + "run_config",
+}, entries={
     # -- 60xx ingest ---------------------------------------------------------
     6001: (INFO,
            "{count} non-MAC kernel(s) use the {dtype} datapath of MAC kernel "

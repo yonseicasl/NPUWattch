@@ -49,8 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from npuwattch.catalog import about
-from npuwattch.diagnostics import NPUWattchError, info, warning
+from npuwattch.diagnostics import NPUWattchError, about, info, warning
 from npuwattch.naming import validate_attributes
 
 __all__ = [

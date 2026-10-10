@@ -1,12 +1,9 @@
 """The message catalog of the harness registry, the run inputs, the
 vocabulary and the compounds (NW-5000 to NW-5999).
 
-See ``npuwattch.diagnostics`` for the rules. Blocks:
-
-- 50xx: ``registry`` (and the package ``__init__``).
-- 51xx: ``run_inputs``.
-- 52xx: ``vocabulary``.
-- 53xx-54xx: ``compounds`` (``compounds/loader.py``).
+See ``npuwattch.diagnostics`` for the rules. The ``blocks`` argument of
+``register`` below gives the block of each module. In a block, the numbers
+are in the source order of the module.
 
 Add a new entry at the end of its block. Do not renumber an entry and do not
 use a number again: add a removed number to ``retired``.
@@ -18,7 +15,12 @@ _H = "HarnessError"
 _V = "VocabularyError"
 _C = "CompoundBundleError"
 
-register("NW", {
+register("NW", blocks={
+    (5000, 5099): "npuwattch_harness.registry",
+    (5100, 5199): "npuwattch_harness.run_inputs",
+    (5200, 5299): "npuwattch_harness.vocabulary",
+    (5300, 5499): "npuwattch_harness.compounds",
+}, entries={
     # -- 50xx registry ------------------------------------------------------
     5001: (_H, "Harness package {package!r}: the HARNESS_SPEC has no 'name'.",
            "NPUWattch selects a harness by the 'name' in its HARNESS_SPEC. "

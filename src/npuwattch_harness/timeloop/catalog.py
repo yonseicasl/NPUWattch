@@ -1,18 +1,8 @@
 """The message catalog of the Timeloop harness (NW-7000 to NW-7999).
 
-See ``npuwattch.diagnostics`` for the rules. Each module has one block of
-100 numbers. The numbers in a block are in the source order of the module:
-
-==========  ===========================================================
-Block       Module
-==========  ===========================================================
-70xx        ``__init__``, ``tree`` (reserved, no messages)
-71xx        ``ingest``: description and activity of the run
-72xx        ``stats``: Timeloop stats reader and ``--stats-map``
-73xx        ``vocabulary``: derivation rules of the attributes
-74xx        ``dram``: DRAM energy tables
-75xx        ``accelergy_flattener``: ``-f/--flatten`` mode
-==========  ===========================================================
+See ``npuwattch.diagnostics`` for the rules. The ``blocks`` argument of
+``register`` below gives the block of each module. In a block, the numbers
+are in the source order of the module.
 
 Add a new entry at the end of its block. Do not renumber an entry and do
 not use a number again: add a removed number to ``retired``.
@@ -20,7 +10,15 @@ not use a number again: add a removed number to ``retired``.
 
 from npuwattch.diagnostics import INFO, WARNING, register
 
-register("NW", {
+_T = "npuwattch_harness.timeloop."
+
+register("NW", blocks={
+    (7100, 7199): _T + "ingest",
+    (7200, 7299): _T + "stats",
+    (7300, 7399): _T + "vocabulary",
+    (7400, 7499): _T + "dram",
+    (7500, 7599): _T + "accelergy_flattener",
+}, entries={
     # -- 71xx ingest --------------------------------------------------------
     7101: (INFO, "Compound component {name!r} ({file}) is parsed, but no "
                  "component uses it.",

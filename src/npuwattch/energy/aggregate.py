@@ -22,8 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from npuwattch.catalog import about
-from npuwattch.diagnostics import NPUWattchError, warning
+from npuwattch.diagnostics import NPUWattchError, about, warning
 from ..naming import validate_attributes
 from ..user_components import user_components_of
 from .unit_cost import NoModelError, TechContext, UnitCostProvider

@@ -1,47 +1,35 @@
 """The message catalog of the ``npuwattch`` package (NW-1000 to NW-4999).
 
-See ``npuwattch.diagnostics`` for the rules. Blocks (one sub-block for each
-module; the numbers in a sub-block are in source order):
-
-- 10xx  CLI (``npuwattch_console``)
-- 11xx  argument parser (``npuwattch_parser``)
-- 12xx  estimator host (``npuwattch_estimator_host``)
-- 13xx  description database (``npuwattch_db``)
-- 18xx  shared wrappers (this module): a message from a source that does not
-  use the catalog yet (a plain ``str`` from a third-party plugin), and a
-  message about one component or element
-- 19xx  message system (``--suppress``, the message summary)
-- 20xx  attribute names (``naming``)
-- 21xx  user component library (``user_components``)
-- 22xx  description and activity emitter (``arch_synth``)
-- 30xx  unit-cost providers (``energy.unit_cost``)
-- 31xx  energy calculation (``energy.aggregate``)
-- 32xx  continuous node axis (``energy.node_scaling``)
-- 33xx  vectorless activity (``energy.vectorless``)
-- 34xx  DRAM energy tables (``energy.dram_table``)
-- 36xx  provider chain (``energy.provider_factory``)
-- 40xx  HTML and JSON report (``report.html``)
+See ``npuwattch.diagnostics`` for the rules. The ``blocks`` argument of
+``register`` below gives the block of each module. In a block, the numbers
+are in the source order of the module.
 
 Add a new entry at the end of its block. Do not renumber an entry and do not
 use a number again: add a removed number to ``retired``.
 """
 
-from typing import Any
+from npuwattch.diagnostics import CRITICAL, ERROR, INFO, WARNING, register
 
-from npuwattch.diagnostics import (
-    CRITICAL,
-    ERROR,
-    INFO,
-    WARNING,
-    Diagnostic,
-    NPUWattchError,
-    error,
-    info,
-    register,
-    warning,
-)
-
-register("NW", {
+register("NW", blocks={
+    (1000, 1099): "npuwattch.npuwattch_console",
+    (1100, 1199): ("npuwattch.npuwattch_parser", "npuwattch.npuwattch_console"),
+    (1200, 1299): "npuwattch.npuwattch_estimator_host",
+    (1300, 1399): "npuwattch.npuwattch_db",
+    # A message from a source that does not use the catalog yet (a plain str
+    # from a third-party plugin), and a message about one component.
+    (1800, 1899): "npuwattch.diagnostics",
+    (1900, 1999): ("npuwattch.npuwattch_parser", "npuwattch.npuwattch_console"),
+    (2000, 2099): "npuwattch.naming",
+    (2100, 2199): "npuwattch.user_components",
+    (2200, 2299): "npuwattch.arch_synth",
+    (3000, 3099): "npuwattch.energy.unit_cost",
+    (3100, 3199): "npuwattch.energy.aggregate",
+    (3200, 3299): "npuwattch.energy.node_scaling",
+    (3300, 3399): "npuwattch.energy.vectorless",
+    (3400, 3499): "npuwattch.energy.dram_table",
+    (3600, 3699): "npuwattch.energy.provider_factory",
+    (4000, 4099): "npuwattch.report.html",
+}, entries={
     # -- 10xx: CLI (npuwattch_console) ----------------------------------------
     1001: (INFO, "Instance hierarchy ({source}):"),
     1002: (ERROR, "Estimator {estimator!r} declares no training entrypoint.",
@@ -287,7 +275,7 @@ register("NW", {
                  "with {instances} instances in total."),
     1304: (INFO, "Registered components:"),
 
-    # -- 18xx: shared wrappers (this module) ----------------------------------
+    # -- 18xx: shared wrappers (diagnostics.as_diagnostic, diagnostics.about) -
     1801: (INFO, "{message}",
            "This message comes from a plugin that does not use the message "
            "catalog. NPUWattch shows the text of the plugin without change."),
@@ -637,46 +625,3 @@ register("NW", {
            "This run has no window, so NPUWattch cannot make the report. "
            "Make sure that the activity has one or more windows."),
 }, retired=(), source=__name__)
-
-
-# ---------------------------------------------------------------------------
-# Shared wrappers
-# ---------------------------------------------------------------------------
-
-def as_diagnostic(message: Any, level: str = WARNING) -> Diagnostic:
-    """Return ``message`` as a catalog message.
-
-    A :class:`Diagnostic` does not change. An exception with a catalog entry
-    becomes the message of its entry. A plain ``str`` (from a third-party
-    plugin that does not use the catalog yet) gets the generic entry of
-    ``level`` (NW-1801 INFO, NW-1802 WARNING, NW-1803 ERROR). Thus each
-    printed line has a code.
-    """
-    if isinstance(message, Diagnostic):
-        return message
-    if isinstance(message, NPUWattchError) and message.number is not None:
-        return message.as_diagnostic()
-    text = str(message)
-    if level == INFO:
-        return info(1801, message=text)
-    if level == ERROR:
-        return error(1803, message=text)
-    return warning(1802, message=text)
-
-
-def about(subject: str, message: Any) -> Diagnostic:
-    """Return ``message`` with the prefix ``"<subject>: "``.
-
-    The message is about one component or element (for example, an envelope
-    warning of an estimator). A :class:`Diagnostic` keeps its code and its
-    level; only its text gets the prefix. A plain ``str`` gets the generic
-    entry NW-1804 (WARNING).
-    """
-    if isinstance(message, Diagnostic):
-        return Diagnostic(message.space, message.number, message.level,
-                          f"{subject}: {message.text}",
-                          {**message.fields, "subject": subject})
-    return warning(1804, subject=subject, message=str(message))
-
-
-__all__ = ["about", "as_diagnostic"]
