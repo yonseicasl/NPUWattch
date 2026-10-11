@@ -32,6 +32,10 @@ _LEAK = "#8A97A0"
 _INK = "#1c1c1c"
 _MUTED = "#6b6b6b"
 _GRID = "#e3e1dc"
+#: The window chart: bars and the left axis share one color, the
+#: average-power line and the right axis share another.
+_BAR = "#3b6ea5"
+_LINE = "#C27200"
 
 
 def color_for(name: str) -> str:
@@ -194,14 +198,70 @@ def hbar_list(items: Sequence[Tuple[str, float]], *, unit: str = "pJ",
 # Cycle-level chart (§8.5): energy bar of each window and average-power line
 # ---------------------------------------------------------------------------
 
+def _bar_widths(cycles: Sequence[int], plot_w: float, gap: float,
+                min_w: float = 2.0) -> List[float]:
+    """Return the bar width of each window, ∝ its cycles.
+
+    A bar is at least ``min_w`` wide, so that a very short window stays
+    visible. The other bars shrink in proportion, so that all bars and gaps
+    stay inside ``plot_w``. Without this, many short windows push the last
+    bars over the right axis.
+    """
+    total = sum(cycles) or 1
+    avail = plot_w - gap * len(cycles)
+    widths = [avail * c / total for c in cycles]
+    for _ in range(len(cycles)):                      # settle the minimum
+        small = [i for i, w in enumerate(widths) if w <= min_w]
+        if len(small) == len(widths):
+            break
+        rest = avail - min_w * len(small)
+        big_sum = sum(widths[i] for i in range(len(widths)) if i not in small)
+        new = [min_w if i in small else max(min_w, w * rest / big_sum)
+               for i, w in enumerate(widths)]
+        if new == widths:
+            break
+        widths = new
+    return [max(min_w, w) for w in widths]
+
+
+def _label_rows(centers: Sequence[float], widths: Sequence[float],
+                gap: float = 6.0) -> List[int]:
+    """Return the row of each window label (0 = the row under the axis).
+
+    A label goes to the first row where it does not overlap the last label
+    of that row. Thus a narrow window pushes its label one row down, and the
+    next wide window gets row 0 again. The caller draws a leader line from the
+    bar to a label in a lower row.
+    """
+    rows: List[int] = []
+    right_edge: List[float] = []                      # of the last label per row
+    for cx, w in zip(centers, widths):
+        left = cx - w / 2
+        row = 0
+        while row < len(right_edge) and right_edge[row] + gap > left:
+            row += 1
+        if row == len(right_edge):
+            right_edge.append(left + w)
+        else:
+            right_edge[row] = left + w
+        rows.append(row)
+    return rows
+
+
 def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
                   height: int = 280) -> str:
     """Draw the energy of each window as a bar on a cycle axis.
 
     The width of a bar ∝ the cycles of the window. The dynamic energy is
     below the leakage energy in the bar. A line shows the average power of
-    each window on the right axis. Each row of ``windows`` must have: label,
-    cycles, dyn_pJ, leak_pJ, total_pJ, avg_power_mW.
+    each window on the right axis. The bars and the left axis have one color,
+    the line and the right axis have another color. Each row of ``windows``
+    must have: label, cycles, dyn_pJ, leak_pJ, total_pJ, avg_power_mW.
+
+    The label of a narrow window can overlap the label of its neighbor. Then
+    the label goes one row down (see ``_label_rows``), with a leader line
+    from the bar to the label. ``height`` is the height with one label row.
+    Each extra row adds to the height of the SVG.
     """
     if not windows:
         return ""
@@ -212,6 +272,7 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
     p_max = max(w["avg_power_mW"] for w in windows) * 1.25 or 1.0
     y_e = lambda v: T + plot_h * (1 - v / e_max)
     y_p = lambda v: T + plot_h * (1 - v / p_max)
+    axis_y = T + plot_h
 
     parts: List[str] = []
     for i in range(5):                                # energy grid and ticks
@@ -220,21 +281,24 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
             f'<line x1="{L}" x2="{width - R}" y1="{y_e(v):.1f}" '
             f'y2="{y_e(v):.1f}" stroke="{_GRID}"/>'
             f'<text x="{L - 8}" y="{y_e(v) + 4:.1f}" text-anchor="end" '
-            f'font-size="10" fill="{_MUTED}">{fmt_si(v, "pJ")}</text>')
+            f'font-size="10" fill="{_BAR}">{fmt_si(v, "pJ")}</text>')
         pv = p_max * i / 4                            # power ticks (right)
         parts.append(
             f'<text x="{width - R + 8}" y="{y_p(pv) + 4:.1f}" font-size="10" '
-            f'fill="#2E6FA3">{fmt_si(pv, "mW")}</text>')
+            f'fill="{_LINE}">{fmt_si(pv, "mW")}</text>')
 
     x = float(L)
-    line_pts: List[str] = []
     gap = 3.0
-    for w in windows:
-        seg_w = max(2.0, plot_w * w["cycles"] / total_cycles - gap)
+    seg_ws = _bar_widths([w["cycles"] for w in windows], plot_w, gap)
+    centers: List[float] = []
+    labels: List[Tuple[str, str]] = []                # (name, cycles) per window
+    label_w: List[float] = []
+    line_pts: List[str] = []
+    for w, seg_w in zip(windows, seg_ws):
         yd, yt = y_e(w["dyn_pJ"]), y_e(w["total_pJ"])
         parts.append(                                  # dynamic
             f'<rect class="w-dyn" x="{x:.1f}" y="{yd:.1f}" width="{seg_w:.1f}" '
-            f'height="{T + plot_h - yd:.1f}" fill="#3b6ea5">'
+            f'height="{axis_y - yd:.1f}" fill="{_BAR}">'
             f'<title>{_esc(w["label"])}: dynamic '
             f'{fmt_si(w["dyn_pJ"], "pJ")}</title></rect>')
         parts.append(                                  # leakage above dynamic
@@ -242,28 +306,49 @@ def windows_chart(windows: Sequence[Mapping], *, width: int = 960,
             f'height="{yd - yt:.1f}" fill="{_LEAK}" opacity="0.6">'
             f'<title>{_esc(w["label"])}: leakage '
             f'{fmt_si(w["leak_pJ"], "pJ")}</title></rect>')
-        parts.append(
-            f'<text x="{x + seg_w / 2:.1f}" y="{T + plot_h + 15}" '
-            f'text-anchor="middle" font-size="10" fill="{_MUTED}">'
-            f'{_esc(str(w["label"])[:8])}</text>'
-            f'<text x="{x + seg_w / 2:.1f}" y="{T + plot_h + 28}" '
-            f'text-anchor="middle" font-size="9" fill="{_MUTED}" opacity="0.8">'
-            f'{w["cycles"]} cyc</text>')
-        line_pts.append(f'{x + seg_w / 2:.1f},{y_p(w["avg_power_mW"]):.1f}')
+        cx = x + seg_w / 2
+        centers.append(cx)
+        name, cyc = str(w["label"])[:8], f'{w["cycles"]} cyc'
+        labels.append((name, cyc))
+        # The width of the label box: ~0.6 em per character of the wider line.
+        label_w.append(max(len(name) * 10 * 0.6, len(cyc) * 9 * 0.6))
+        line_pts.append(f'{cx:.1f},{y_p(w["avg_power_mW"]):.1f}')
         x += seg_w + gap
+
+    rows = _label_rows(centers, label_w)
+    row_h = 26
+    for cx, row in zip(centers, rows):                # leaders bar -> label
+        if row:
+            y0 = axis_y + row * row_h
+            parts.append(
+                f'<line class="w-leader" x1="{cx:.1f}" x2="{cx:.1f}" '
+                f'y1="{axis_y}" y2="{y0 + 6}" stroke="{_MUTED}" '
+                f'stroke-width="0.8" opacity="0.7"/>')
+    for cx, (name, cyc), lw, row in zip(centers, labels, label_w, rows):
+        y0 = axis_y + row * row_h
+        # A white box behind the label hides a leader line that crosses it.
+        parts.append(
+            f'<rect x="{cx - lw / 2 - 2:.1f}" y="{y0 + 6}" width="{lw + 4:.1f}" '
+            f'height="{row_h - 2}" fill="#fff"/>'
+            f'<text x="{cx:.1f}" y="{y0 + 15}" text-anchor="middle" '
+            f'font-size="10" fill="{_MUTED}">{_esc(name)}</text>'
+            f'<text x="{cx:.1f}" y="{y0 + 28}" text-anchor="middle" '
+            f'font-size="9" fill="{_MUTED}" opacity="0.8">{cyc}</text>')
 
     parts.append(                                      # average-power line
         f'<polyline class="p-line" points="{" ".join(line_pts)}" fill="none" '
-        f'stroke="#2E6FA3" stroke-width="2"/>')
+        f'stroke="{_LINE}" stroke-width="2"/>')
     for pt in line_pts:
         px, py = pt.split(",")
-        parts.append(f'<circle cx="{px}" cy="{py}" r="3" fill="#2E6FA3"/>')
+        parts.append(f'<circle cx="{px}" cy="{py}" r="3" fill="{_LINE}"/>')
+    height += max(rows) * row_h
     parts.append(
-        f'<line x1="{L}" x2="{width - R}" y1="{T + plot_h}" y2="{T + plot_h}" '
+        f'<line x1="{L}" x2="{width - R}" y1="{axis_y}" y2="{axis_y}" '
         f'stroke="{_MUTED}"/>'
         f'<text x="{L}" y="{height - 2}" font-size="10" fill="{_MUTED}">'
-        f'bars: window energy (dyn + leak) · line: average power · '
-        f'bar width ∝ cycles</text>')
+        f'<tspan fill="{_BAR}">bars: window energy (dyn + leak)</tspan>'
+        f'&#160;·&#160;<tspan fill="{_LINE}">line: average power</tspan>'
+        f'&#160;·&#160;bar width ∝ cycles</text>')
     return (f'<svg viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="energy and power per kernel window over cycles">'
             + "".join(parts) + "</svg>")
