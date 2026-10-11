@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
-from npuwattch.diagnostics import warning
+from npuwattch.diagnostics import info, warning
 
 from ..compounds.loader import (
     Compound,
@@ -49,13 +49,16 @@ from ..compounds.loader import (
 from .booksim import derive_noc
 from .definitions import VOCABULARY
 from .dram import dram_stats
-from .gem5_stats import parse_sections, sum_committed_inst, sum_stat
+from .gem5_stats import parse_sections, section_committed_inst, sum_committed_inst, sum_stat
+from .tile_graph import find_tile_graph, read_tile_graph
+from .useful_macs import useful_macs
 from .mac_config import (
     MacConfig,
     MacInferenceError,
     NotAMatmulKernel,
     infer_mac_config_from_dir,
     infer_mac_config_from_meta,
+    parse_meta,
 )
 from .togsim_log import TogsimActivity, TogsimLogError, parse_togsim_log
 
@@ -171,19 +174,109 @@ def _mac_config_for(kernel_dir: Path, act: TogsimActivity,
 
 
 def _gem5_instruction_stats(kernel_dir: Path, khash: str,
-                            warnings: List[str]) -> Dict[str, float]:
-    """Return the gem5 instruction counts and ``numCycles`` of one kernel."""
+                            warnings: List[str], act: TogsimActivity) -> Dict[str, float]:
+    """Return the kernel totals of the gem5 instruction counts, and ``numCycles``.
+
+    gem5 runs the sample program of the kernel: one execution of each compute
+    node of the tile graph, with one statistics dump after each node
+    (``tile_graph.py``, ``gem5_stats.py``). The counts of a dump are the
+    counts of one execution of its node. This function scales them to the
+    kernel:
+
+    * With the tile graph (``*_tog.py`` in the kernel directory): the counts
+      of node ``k`` times the executions of node ``k``. This is exact.
+    * Without it: the average of the GEMM-type sections times the COMP GEMM
+      count of the log, and the average of the vector-type sections times the
+      COMP vector count. This is approximate (``NW-6218``).
+
+    ``numCycles`` stays the sum over the sections: it is the cycle count of
+    the sample program and is informational.
+    """
     stats: Dict[str, float] = {}
     stats_path = kernel_dir / "m5out" / "stats.txt"
-    if stats_path.is_file():
-        sections = parse_sections(stats_path.read_text(encoding="utf-8", errors="ignore"))
-        inst = sum_committed_inst(sections)
-        for name in _MATMUL_INSTS + _SFU_INSTS:
-            stats[name] = float(inst.get(name, 0))
-        stats["numCycles"] = sum_stat(sections, "system.cpu.numCycles")
-    else:
+    if not stats_path.is_file():
         warnings.append(warning(6206, kernel=khash))
+        return stats
+    sections = parse_sections(stats_path.read_text(encoding="utf-8", errors="ignore"))
+    stats["numCycles"] = sum_stat(sections, "system.cpu.numCycles")
+    per_section = [section_committed_inst(sec) for sec in sections]
+    names = list(_MATMUL_INSTS) + list(_SFU_INSTS)
+    totals: Dict[str, float] = {n: 0.0 for n in names}
+
+    graph = None
+    tog_path = find_tile_graph(kernel_dir)
+    if tog_path is not None:
+        try:
+            graph = read_tile_graph(tog_path)
+        except (OSError, ValueError, SyntaxError, KeyError) as e:
+            warnings.append(warning(6223, kernel=khash, error=e))
+    if graph is not None and len(per_section) - 1 != len(graph.nodes):
+        warnings.append(warning(6220, kernel=khash, sections=len(per_section),
+                                nodes=len(graph.nodes)))
+        graph = None
+
+    if graph is not None:
+        for node, counts in zip(graph.nodes, per_section):
+            for n in names:
+                totals[n] += counts.get(n, 0) * node.executions
+        if (graph.gemm_executions != act.comp_gemm_ops
+                or graph.vector_executions != act.comp_vector_ops):
+            warnings.append(warning(6219, kernel=khash,
+                                    graph_gemm=graph.gemm_executions,
+                                    graph_vector=graph.vector_executions,
+                                    log_gemm=act.comp_gemm_ops,
+                                    log_vector=act.comp_vector_ops))
+        warnings.append(info(6217, kernel=khash, nodes=len(graph.nodes),
+                             executions=sum(n.executions for n in graph.nodes)))
+    else:
+        body = per_section[:-1] if len(per_section) > 1 else per_section
+        gemm_secs = [c for c in body if any(c.get(n) for n in _MATMUL_INSTS)]
+        vec_secs = [c for c in body if c not in gemm_secs]
+        for n in _MATMUL_INSTS:
+            if gemm_secs:
+                totals[n] = (sum(c.get(n, 0) for c in gemm_secs) / len(gemm_secs)
+                             * act.comp_gemm_ops)
+        for n in _SFU_INSTS:
+            if vec_secs and any(c.get(n) for c in vec_secs):
+                totals[n] = (sum(c.get(n, 0) for c in vec_secs) / len(vec_secs)
+                             * act.comp_vector_ops)
+            elif gemm_secs and any(c.get(n) for c in gemm_secs):   # fused kernel
+                totals[n] = (sum(c.get(n, 0) for c in gemm_secs) / len(gemm_secs)
+                             * act.comp_gemm_ops)
+        if any(totals.values()):
+            warnings.append(warning(6218, kernel=khash))
+    for n in names:
+        stats[n] = float(totals[n])
     return stats
+
+
+def _useful_mac_stats(kernel_dir: Path, khash: str, act: TogsimActivity,
+                      mac_config: Optional[MacConfig],
+                      warnings: List[str]) -> Dict[str, float]:
+    """Return ``useful_macs`` and ``array_idle_slots`` of a MAC kernel.
+
+    ``array_idle_slots`` is the number of active PE cycles in which the PE
+    holds no real weight: ``systolic_active_cycles x lanes^2 - useful_macs``.
+    A kernel without a MAC configuration gives no stats. A kernel with an
+    unknown operator gets all active PE cycles as useful MACs (``NW-6221``).
+    """
+    if mac_config is None:
+        return {}
+    slots = act.systolic_active_cycles * act.lanes * act.lanes
+    macs: Optional[int] = None
+    meta_path = kernel_dir / "meta.txt"
+    if meta_path.is_file():
+        macs = useful_macs(act.operation, parse_meta(meta_path.read_text(encoding="utf-8",
+                                                                             errors="ignore")))
+    if macs is None:
+        warnings.append(warning(6221, kernel=khash, operation=act.operation))
+        return {"useful_macs": float(slots), "array_idle_slots": 0.0}
+    if macs > slots:
+        warnings.append(warning(6224, kernel=khash, useful=macs, slots=slots))
+        macs = slots
+    util = round(100.0 * macs / slots, 1) if slots else 0.0
+    warnings.append(info(6222, kernel=khash, useful=macs, slots=slots, utilization=util))
+    return {"useful_macs": float(macs), "array_idle_slots": float(slots - macs)}
 
 
 def _sfu_format(mac_config: Optional[MacConfig], stats: Mapping[str, float],
@@ -302,7 +395,8 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
                 seen_noc_warnings.add(msg)
                 warnings.append(msg)
 
-        stats.update(_gem5_instruction_stats(kernel_dir, khash, warnings))
+        stats.update(_gem5_instruction_stats(kernel_dir, khash, warnings, act))
+        stats.update(_useful_mac_stats(kernel_dir, khash, act, mac_config, warnings))
         (win_config["sfu_exponent_bits"],
          win_config["sfu_mantissa_bits"]) = _sfu_format(
             mac_config, stats, khash, warnings)

@@ -257,6 +257,16 @@ def parse_dram_ctrl_stats(text: str) -> Optional[Dict[str, int]]:
     return totals
 
 
+_OPERATION = re.compile(r"Enqueued kernel_id:\s*\d+.*?operation:\s*([A-Za-z0-9_]+)")
+
+
+def parse_operation(text: str) -> Optional[str]:
+    """Return the operator name of the kernel from the first scheduler line,
+    or None."""
+    m = _OPERATION.search(text)
+    return m.group(1) if m else None
+
+
 def parse_kernel_hash(text: str) -> str:
     """Return the kernel hash that connects this log to its ``outputs/<hash>/`` directory.
 
@@ -319,6 +329,10 @@ class TogsimActivity:
     #: such line.
     energy_table_name: Optional[str] = None
     energy_table_path: Optional[str] = None
+    #: The operator of the kernel from the scheduler line
+    #: ``Enqueued kernel_id: ..., operation: mm``. None if the log has no
+    #: such line. ``useful_macs.py`` uses it with the shapes of meta.txt.
+    operation: Optional[str] = None
     #: Warnings from the parser: a config key that disagrees with the
     #: [Config/DRAM] line. read_run copies them into the window warnings.
     warnings: List[str] = field(default_factory=list)
@@ -344,6 +358,7 @@ def parse_togsim_log(text: str,
         raise TogsimLogError.nw(6305)
     num_cores = _as_int(config, "num_cores") or 1
     kernel_hash = parse_kernel_hash(text)
+    operation = parse_operation(text)
 
     # The [Config/DRAM] line supplies dram_channels and dram_req_size_byte if
     # the run configuration (header and config.yml) does not have them. The
@@ -438,6 +453,7 @@ def parse_togsim_log(text: str,
 
     return TogsimActivity(
         kernel_hash=kernel_hash,
+        operation=operation,
         config=config,
         lanes=lanes,
         num_cores=num_cores,

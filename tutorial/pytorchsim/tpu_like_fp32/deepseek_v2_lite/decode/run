@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Tutorial example — PyTorchSim input, DeepSeek-V2-Lite decode.
+#
+# Feeds NPUWattch one PyTorchSim run root (17 kernels) and writes an
+# HTML report to out/. The hardware model (the three definition files) is in
+# the design folder ../../.
+#
+# Usage: ./run [extra npuwattch flags...]
+#   ./run --node 5nm
+#   ./run --compound-components ../../../tpu_like_bf16/compound_components.yaml   # bf16 PEs
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if ! command -v npuwattch > /dev/null; then
+    echo "npuwattch not found on PATH — install it first:" >&2
+    echo "    cd ../../../../.. && pip install -e ." >&2
+    exit 1
+fi
+
+npuwattch --harness pytorchsim \
+          --togsim-dir  togsim_results/ \
+          --gem5-dir    outputs/ \
+          --config-yml  config.yml \
+          --booksim-dir booksim2_config/ \
+          --compound-components ../../compound_components.yaml \
+          --projection          ../../projection.yaml \
+          --user-components     ../../user_components.yaml \
+          --node 7nm \
+          --tree \
+          --report out/ \
+          "$@"
+
+echo
+echo "Open the report:  $(pwd)/out/report.html"

@@ -1,34 +1,114 @@
 # PyTorchSim examples
 
-One PyTorchSim run (a 1024×1024×1024 float32 `torch.matmul` on a TPUv3-like
-NPU), modeled with two different hardware models. Each example is a folder with
-a `./run` script.
+PyTorchSim runs on a TPUv3-like NPU: one core with two 128×128 systolic
+arrays, 128 VPU lanes, a 16 MB VMEM, 16 HBM2 channels, and a BookSim `fly`
+NoC, at 940 MHz. NPUWattch reads each run as is. Every folder has a `./run`
+script and a README.
 
 ```
 pytorchsim/
-├── tpu_like_fp32/       fp32 PEs: the PE follows the kernel dtype (the basic example)
-└── tpu_like_bf16/       bf16 PEs: the PE is fixed in compound_components.yaml
+├── tpu_like_fp32/           the hardware model (three definition files) and its workloads
+│   ├── matmul_1024/         one 1024³ matmul (the basic example)
+│   ├── matmul_train/        forward + backward of the matmul (3 kernels)
+│   ├── matmul_2048_1core/   one 2048³ matmul on 1 core
+│   ├── matmul_2048_2core/   the same matmul on 2 cores
+│   ├── softmax/             softmax and exp2: kernels with no MAC
+│   ├── resnet50/            the 7 ResNet-50 layers of the Timeloop example, plus ReLU and batch norm
+│   ├── llama3_8b/           one Llama-3-8B decoder block: prefill/ and decode/
+│   ├── gemma2_9b/           one Gemma-2-9B decoder block: prefill/ and decode/
+│   └── deepseek_v2_lite/    one DeepSeek-V2-Lite MoE decoder block: prefill/ and decode/
+└── tpu_like_bf16/           the same model with the PE fixed to a bf16 MAC
+    └── matmul_1024/         the matmul again, priced with bf16 PEs (reads the fp32 run's data)
 ```
 
 ```bash
-cd tpu_like_fp32 && ./run
-cd tpu_like_bf16 && ./run
+cd tpu_like_fp32/matmul_1024 && ./run           # the basic example
+cd tpu_like_fp32/resnet50 && ./run
+cd tpu_like_fp32/llama3_8b/prefill && ./run
+cd tpu_like_bf16/matmul_1024 && ./run
 ```
 
-The two folders have the same simulator files. Only `compound_components.yaml`
-is different. The simulator run is float32, so the bf16 datapath of a real TPU
-is set in the hardware model.
-<!-- Internal note: PyTorchSim cannot simulate bf16 or fp16 kernels, so the
-bf16 datapath comes from the hardware model, not from the run. -->
+Start with `tpu_like_fp32/matmul_1024/README.md`. It explains each file and
+each console message in detail. All runs are float32, because PyTorchSim simulates
+float32 kernels only; `tpu_like_bf16/README.md` explains how the PE is set
+to bf16 in the hardware model instead.
 
-| | `tpu_like_fp32` | `tpu_like_bf16` |
+## Folder layout
+
+`tpu_like_fp32/` is the design folder. Its three definition files
+(`compound_components.yaml`, `projection.yaml`, `user_components.yaml`) are
+the hardware model, and every workload folder below it uses them through
+`--compound-components ../compound_components.yaml` and the two other flags.
+This is the same layout as `../timeloop/`: a design folder with the hardware
+files, and one folder per workload with the simulator data.
+
+| File | Where | What it is |
 | --- | --- | --- |
-| Systolic PE | `fpmac` e8m23 (from the kernel MLIR) | `fpmac` e8m7 (fixed) |
-| Weight register | 32 bits | 16 bits |
-| Vector unit | fp32 | fp32 |
-| Energy at 7nm | 6.13 mJ | 2.29 mJ |
-| pJ/FLOP (DRAM included) | 2.86 | 1.07 |
+| `compound_components.yaml`, `projection.yaml`, `user_components.yaml` | design folder | The NPUWattch definition files |
+| `config.yml` | each run root | The PyTorchSim configuration the run used (the 2-core run has a different one) |
+| `togsim_results/*.log`, `*.trace` | each run root | One TOGSim log per kernel, in run order |
+| `outputs/<hash>/` | each run root | `meta.txt`, `m5out/stats.txt`, and the kernel `.mlir` |
+| `booksim2_config/` | each run root | The NoC file the run used |
+| `kernels.yaml` | each workload folder | Kernel name → hash → log file. NPUWattch uses the names as window labels |
+| `outputs/<hash>/*_tog.py` | each run root | The tile graph of the kernel. NPUWattch scales the gem5 counts of each tile operation by its executions |
+| `how_the_data_was_made/` | each workload folder | The PyTorch script and the run manifest |
+| `run` | each run root | The command |
+| `out/` | each run root | The report |
 
-Start with `tpu_like_fp32/README.md`. It explains each file and each console
-message in detail. `tpu_like_bf16/README.md` explains how the PE is set to bf16
-and which numbers carry over from the float32 run.
+## The workloads
+
+| Workload | Kernels | Energy at 7nm | DRAM share | What it shows |
+| --- | --- | --- | --- | --- |
+| `matmul_1024` | 1 | 6.14 mJ | 8% | The basic example: 2.86 pJ/FLOP, arrays at 88% |
+| `matmul_train` | 3 | 18.5 mJ | 8% | The backward pass is two more GEMMs of the same size |
+| `matmul_2048_1core` | 1 | 49.1 mJ | 8% | 313 749 cycles on one core |
+| `matmul_2048_2core` | 1 | 48.8 mJ | 8% | 169 707 cycles: 1.85× faster for the same energy and twice the area |
+| `softmax` | 4 | 2.07 mJ | 47% | No MAC at all: the vector register file and DRAM take the energy |
+| `resnet50` | 19 | 20.9 mJ | 14% | Batch-1 CNN layers on a large array; conv1 (3 input channels, 1.2% array occupancy) is 75% of the run |
+| `llama3_8b/prefill` | 13 | 691 mJ | 12% | Large GEMMs keep the arrays full: 6.1 pJ per useful MAC |
+| `llama3_8b/decode` | 13 | 44.2 mJ | 88% | Matrix-vector products: DRAM dominates, 199 pJ per useful MAC |
+| `gemma2_9b/prefill` | 13 | 696 mJ | 19% | Wider heads and GeGLU: same energy as the Llama block for 9% fewer MACs |
+| `gemma2_9b/decode` | 13 | 39.6 mJ | 88% | Matrix-vector products: 196 pJ per useful MAC |
+| `deepseek_v2_lite/prefill` | 17 | 349 mJ | 30% | MoE: the 64 expert GEMMs with 48 rows each are 69% of the energy |
+| `deepseek_v2_lite/decode` | 17 | 14.8 mJ | 86% | 6 experts of one token each; DRAM again |
+
+Each README has the per-kernel table, the energy per useful MAC, and the
+messages the run prints. NPUWattch counts the useful MACs of each GEMM
+kernel from the operator and its tensor shapes, charges them in the compute
+mode of the PE, and charges the active PE cycles that hold no real weight in
+the idle mode (`INFO NW-6222` gives both numbers). The `MAC ops` and
+`pJ/MAC` of the report are therefore per useful MAC.
+
+## Three things these runs show
+
+**Prefill and decode are different machines.** On the Llama block, 512
+prefill tokens cost 691 mJ (1.35 mJ per token) with the arrays at 83%. One
+decode token costs 44 mJ with DRAM at 88%. The same ratio appears in
+the Timeloop runs of the same block on the Gemmini-like and NVDLA-like
+designs.
+
+**Array occupancy decides the energy per MAC.** The dense GEMMs of the LLM
+blocks cost 5.7 to 6.0 pJ per useful MAC. The expert GEMMs of DeepSeek, with
+48 rows each, cost 8.8 to 9.5 pJ. The conv1 layer of ResNet-50, with three
+input channels, costs 132 pJ: the array is active for 315 300 cycles with
+1.2% of its PEs doing useful work, and the clocked but empty PEs cost about
+1.3 pJ per cycle each.
+
+**The non-GEMM kernels are small but visible.** Softmax, RMSNorm, and the
+activation are 2 to 3% of a prefill block and under 1% of a decode block.
+In the softmax run alone, the vector register file takes 45% of the energy.
+This is work the Timeloop examples do not see.
+
+## How the sample data was made
+
+All runs use the public PyTorchSim Docker image
+`ghcr.io/psal-postech/torchsim-tutorial:ispass2026` and its bundled
+`systolic_ws_128x128_c1_booksim_tpuv3.yml` config (the 2-core run uses
+`systolic_ws_128x128_c2_booksim_tpuv3.yml`). The basic matmul was run on
+2026-07-21 and the workloads on 2026-10-10. Each kernel is one
+`torch.compile` call, so each kernel has its own TOGSim log. The script and
+the run manifest of each workload are in its `how_the_data_was_made/`
+folder; `docs/PYTORCHSIM_DOCKER.md` in the repository describes the
+procedure. We made two changes to the simulator output for the tutorial: we
+added the `core_spad_size_kb` line to each `config.yml`, and we kept only the
+kernel `.mlir` file of each `outputs/<hash>/` directory.

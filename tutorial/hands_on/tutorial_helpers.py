@@ -70,7 +70,11 @@ def show_tree(text):
     if start is None:
         print("(no tree in this output; add --tree)")
         return
-    for line in lines[start:]:
+    print(lines[start])
+    body = lines[start + 1:]
+    if body and body[0].startswith("----"):      # the separator under the header
+        body = body[1:]
+    for line in body:
         if line.startswith("----"):
             break
         print(line)

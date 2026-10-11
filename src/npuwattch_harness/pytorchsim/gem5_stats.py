@@ -1,10 +1,17 @@
 """Parse the dump sections of a gem5 ``stats.txt`` file.
 
-A gem5 stats file has one or more ``Begin/End Simulation Statistics`` sections.
-Each section is one periodic ``m5.stats.dump()`` snapshot. For PyTorchSim, each
-section gives the values of **one dump and is not cumulative**
-(``system.cpu.numCycles`` is non-monotonic across sections). Thus the total of
-a kernel is the **sum across the sections of its file**.
+A gem5 stats file has one or more ``Begin/End Simulation Statistics``
+sections. For PyTorchSim, gem5 runs the **sample program** of the kernel,
+not the kernel. The sample program executes each compute node of the tile
+graph one time, in file order, and dumps the statistics after each node
+(``tile_graph.py``). Thus each section holds the counts of **one execution
+of one compute node**, and the last section is the tail of the program.
+``system.cpu.numCycles`` of a section is the cycle count that PyTorchSim
+gives to that node.
+
+The counts are not kernel totals. ``activity.py`` scales each section by the
+number of executions of its node (from the tile graph), or by the COMP
+counts of the TOGSim log when the tile graph is not available.
 
 This reader is generic: it gives name → value for each section. A different
 gem5 harness can also use it. The selection of the PyTorchSim stats is in
@@ -18,6 +25,7 @@ from typing import Dict, List
 
 __all__ = [
     "parse_sections",
+    "section_committed_inst",
     "sum_stat",
     "sum_committed_inst",
 ]
@@ -88,3 +96,8 @@ def sum_committed_inst(sections: List[Dict[str, float]]) -> Dict[str, int]:
                 cls = m.group(1)
                 totals[cls] = totals.get(cls, 0) + int(value)
     return totals
+
+
+def section_committed_inst(section: Dict[str, float]) -> Dict[str, int]:
+    """Return ``{class_name: count}`` of one section (one compute node)."""
+    return sum_committed_inst([section])

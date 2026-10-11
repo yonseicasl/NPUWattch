@@ -74,6 +74,9 @@ _CORE_RULES: Dict[str, Tuple[str, Optional[str]]] = {
     "CustomVcos": ("vector", _SFU_NOTE),
 }
 _DEFAULT_CORE_RULE: Tuple[str, str] = ("systolic", "systolic")
+#: Stats that are a function of the active cycles of each array. Their
+#: division by the active cycles is exact and gives no message.
+_ARRAY_EXACT_STATS = ("systolic_active_cycles", "useful_macs", "array_idle_slots")
 
 
 def _core_note(kind: str, stat: str) -> Diagnostic:
@@ -173,17 +176,20 @@ def expand_bounds(
             if domain == "chip":
                 out.append(replace(ba, elements=[rae]))
                 continue
+            if not ba.cycle_count:
+                continue        # a zero stat gives no activity and no message
             if domain == "array":
                 smap = shares.array()
-                # Give a message only if there is more than one array.
-                if ba.stat != "systolic_active_cycles" and C * A > 1:
+                # Give a message only if there is more than one array and
+                # the stat has a value. A zero stat has nothing to divide.
+                if ba.stat not in _ARRAY_EXACT_STATS and C * A > 1 and ba.stat_value:
                     notes.append(warning(6607, stat=ba.stat))
                 pieces = [(f"core{c}.array{a}.{rae.element}", smap[(c, a)])
                           for c in range(C) for a in range(A)]
             else:                                                  # per: core
                 kind, note = _CORE_RULES.get(ba.stat, _DEFAULT_CORE_RULE)
                 smap = shares.core(kind)
-                if note and C > 1:
+                if note and C > 1 and ba.stat_value:
                     notes.append(_core_note(note, ba.stat))
                 pieces = [(f"core{c}.{rae.element}", smap[c]) for c in range(C)]
             for qname, s in pieces:

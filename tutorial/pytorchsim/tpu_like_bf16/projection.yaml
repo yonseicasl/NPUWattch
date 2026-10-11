@@ -8,10 +8,13 @@
 # compute maps to hold_b in this file and in the Timeloop projection. The two
 # harnesses can then use the same compound.
 #
-# count_from gives the calibration of the compute action (Option A):
-#   systolic_active_cycles × lanes²  = MACs at 100% utilization
-# Below 100% utilization, the additional active cycles are real reload and
-# stall energy. Thus the charge for each active cycle is intended.
+# The compute action is charged per useful MAC (useful_macs: the MAC count
+# of the operator, from the operation name in the log and the shapes in
+# meta.txt). The active PE cycles above that count are PEs that hold no real
+# weight (array_idle_slots); the CustomMatMulIdle action charges them in the
+# idle mode, in which the PE is clocked and holds its data.
+# The gem5 instruction counts (pushes, pops, SFU operations) come from the
+# sample program and are scaled by the tile graph (*_tog.py) to the kernel.
 #
 # CustomMatMuliVpush (input push) and CustomMatMulvpop (partial-sum pop) drive
 # the VPU scratchpad of each lane (the spads compound below). They do not
@@ -35,9 +38,13 @@ tool: pytorchsim
 # coverage warning. That warning then means that a mapping is possibly missing.
 waivers:
   CustomMatMul: >-
-    compute is charged per systolic active cycle (Option A:
-    systolic_active_cycles x lanes^2 = MACs); this instruction count is a
-    redundant counter of the same work
+    compute is charged as useful MACs (useful_macs action) plus idle PE
+    cycles (array_idle_slots action); this instruction count is a redundant
+    counter of the same work
+  systolic_active_cycles: >-
+    the active cycles of the arrays are split into useful_macs and
+    array_idle_slots, which the systolic_mac actions charge; the raw cycle
+    count also gives the share of each array
   comp_gemm_ops: >-
     COMP GEMM op counter: the same GEMM work is charged per systolic active
     cycle (CustomMatMul action); charging both would double-count
@@ -87,13 +94,19 @@ compounds:
 
   systolic_mac:
 
-    CustomMatMul:                     # weight-stationary compute
+    CustomMatMul:                     # weight-stationary compute: the useful MACs
       count_from:
-        stat: systolic_active_cycles
-        scale: "lanes*lanes"          # cycles × lanes² = MACs (Option A)
+        stat: useful_macs             # M·K·N of the operator (log operation + meta.txt shapes)
       elements:
         pe: hold_b                    # PE computes with b latched
         w_reg: idle                   # the weight stays, this action has no write
+
+    CustomMatMulIdle:                 # active PE cycles without a real weight
+      count_from:
+        stat: array_idle_slots        # systolic_active_cycles × lanes² − useful_macs
+      elements:
+        pe: idle                      # the PE is clocked, its data does not change
+        w_reg: idle
 
     CustomMatMulwVpush:               # weight load (push of a new weight)
       count_from:

@@ -23,6 +23,8 @@ from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+import yaml
+
 from npuwattch.arch_synth import (
     EmittedArch,
     _coverage_messages,
@@ -45,7 +47,68 @@ from .instances import expand_bounds
 from .mac_config import MacConfig, fallback_fp32_mac_config
 from .run_config import RunConfigError, config_conflicts, load_config_yml
 
-__all__ = ["ingest", "synthesize_run"]
+__all__ = ["KERNEL_NAMES_FILE", "ingest", "read_kernel_names", "synthesize_run"]
+
+#: The fixed name of the optional kernel names file in the run directory.
+KERNEL_NAMES_FILE = "kernels.yaml"
+
+
+def read_kernel_names(path: Path) -> List[Dict[str, str]]:
+    """Read a kernel names file: a list of ``{name, hash, log}`` entries.
+
+    The PyTorchSim run scripts of the tutorial write this file. PyTorchSim
+    itself does not. Each entry gives the name of one kernel, the kernel
+    hash, and the file name of its TOGSim log. ``hash`` and ``log`` are
+    optional, but an entry needs one of them.
+    """
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
+    if not isinstance(data, list):
+        raise RunConfigError.nw(6016, file=path,
+                                error="the file is not a list of entries")
+    entries: List[Dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, Mapping) or "name" not in item:
+            raise RunConfigError.nw(6016, file=path,
+                                    error=f"the entry {item!r} has no name")
+        if not (item.get("hash") or item.get("log")):
+            raise RunConfigError.nw(6016, file=path,
+                                    error=f"the entry {item!r} has no hash and no log")
+        entries.append({k: str(v) for k, v in item.items()
+                        if k in ("name", "hash", "log")})
+    return entries
+
+
+def _window_labels(windows: Sequence[KernelWindow],
+                   kernel_names: Optional[Path],
+                   warnings: List[str], notes: List[str]) -> List[str]:
+    """Return the label of each window.
+
+    The default label is the kernel hash. With a kernel names file, the
+    label is the ``name`` of the entry whose ``log`` is the file name of the
+    window's log. If no entry has the log, the entry with the same ``hash`` is
+    used, if there is exactly one. A window without an entry keeps its hash
+    and gives a warning.
+    """
+    if kernel_names is None:
+        return [w.kernel_hash for w in windows]
+    entries = read_kernel_names(kernel_names)
+    by_log = {e["log"]: e["name"] for e in entries if e.get("log")}
+    by_hash: Dict[str, List[str]] = {}
+    for e in entries:
+        if e.get("hash"):
+            by_hash.setdefault(e["hash"], []).append(e["name"])
+    labels: List[str] = []
+    for w in windows:
+        name = by_log.get(w.log_name) or by_log.get(Path(w.log_name).stem)
+        if name is None and len(by_hash.get(w.kernel_hash, [])) == 1:
+            name = by_hash[w.kernel_hash][0]
+        if name is None:
+            warnings.append(warning(6015, log=w.log_name, file=kernel_names.name,
+                                    kernel=w.kernel_hash))
+            name = w.kernel_hash
+        labels.append(name)
+    notes.append(info(6014, file=kernel_names.name))
+    return labels
 
 
 def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
@@ -71,6 +134,9 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
     booksim = inputs.get("booksim")
     energy_table = inputs.get("energy_table")
     run_dir = Path(inputs["togsim"]).resolve().parent
+    kernel_names = inputs.get("kernel_names")
+    if kernel_names is None and (run_dir / KERNEL_NAMES_FILE).is_file():
+        kernel_names = run_dir / KERNEL_NAMES_FILE
     library_path = find_definition(inputs, "user_components", run_dir)
     library = load_user_library(library_path)
     emitted = synthesize_run(
@@ -79,6 +145,7 @@ def ingest(inputs: Mapping[str, Path], tech: Any, **opts: Any) -> EmittedArch:
         base_config=load_config_yml(config) if config else None,
         booksim_dir=Path(booksim) if booksim else None,
         energy_table=select_table(energy_table),
+        kernel_names=Path(kernel_names) if kernel_names else None,
         **opts)
     # The compounds of a PyTorchSim design use no user component at this
     # time. Thus each library component gives the note "parsed, but not used".
@@ -335,6 +402,7 @@ def synthesize_run(
     prefix: str = "systolic",
     base_config: Optional[Mapping[str, Any]] = None,
     booksim_dir: Optional[Path] = None,
+    kernel_names: Optional[Path] = None,
     energy_table: Any = None,
 ) -> EmittedArch:
     """Read one PyTorchSim run and emit its description and activity.
@@ -354,6 +422,9 @@ def synthesize_run(
     * ``energy_table``: the ``EnergyTable`` of ``--energy-table``. If it is
       ``None``, the ``hbm`` components get the constants of the default
       table.
+
+    ``kernel_names`` is an optional kernels.yaml file. Its names become the
+    window labels (:func:`read_kernel_names`).
 
     Errors and messages:
 
@@ -479,6 +550,6 @@ def synthesize_run(
         warnings=warnings,
         notes=notes,
         hierarchy=hierarchy,
-        window_labels=[w.kernel_hash for w in windows],
+        window_labels=_window_labels(windows, kernel_names, warnings, notes),
         window_provenance=_window_provenance(windows, rep_mac),
     )

@@ -12,9 +12,13 @@ tutorial/
 │   ├── eyeriss_like/alexnet/      AlexNet, 8 layers (the basic example)
 │   ├── gemmini_like/{resnet50,llama3_8b}/
 │   └── nvdla_like/{resnet50,llama3_8b}/
-└── pytorchsim/    Example 2 — PyTorchSim input (one 1024³ matmul)
-    ├── tpu_like_fp32/             fp32 PEs, as the simulator ran the kernel
-    └── tpu_like_bf16/             the same run, PEs fixed to bf16 MACs
+└── pytorchsim/    Example 2 — PyTorchSim input
+    ├── tpu_like_fp32/             the hardware model (three definition files)
+    │   ├── matmul_1024/           one 1024³ matmul (the basic example)
+    │   ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
+    │   └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
+    └── tpu_like_bf16/             the same model, PEs fixed to bf16 MACs
+        └── matmul_1024/           the matmul again, priced with bf16 PEs
 ```
 
 `npuwattch_basic/` is a four-part introduction (motivation, method, the
@@ -26,7 +30,7 @@ To run an example:
 
 ```bash
 cd tutorial/timeloop/eyeriss_like/alexnet && ./run
-cd tutorial/pytorchsim/tpu_like_fp32 && ./run
+cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024 && ./run
 ```
 
 Each script writes `out/report.html` (open it in a browser) and
@@ -97,7 +101,7 @@ it and let you know if it's missing.
 
 ## 3. The examples
 
-|  | `timeloop/eyeriss_like/` | `pytorchsim/tpu_like_fp32/` |
+|  | `timeloop/eyeriss_like/alexnet/` | `pytorchsim/tpu_like_fp32/matmul_1024/` |
 | --- | --- | --- |
 | Design | Eyeriss-like, 14×12 int8 PE array | TPUv3-like, 2× 128×128 fp32 systolic arrays |
 | Workload | AlexNet, all 8 layers | one 1024×1024×1024 `torch.matmul` |
@@ -112,7 +116,9 @@ For a file-by-file walkthrough of each example, including how the sample data
 was produced, see `timeloop/eyeriss_like/README.md` and
 `pytorchsim/README.md`. `timeloop/README.md` covers two more
 Timeloop designs, Gemmini-like and NVDLA-like, each with ResNet-50 and
-Llama-3-8B.
+Llama-3-8B. `pytorchsim/README.md` covers the other PyTorchSim workloads on
+the TPU-like NPU: a training step, a 2-core run, kernels without a MAC,
+ResNet-50, and three LLM decoder blocks.
 
 ---
 
@@ -189,7 +195,7 @@ gets cut off or misaligned. To force a specific width, set `COLUMNS`.
 ## 5. Example 2 — PyTorchSim
 
 ```bash
-cd tutorial/pytorchsim/tpu_like_fp32
+cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024
 ./run
 ```
 
@@ -201,15 +207,20 @@ npuwattch --harness pytorchsim \
           --gem5-dir    outputs/ \
           --config-yml  config.yml \
           --booksim-dir booksim2_config/ \
+          --compound-components ../compound_components.yaml \
+          --projection          ../projection.yaml \
+          --user-components     ../user_components.yaml \
           --node 7nm --tree --report out/
 ```
 
 PyTorchSim stores its results in several folders, so each one has its own
-flag. If they are all under one root folder, the repository's `run.sh` finds
-them for you:
+flag. The three definition files are the hardware model; they live in the
+design folder `tpu_like_fp32/` and every workload folder points at them. If
+a run root holds everything, the repository's `run.sh` finds the folders for
+you:
 
 ```bash
-../../../run.sh . --node 7nm --report out/  # same thing, one argument
+../../../../run.sh . --node 7nm --report out/  # same thing, one argument
 ```
 
 This example has **no** architecture file. NPUWattch rebuilds the hardware
@@ -234,8 +245,8 @@ chip
     └── dram_chan [×16]  (class: hbm)
 ```
 
-Result: **6.13 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
-2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
+Result: **6.14 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
+2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 88% of the
 dynamic energy and DRAM for 8%, which is what you'd expect from a matmul.
 
 The long INFO block in this run (`NW-6008` and `NW-2209`) is worth a look.
@@ -246,19 +257,33 @@ cover.
 ### The bf16 variant
 
 ```bash
-cd tutorial/pytorchsim/tpu_like_bf16
+cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024
 ./run
 ```
 
 <!-- Internal note: PyTorchSim cannot simulate bf16 kernels, so this example
 reuses the float32 run and fixes the PE type in the hardware model. DRAM and
 NoC energy keep the float32 byte counts, so they are high for a bf16 kernel. -->
-A real TPU multiplies in bf16. This example uses the same simulator files as
-`tpu_like_fp32` and changes only `compound_components.yaml`: the `pe` element
+A real TPU multiplies in bf16. This design reads the simulator files of
+`tpu_like_fp32/matmul_1024` and changes only `compound_components.yaml`: the `pe` element
 uses a fixed bf16 `fpmac` instead of the `{mac_primitive}` / `{mac_config}`
 templates. The PE energy drops from 5.05 to 1.56 pJ per MAC, and the total is
 **2.29 mJ, 1.07 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
 float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
+
+### More workloads
+
+The other folders under `pytorchsim/tpu_like_fp32/` run other workloads on
+the same NPU. Each is a PyTorchSim run root with its own `run` script, and each
+`kernels.yaml` names the kernels, so the report shows names instead of
+hashes:
+
+```bash
+cd tutorial/pytorchsim/tpu_like_fp32/resnet50 && ./run
+cd tutorial/pytorchsim/tpu_like_fp32/llama3_8b/prefill && ./run
+```
+
+`pytorchsim/README.md` lists them with their results.
 
 ---
 

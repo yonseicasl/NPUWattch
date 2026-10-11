@@ -1,0 +1,1139 @@
+[2026-10-10 08:57:18.729] [info] [TOGSim] Command line: /workspace/PyTorchSim/TOGSim/build/bin/Simulator --config /workspace/PyTorchSim/configs/systolic_ws_128x128_c1_booksim_tpuv3.yml --models_list /data/deepseek_v2_lite_prefill_raw/togsim_results/20261010_085718_cc7020e7.trace
+[2026-10-10 08:57:18.729] [info] [LoadConfig] Loaded configuration file "/workspace/PyTorchSim/configs/systolic_ws_128x128_c1_booksim_tpuv3.yml"
+[2026-10-10 08:57:18.729] [info] PyTorchSim config:
+num_cores: 1
+core_freq_mhz: 940
+core_stats_print_period_cycles: 10000
+num_systolic_array_per_core: 2
+vpu_num_lanes: 128
+vpu_spad_size_kb_per_lane: 128
+vpu_vector_length_bits: 256
+dram_type: ramulator2
+dram_freq_mhz: 940
+dram_channels: 16
+dram_stats_print_period_cycles: 10000
+ramulator_config_path: ../configs/ramulator2_configs/HBM2_TPUv3.yaml
+icnt_type: booksim2
+icnt_freq_mhz: 940
+icnt_injection_ports_per_core: 16
+booksim_config_path: ../configs/booksim2_configs/fly_c16_m16.icnt
+pytorchsim_functional_mode: 1
+pytorchsim_timing_mode: 1
+codegen_mapping_strategy: autotune
+codegen_external_mapping_file: ""
+codegen_autotune_max_retry: 10
+codegen_autotune_template_topk: 4
+codegen_compiler_optimization: all
+[2026-10-10 08:57:18.731] [info] [Config/Core] core_id: 0, partition_id: 0 (no partition section)
+[2026-10-10 08:57:18.731] [info] [Config/Core] Core 0: core_freq_mhz: 940, systolic_arrays_per_core: 2
+[2026-10-10 08:57:18.731] [info] [Config/DRAM] Ramulator2 config path: /workspace/PyTorchSim/configs/ramulator2_configs/HBM2_TPUv3.yaml
+[2026-10-10 08:57:18.731] [info] [Config/DRAM] Ramulator2 configuration :
+{
+  "frontend": {
+    "impl": "External",
+    "clock_ratio": 1
+  },
+  "memory_system": {
+    "impl": "GenericDRAM",
+    "clock_ratio": 1,
+    "channel_mapper": {
+      "impl": "PassThroughChannelMapper"
+    },
+    "controllers": [{
+      "impl": "HBM",
+      "wr_low_watermark": 0.2,
+      "wr_high_watermark": 0.8,
+      "read_buffer_size": 64,
+      "write_buffer_size": 64,
+      "priority_buffer_size": 1568,
+      "scheduler": {
+        "impl": "FRFCFS"
+      },
+      "refresh_manager": {
+        "impl": "AllBank",
+        "scope": "PseudoChannel"
+      },
+      "row_policy": {
+        "impl": "Open"
+      },
+      "addr_mapper": {
+        "impl": "RoBaRaCoCh"
+      },
+      "dram": {
+        "impl": "HBM2",
+        "org": {
+          "dq": 64,
+          "count": [1, 2, 4, 4, 65536, 32]
+        },
+        "timing": [1880, 2, 13, 13, 11, 13, 31, 44, 15, 5, 5, 2, 4, 4, 4, 6, 8, 15, 329, 151, 8, 3666, 115, 1064],
+        "channel_width": 64,
+        "read_latency": 15,
+        "timing_constraints": [[0, [0], [0, 1, 2, 7, 8], 2], [1, [3, 5], [3, 5], 2], [1, [4, 6], [4, 6], 2], [1, [3, 5], [3, 5], 2], [1, [4, 6], [4, 6], 2], [1, [3, 5], [4, 6], 12], [1, [4, 6], [3, 5], 13], [1, [3], [2], 5], [1, [4], [2], 22], [1, [0], [0], 4], [1, [0], [0], 15, 4], [1, [0], [2], 32], [1, [2], [0], 12], [1, [0], [7], 45], [1, [1, 2], [7], 13], [1, [5], [7], 18], [1, [6], [7], 35], [1, [7], [0], 328], [1, [7], [2], 329], [1, [8], [0], 7], [1, [0], [8], 5], [2, [3, 5], [3, 5], 4], [2, [4, 6], [4, 6], 4], [2, [4, 6], [3, 5], 15], [2, [0], [0], 4], [3, [0], [0], 44], [3, [0], [3, 5], 14], [3, [0], [4, 6], 12], [3, [0], [1], 32], [3, [1], [0], 12], [3, [3], [1], 5], [3, [4], [1], 22], [3, [5], [0], 17], [3, [6], [0], 34], [3, [8], [0], 150], [3, [0], [8], 45], [3, [1], [8], 13]]
+      }
+    }]
+  }
+}
+[2026-10-10 08:57:18.731] [info] [Config/DRAM] Total bandwidth 481.28 GB/s, 940 MHz, 16 channels, 32 bytes per request
+[2026-10-10 08:57:18.731] [info] [Config/L2Cache] No L2 cache
+[2026-10-10 08:57:18.754] [info] [Config/Interconnect] interconnect_freq_mhz: 940
+[2026-10-10 08:57:18.754] [info] [Config/Interconnect] BookSim2 interconnect selected
+[2026-10-10 08:57:18.754] [info] Initialize Booksim2
+[2026-10-10 08:57:18.754] [info] Booksim 2 config path : /workspace/PyTorchSim/configs/booksim2_configs/fly_c16_m16.icnt
+[2026-10-10 08:57:18.754] [info] Booksim2 Configuration: 
+[config]
+use_map = 0
+flit_size = 32
+topology = fly
+k = 32
+n = 1
+routing_function = dest_tag
+subnets = 1
+
+vc_buf_size = 256
+input_buffer_size = 256
+ejection_buffer_size = 256
+boundary_buffer_size = 256
+wait_for_tail_credit = 0
+vc_allocator = islip
+sw_allocator = islip
+alloc_iters = 1
+deadlock_warn_timeout = 10000
+[2026-10-10 08:57:18.756] [info] [TOGSim] Reading trace file: /data/deepseek_v2_lite_prefill_raw/togsim_results/20261010_085718_cc7020e7.trace
+[2026-10-10 08:57:18.756] [info] [LoadConfig] Loaded configuration file "/data/deepseek_v2_lite_prefill_raw/outputs/ozskmqoc53u/runtime_0001/attribute/0"
+[2026-10-10 08:57:18.759] [info] [Scheduler 0] Enqueued kernel_id: 0, tog_path: /data/deepseek_v2_lite_prefill_raw/outputs/ozskmqoc53u/tile_graph.onnx, operation: mm, request_time_cycles: 0
+[2026-10-10 08:57:22.022] [info] ========= Core stat =========
+[2026-10-10 08:57:22.022] [info] Core [0] : Systolic array [0] utilization(%): 11.26, active_cycles: 1126, idle_cycles: 8874
+[2026-10-10 08:57:22.022] [info] Core [0] : Systolic array [1] utilization(%): 11.05, active_cycles: 1105, idle_cycles: 8895
+[2026-10-10 08:57:22.022] [info] Core [0] : DMA active_cycles: 8903, DMA idle_cycles: 1097, DRAM BW: 276.000 GB/s (91921 responses)
+[2026-10-10 08:57:22.022] [info] Core [0] : Vector unit Utilization(%): 21.86, active_cycles: 2186, idle_cycles: 7816
+[2026-10-10 08:57:22.022] [info] Core [0] : Total_cycles: 10000
+[2026-10-10 08:57:22.022] [info] [DRAM] all 16 channels combined | 363.46 GB/s aggregate, 75.52% of utilization (avg. per channel) | 120831 reads, 0 writes (interval 10000 cycles)
+[2026-10-10 08:57:27.894] [info] ========= Core stat =========
+[2026-10-10 08:57:27.894] [info] Core [0] : Systolic array [0] utilization(%): 96.66, active_cycles: 9666, idle_cycles: 334
+[2026-10-10 08:57:27.894] [info] Core [0] : Systolic array [1] utilization(%): 96.86, active_cycles: 9686, idle_cycles: 314
+[2026-10-10 08:57:27.894] [info] Core [0] : DMA active_cycles: 10000, DMA idle_cycles: 0, DRAM BW: 312.000 GB/s (103805 responses)
+[2026-10-10 08:57:27.894] [info] Core [0] : Vector unit Utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:27.894] [info] Core [0] : Total_cycles: 20000
+[2026-10-10 08:57:27.895] [info] [DRAM] all 16 channels combined | 312.19 GB/s aggregate, 64.87% of utilization (avg. per channel) | 103785 reads, 0 writes (interval 10000 cycles)
+[2026-10-10 08:57:33.944] [info] ========= Core stat =========
+[2026-10-10 08:57:33.944] [info] Core [0] : Systolic array [0] utilization(%): 96.66, active_cycles: 9666, idle_cycles: 334
+[2026-10-10 08:57:33.944] [info] Core [0] : Systolic array [1] utilization(%): 96.02, active_cycles: 9602, idle_cycles: 398
+[2026-10-10 08:57:33.944] [info] Core [0] : DMA active_cycles: 5724, DMA idle_cycles: 4276, DRAM BW: 311.000 GB/s (103711 responses)
+[2026-10-10 08:57:33.944] [info] Core [0] : Vector unit Utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:33.944] [info] Core [0] : Total_cycles: 30000
+[2026-10-10 08:57:33.944] [info] [DRAM] all 16 channels combined | 304.11 GB/s aggregate, 63.19% of utilization (avg. per channel) | 94373 reads, 6727 writes (interval 10000 cycles)
+[2026-10-10 08:57:40.063] [info] ========= Core stat =========
+[2026-10-10 08:57:40.063] [info] Core [0] : Systolic array [0] utilization(%): 96.66, active_cycles: 9666, idle_cycles: 334
+[2026-10-10 08:57:40.063] [info] Core [0] : Systolic array [1] utilization(%): 97.30, active_cycles: 9730, idle_cycles: 270
+[2026-10-10 08:57:40.063] [info] Core [0] : DMA active_cycles: 4045, DMA idle_cycles: 5955, DRAM BW: 312.000 GB/s (103790 responses)
+[2026-10-10 08:57:40.063] [info] Core [0] : Vector unit Utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:40.063] [info] Core [0] : Total_cycles: 40000
+[2026-10-10 08:57:40.064] [info] [DRAM] all 16 channels combined | 325.21 GB/s aggregate, 67.57% of utilization (avg. per channel) | 7909 reads, 100207 writes (interval 10000 cycles)
+[2026-10-10 08:57:41.502] [info] [Scheduler 0] Kernel 0 has completed - TOG path: /data/deepseek_v2_lite_prefill_raw/outputs/ozskmqoc53u/tile_graph.onnx operation: mm finished at cycle 47878
+[2026-10-10 08:57:41.502] [info] [Scheduler 0] Kernel 0 execution summary - Started at: 1 cycles, Total compute time: 47877 cycles
+[2026-10-10 08:57:42.183] [info] ========= Core stat =========
+[2026-10-10 08:57:42.183] [info] Core [0] : Systolic array [0] utilization(%): 26.44, active_cycles: 2644, idle_cycles: 7356
+[2026-10-10 08:57:42.183] [info] Core [0] : Systolic array [1] utilization(%): 26.45, active_cycles: 2645, idle_cycles: 7355
+[2026-10-10 08:57:42.183] [info] Core [0] : DMA active_cycles: 2121, DMA idle_cycles: 7879, DRAM BW: 229.000 GB/s (76234 responses)
+[2026-10-10 08:57:42.183] [info] Core [0] : Vector unit Utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:42.183] [info] Core [0] : Total_cycles: 50000
+[2026-10-10 08:57:42.183] [info] [DRAM] all 16 channels combined | 140.56 GB/s aggregate, 29.21% of utilization (avg. per channel) | 782 reads, 45946 writes (interval 10000 cycles)
+[2026-10-10 08:57:46.509] [info] ========= Core stat =========
+[2026-10-10 08:57:46.509] [info] Core [0] : Systolic array [0] utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:46.509] [info] Core [0] : Systolic array [1] utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:46.509] [info] Core [0] : DMA active_cycles: 6071, DMA idle_cycles: 3929, DRAM BW: 292.000 GB/s (97297 responses)
+[2026-10-10 08:57:46.509] [info] Core [0] : Vector unit Utilization(%): 0.00, active_cycles: 0, idle_cycles: 10000
+[2026-10-10 08:57:46.509] [info] Core [0] : Total_cycles: 60000
+[2026-10-10 08:57:46.509] [info] [DRAM] all 16 channels combined | 305.03 GB/s aggregate, 63.38% of utilization (avg. per channel) | 0 reads, 101407 writes (interval 10000 cycles)
+[2026-10-10 08:57:46.772] [info] Simulation finished
+Class 0:
+Packet latency average = 1941.69
+	minimum = 7
+	maximum = 4085
+Network latency average = 1741.11
+	minimum = 7
+	maximum = 3661
+Slowest packet = 169799
+Flit latency average = 1741.11
+	minimum = 7
+	maximum = 3661
+Slowest flit = 618690
+Fragmentation average = 0
+	minimum = 0
+	maximum = 0
+Injected packet rate average = 0.600557
+	minimum = 0.597511 (at node 6)
+	maximum = 0.605005 (at node 8)
+Accepted packet rate average = 0.600557
+	minimum = 0.599547 (at node 2)
+	maximum = 0.601958 (at node 1)
+Injected flit rate average = 0.600557
+	minimum = 0.597511 (at node 6)
+	maximum = 0.605005 (at node 8)
+Accepted flit rate average= 0.600557
+	minimum = 0.599547 (at node 2)
+	maximum = 0.601958 (at node 1)
+Injected packet length average = 1
+Accepted packet length average = 1
+Total in-flight flits = 0 (0 measured)
+[2026-10-10 08:57:46.772] [info] === DRAM statistics ===
+--- channel 0 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23048
+    row_misses: 854
+    row_conflicts: 12962
+    read_row_hits: 12805
+    read_row_misses: 541
+    read_row_conflicts: 7134
+    write_row_hits: 10243
+    write_row_misses: 313
+    write_row_conflicts: 5828
+    read_row_hits_core_0: 12805
+    read_row_misses_core_0: 541
+    read_row_conflicts_core_0: 7134
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3555697
+    read_queue_len: 2071851
+    write_queue_len: 1482495
+    priority_queue_len: 1351
+    queue_len_avg: 57.9264
+    read_queue_len_avg: 33.7528
+    write_queue_len_avg: 24.1516
+    priority_queue_len_avg: 0.0220094
+    read_latency: 2493501
+    avg_read_latency: 121.753
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 1 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20478
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22987
+    row_misses: 909
+    row_conflicts: 12966
+    read_row_hits: 12782
+    read_row_misses: 566
+    read_row_conflicts: 7130
+    write_row_hits: 10205
+    write_row_misses: 343
+    write_row_conflicts: 5836
+    read_row_hits_core_0: 12782
+    read_row_misses_core_0: 566
+    read_row_conflicts_core_0: 7130
+    num_read_reqs: 20478
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20478
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3496100
+    read_queue_len: 1986760
+    write_queue_len: 1508005
+    priority_queue_len: 1335
+    queue_len_avg: 56.9555
+    read_queue_len_avg: 32.3666
+    write_queue_len_avg: 24.5671
+    priority_queue_len_avg: 0.0217487
+    read_latency: 2408410
+    avg_read_latency: 117.61
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 2 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20478
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23011
+    row_misses: 886
+    row_conflicts: 12965
+    read_row_hits: 12776
+    read_row_misses: 583
+    read_row_conflicts: 7119
+    write_row_hits: 10235
+    write_row_misses: 303
+    write_row_conflicts: 5846
+    read_row_hits_core_0: 12776
+    read_row_misses_core_0: 583
+    read_row_conflicts_core_0: 7119
+    num_read_reqs: 20478
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20478
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3631821
+    read_queue_len: 2152118
+    write_queue_len: 1478370
+    priority_queue_len: 1333
+    queue_len_avg: 59.1666
+    read_queue_len_avg: 35.0605
+    write_queue_len_avg: 24.0844
+    priority_queue_len_avg: 0.0217161
+    read_latency: 2574152
+    avg_read_latency: 125.703
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 3 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23044
+    row_misses: 831
+    row_conflicts: 12989
+    read_row_hits: 12776
+    read_row_misses: 532
+    read_row_conflicts: 7172
+    write_row_hits: 10268
+    write_row_misses: 299
+    write_row_conflicts: 5817
+    read_row_hits_core_0: 12776
+    read_row_misses_core_0: 532
+    read_row_conflicts_core_0: 7172
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3642720
+    read_queue_len: 2151146
+    write_queue_len: 1490193
+    priority_queue_len: 1381
+    queue_len_avg: 59.3441
+    read_queue_len_avg: 35.0447
+    write_queue_len_avg: 24.277
+    priority_queue_len_avg: 0.0224981
+    read_latency: 2573162
+    avg_read_latency: 125.643
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 4 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20482
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22974
+    row_misses: 879
+    row_conflicts: 13013
+    read_row_hits: 12740
+    read_row_misses: 590
+    read_row_conflicts: 7152
+    write_row_hits: 10234
+    write_row_misses: 289
+    write_row_conflicts: 5861
+    read_row_hits_core_0: 12740
+    read_row_misses_core_0: 590
+    read_row_conflicts_core_0: 7152
+    num_read_reqs: 20482
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20482
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3657531
+    read_queue_len: 2171001
+    write_queue_len: 1485193
+    priority_queue_len: 1337
+    queue_len_avg: 59.5854
+    read_queue_len_avg: 35.3681
+    write_queue_len_avg: 24.1955
+    priority_queue_len_avg: 0.0217813
+    read_latency: 2593567
+    avg_read_latency: 126.627
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 5 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23022
+    row_misses: 885
+    row_conflicts: 12957
+    read_row_hits: 12786
+    read_row_misses: 553
+    read_row_conflicts: 7141
+    write_row_hits: 10236
+    write_row_misses: 332
+    write_row_conflicts: 5816
+    read_row_hits_core_0: 12786
+    read_row_misses_core_0: 553
+    read_row_conflicts_core_0: 7141
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3618051
+    read_queue_len: 2120386
+    write_queue_len: 1496318
+    priority_queue_len: 1347
+    queue_len_avg: 58.9422
+    read_queue_len_avg: 34.5435
+    write_queue_len_avg: 24.3767
+    priority_queue_len_avg: 0.0219442
+    read_latency: 2542129
+    avg_read_latency: 124.127
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 6 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22989
+    row_misses: 896
+    row_conflicts: 12979
+    read_row_hits: 12774
+    read_row_misses: 559
+    read_row_conflicts: 7147
+    write_row_hits: 10215
+    write_row_misses: 337
+    write_row_conflicts: 5832
+    read_row_hits_core_0: 12774
+    read_row_misses_core_0: 559
+    read_row_conflicts_core_0: 7147
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3463217
+    read_queue_len: 1964574
+    write_queue_len: 1497296
+    priority_queue_len: 1347
+    queue_len_avg: 56.4198
+    read_queue_len_avg: 32.0052
+    write_queue_len_avg: 24.3927
+    priority_queue_len_avg: 0.0219442
+    read_latency: 2386519
+    avg_read_latency: 116.529
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 7 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20482
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23000
+    row_misses: 903
+    row_conflicts: 12963
+    read_row_hits: 12760
+    read_row_misses: 558
+    read_row_conflicts: 7164
+    write_row_hits: 10240
+    write_row_misses: 345
+    write_row_conflicts: 5799
+    read_row_hits_core_0: 12760
+    read_row_misses_core_0: 558
+    read_row_conflicts_core_0: 7164
+    num_read_reqs: 20482
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20482
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3495541
+    read_queue_len: 1989799
+    write_queue_len: 1504399
+    priority_queue_len: 1343
+    queue_len_avg: 56.9464
+    read_queue_len_avg: 32.4161
+    write_queue_len_avg: 24.5084
+    priority_queue_len_avg: 0.021879
+    read_latency: 2412030
+    avg_read_latency: 117.763
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 8 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22981
+    row_misses: 889
+    row_conflicts: 12994
+    read_row_hits: 12751
+    read_row_misses: 555
+    read_row_conflicts: 7174
+    write_row_hits: 10230
+    write_row_misses: 334
+    write_row_conflicts: 5820
+    read_row_hits_core_0: 12751
+    read_row_misses_core_0: 555
+    read_row_conflicts_core_0: 7174
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3727980
+    read_queue_len: 2227052
+    write_queue_len: 1499583
+    priority_queue_len: 1345
+    queue_len_avg: 60.7331
+    read_queue_len_avg: 36.2812
+    write_queue_len_avg: 24.4299
+    priority_queue_len_avg: 0.0219116
+    read_latency: 2649241
+    avg_read_latency: 129.357
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 9 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23048
+    row_misses: 885
+    row_conflicts: 12931
+    read_row_hits: 12821
+    read_row_misses: 542
+    read_row_conflicts: 7117
+    write_row_hits: 10227
+    write_row_misses: 343
+    write_row_conflicts: 5814
+    read_row_hits_core_0: 12821
+    read_row_misses_core_0: 542
+    read_row_conflicts_core_0: 7117
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3488053
+    read_queue_len: 2004089
+    write_queue_len: 1482625
+    priority_queue_len: 1339
+    queue_len_avg: 56.8244
+    read_queue_len_avg: 32.6489
+    write_queue_len_avg: 24.1537
+    priority_queue_len_avg: 0.0218139
+    read_latency: 2425353
+    avg_read_latency: 118.425
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 10 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22962
+    row_misses: 838
+    row_conflicts: 13064
+    read_row_hits: 12749
+    read_row_misses: 528
+    read_row_conflicts: 7203
+    write_row_hits: 10213
+    write_row_misses: 310
+    write_row_conflicts: 5861
+    read_row_hits_core_0: 12749
+    read_row_misses_core_0: 528
+    read_row_conflicts_core_0: 7203
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3684208
+    read_queue_len: 2174170
+    write_queue_len: 1508711
+    priority_queue_len: 1327
+    queue_len_avg: 60.02
+    read_queue_len_avg: 35.4197
+    write_queue_len_avg: 24.5786
+    priority_queue_len_avg: 0.0216184
+    read_latency: 2596521
+    avg_read_latency: 126.783
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 11 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23049
+    row_misses: 891
+    row_conflicts: 12924
+    read_row_hits: 12809
+    read_row_misses: 549
+    read_row_conflicts: 7122
+    write_row_hits: 10240
+    write_row_misses: 342
+    write_row_conflicts: 5802
+    read_row_hits_core_0: 12809
+    read_row_misses_core_0: 549
+    read_row_conflicts_core_0: 7122
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3683136
+    read_queue_len: 2197319
+    write_queue_len: 1484446
+    priority_queue_len: 1371
+    queue_len_avg: 60.0025
+    read_queue_len_avg: 35.7969
+    write_queue_len_avg: 24.1833
+    priority_queue_len_avg: 0.0223352
+    read_latency: 2618569
+    avg_read_latency: 127.86
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 12 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22962
+    row_misses: 904
+    row_conflicts: 12998
+    read_row_hits: 12739
+    read_row_misses: 582
+    read_row_conflicts: 7159
+    write_row_hits: 10223
+    write_row_misses: 322
+    write_row_conflicts: 5839
+    read_row_hits_core_0: 12739
+    read_row_misses_core_0: 582
+    read_row_conflicts_core_0: 7159
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3668620
+    read_queue_len: 2167749
+    write_queue_len: 1499492
+    priority_queue_len: 1379
+    queue_len_avg: 59.7661
+    read_queue_len_avg: 35.3151
+    write_queue_len_avg: 24.4285
+    priority_queue_len_avg: 0.0224655
+    read_latency: 2590394
+    avg_read_latency: 126.484
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 13 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23053
+    row_misses: 874
+    row_conflicts: 12937
+    read_row_hits: 12786
+    read_row_misses: 555
+    read_row_conflicts: 7139
+    write_row_hits: 10267
+    write_row_misses: 319
+    write_row_conflicts: 5798
+    read_row_hits_core_0: 12786
+    read_row_misses_core_0: 555
+    read_row_conflicts_core_0: 7139
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3697421
+    read_queue_len: 2205670
+    write_queue_len: 1490386
+    priority_queue_len: 1365
+    queue_len_avg: 60.2353
+    read_queue_len_avg: 35.9329
+    write_queue_len_avg: 24.2801
+    priority_queue_len_avg: 0.0222374
+    read_latency: 2627545
+    avg_read_latency: 128.298
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 14 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 23058
+    row_misses: 896
+    row_conflicts: 12910
+    read_row_hits: 12811
+    read_row_misses: 569
+    read_row_conflicts: 7100
+    write_row_hits: 10247
+    write_row_misses: 327
+    write_row_conflicts: 5810
+    read_row_hits_core_0: 12811
+    read_row_misses_core_0: 569
+    read_row_conflicts_core_0: 7100
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3658240
+    read_queue_len: 2169976
+    write_queue_len: 1486903
+    priority_queue_len: 1361
+    queue_len_avg: 59.597
+    read_queue_len_avg: 35.3514
+    write_queue_len_avg: 24.2234
+    priority_queue_len_avg: 0.0221723
+    read_latency: 2591402
+    avg_read_latency: 126.533
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+--- channel 15 ---
+frontend:
+  impl: External
+
+memory_system:
+  impl: GenericDRAM
+  total_num_read_requests: 20480
+  total_num_write_requests: 16384
+  channel_mapper:
+    impl: PassThroughChannelMapper
+
+
+  controller:
+    impl: HBM
+    id: Channel 0
+    cycles: 61383
+    row_hits: 22990
+    row_misses: 904
+    row_conflicts: 12970
+    read_row_hits: 12753
+    read_row_misses: 568
+    read_row_conflicts: 7159
+    write_row_hits: 10237
+    write_row_misses: 336
+    write_row_conflicts: 5811
+    read_row_hits_core_0: 12753
+    read_row_misses_core_0: 568
+    read_row_conflicts_core_0: 7159
+    num_read_reqs: 20480
+    num_write_reqs: 16384
+    num_maintenance_reqs: 32
+    num_read_reqs_served: 20480
+    num_write_reqs_served: 16384
+    num_maintenance_reqs_served: 32
+    queue_len: 3648925
+    read_queue_len: 2162565
+    write_queue_len: 1484961
+    priority_queue_len: 1399
+    queue_len_avg: 59.4452
+    read_queue_len_avg: 35.2307
+    write_queue_len_avg: 24.1917
+    priority_queue_len_avg: 0.0227913
+    read_latency: 2584935
+    avg_read_latency: 126.218
+    scheduler:
+      impl: FRFCFS
+
+    refresh_manager:
+      impl: AllBank
+
+    row_policy:
+      impl: Open
+
+    addr_mapper:
+      impl: RoBaRaCoCh
+
+
+
+[2026-10-10 08:57:46.772] [info] [DRAM] Per-channel average bandwidth
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 0 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 1 | 18.06 GB/s avg., 60.05% of utilization | 20478 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 2 | 18.06 GB/s avg., 60.05% of utilization | 20478 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 3 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 4 | 18.07 GB/s avg., 60.06% of utilization | 20482 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 5 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 6 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 7 | 18.07 GB/s avg., 60.06% of utilization | 20482 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 8 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 9 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 10 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 11 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 12 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 13 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 14 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channel 15 | 18.06 GB/s avg., 60.06% of utilization | 20480 reads, 16384 writes
+[2026-10-10 08:57:46.772] [info] [DRAM] channels 0..15 combined | 289.04 GB/s aggregate, 60.06% of utilization (avg. per channel) | 327680 reads, 262144 writes
+[2026-10-10 08:57:46.772] [info] ===== Instructions count =====
+[2026-10-10 08:57:46.772] [info] Core [0] : MOVIN    inst_count: 20
+[2026-10-10 08:57:46.772] [info] Core [0] : MOVOUT   inst_count: 2
+[2026-10-10 08:57:46.772] [info] Core [0] : COMP     inst_count: 642 (GEMM: 640, Vector: 2)
+[2026-10-10 08:57:46.772] [info] Core [0] : BAR      inst_count: 640
+[2026-10-10 08:57:46.772] [info] ========= Core stat =========
+[2026-10-10 08:57:46.772] [info] Core [0] : Systolic array [0] utilization(%): 53.38, active_cycles: 32768, idle_cycles: 28615
+[2026-10-10 08:57:46.772] [info] Core [0] : Systolic array [1] utilization(%): 53.38, active_cycles: 32768, idle_cycles: 28615
+[2026-10-10 08:57:46.772] [info] Core [0] : DMA active_cycles: 36864, DMA idle_cycles: 24519, DRAM BW: 289.000 GB/s (589824 responses)
+[2026-10-10 08:57:46.772] [info] Core [0] : Vector unit utilization(%): 3.56, active cycle: 2186, idle_cycle: 0
+[2026-10-10 08:57:46.772] [info] Core [0] : NUMA local memory: 589824 requests, remote memory: 0 requests
+[2026-10-10 08:57:46.772] [info] Core [0] : Total_cycles: 61383
+[2026-10-10 08:57:46.772] [info] Total execution cycles: 61383
+[2026-10-10 08:57:46.773] [info] Wall-clock time for simulation: 28.043887 seconds
