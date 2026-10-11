@@ -30,6 +30,12 @@
 # writes this register. The 'hold_b' compute mode assumes that the weight is
 # already latched.
 #
+# Clock gating: NPUWattch assumes that each element is clock-gated. An idle
+# PE or weight register costs leakage only, and a register access costs
+# E_mode - E_idle. To model an element without clock gating, add the key
+# `clock_gating: false` to the element (next to `primitive`). Then each idle
+# cycle costs the clocked idle energy, and the run gives INFO (NW-3105).
+#
 # Resolution (the harness does this for each kernel):
 #   {mac_primitive}  -> intmac | fpmac | mxfpmac   (selected from the kernel dtype)
 #   {mac_config}     -> the config of that primitive in NPUWattch attribute names
@@ -134,7 +140,8 @@ vpu:
 # default_mode: gated. An action charges only the elements that it names. A
 # scratchpad that an action does not use is bank-gated or clock-gated. §6
 # charges its leakage for the time, not for each event. The systolic_mac
-# compound is different: its default mode `idle` charges each cycle.
+# compound uses the default mode `idle`. An idle event of a logic primitive
+# costs no dynamic energy, because NPUWattch assumes clock gating.
 
 spads:
   default_mode: gated

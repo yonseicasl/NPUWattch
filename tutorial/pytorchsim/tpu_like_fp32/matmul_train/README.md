@@ -12,11 +12,11 @@ two GEMMs, so the run has three kernels.
 
 | Window | What it computes | Shape | Cycles | Energy at 7nm |
 | --- | --- | --- | --- | --- |
-| `fwd` | `c = a @ b` | 1024×1024×1024 | 52 058 | 6.14 mJ |
-| `grad_b` | `aᵀ @ g` | 1024×1024×1024 | 52 848 | 6.19 mJ |
-| `grad_a` | `g @ bᵀ` | 1024×1024×1024 | 52 061 | 6.18 mJ |
+| `fwd` | `c = a @ b` | 1024×1024×1024 | 52 058 | 5.96 mJ |
+| `grad_b` | `aᵀ @ g` | 1024×1024×1024 | 52 848 | 6.02 mJ |
+| `grad_a` | `g @ bᵀ` | 1024×1024×1024 | 52 061 | 6.01 mJ |
 
-Total: **18.5 mJ**, 2.87 pJ/FLOP. The backward pass costs twice the forward
+Total: **18.0 mJ**, 2.79 pJ/FLOP. The backward pass costs twice the forward
 pass, because each gradient is a GEMM of the same size. The three windows
 differ by less than 1%. The transposed operands change the DRAM access
 pattern a little, not the MAC count.

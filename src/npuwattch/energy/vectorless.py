@@ -22,9 +22,14 @@ are:
 
 * The primitive has ``valid25``: the full cycle in ``valid25``.
 * The primitive has ``idle``: the fraction ``activity`` of a cycle in
-  ``random``, and the remaining fraction in ``idle``. The clocked-idle energy
-  is a real cost.
+  ``random``, and the remaining fraction in ``idle``. With clock gating (the
+  default, user ruling 2026-10-11), an ``idle`` row costs no dynamic energy.
+  With ``clock_gating: false``, it costs the clocked idle energy.
 * All other primitives: the fraction ``activity`` of a cycle in ``random``.
+
+The provider gives the charged energy of each row. Thus the ``random`` row
+of a register file or a FIFO is one access without the clock tree
+(E_random - E_idle), the same as in a harness run.
 
 A capacity ``.tail`` part (§3.8) gets leakage and area only, the same as in a
 harness run. The ``random`` unit cost of a memory instance is for one access,

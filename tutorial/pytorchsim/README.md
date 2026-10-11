@@ -59,44 +59,45 @@ files, and one folder per workload with the simulator data.
 
 | Workload | Kernels | Energy at 7nm | DRAM share | What it shows |
 | --- | --- | --- | --- | --- |
-| `matmul_1024` | 1 | 6.14 mJ | 8% | The basic example: 2.86 pJ/FLOP, arrays at 88% |
-| `matmul_train` | 3 | 18.5 mJ | 8% | The backward pass is two more GEMMs of the same size |
-| `matmul_2048_1core` | 1 | 49.1 mJ | 8% | 313 749 cycles on one core |
-| `matmul_2048_2core` | 1 | 48.8 mJ | 8% | 169 707 cycles: 1.85× faster for the same energy and twice the area |
-| `softmax` | 4 | 2.07 mJ | 47% | No MAC at all: the vector register file and DRAM take the energy |
-| `resnet50` | 19 | 20.9 mJ | 14% | Batch-1 CNN layers on a large array; conv1 (3 input channels, 1.2% array occupancy) is 75% of the run |
-| `llama3_8b/prefill` | 13 | 691 mJ | 12% | Large GEMMs keep the arrays full: 6.1 pJ per useful MAC |
-| `llama3_8b/decode` | 13 | 44.2 mJ | 88% | Matrix-vector products: DRAM dominates, 199 pJ per useful MAC |
-| `gemma2_9b/prefill` | 13 | 696 mJ | 19% | Wider heads and GeGLU: same energy as the Llama block for 9% fewer MACs |
-| `gemma2_9b/decode` | 13 | 39.6 mJ | 88% | Matrix-vector products: 196 pJ per useful MAC |
-| `deepseek_v2_lite/prefill` | 17 | 349 mJ | 30% | MoE: the 64 expert GEMMs with 48 rows each are 69% of the energy |
-| `deepseek_v2_lite/decode` | 17 | 14.8 mJ | 86% | 6 experts of one token each; DRAM again |
+| `matmul_1024` | 1 | 5.96 mJ | 8% | The basic example: 2.78 pJ/FLOP, arrays at 91% |
+| `matmul_train` | 3 | 18.0 mJ | 9% | The backward pass is two more GEMMs of the same size |
+| `matmul_2048_1core` | 1 | 47.7 mJ | 8% | 313 749 cycles on one core |
+| `matmul_2048_2core` | 1 | 47.5 mJ | 8% | 169 707 cycles: 1.85× faster for the same energy and twice the area |
+| `softmax` | 4 | 1.16 mJ | 83% | No MAC at all: DRAM takes the energy, and the vector datapath leads on chip |
+| `resnet50` | 19 | 5.91 mJ | 48% | Batch-1 CNN layers on a large array; conv1 (3 input channels, 1.2% array occupancy) is 24% of the run |
+| `llama3_8b/prefill` | 13 | 664.6 mJ | 12% | Large GEMMs keep the arrays full: 5.8 pJ per useful MAC |
+| `llama3_8b/decode` | 13 | 43.6 mJ | 89% | Matrix-vector products: DRAM dominates, 195 pJ per useful MAC |
+| `gemma2_9b/prefill` | 13 | 671.7 mJ | 20% | Wider heads and GeGLU: same energy as the Llama block for 9% fewer MACs |
+| `gemma2_9b/decode` | 13 | 39.1 mJ | 90% | Matrix-vector products: 192 pJ per useful MAC |
+| `deepseek_v2_lite/prefill` | 17 | 337.9 mJ | 31% | MoE: the 64 expert GEMMs with 48 rows each are 69% of the energy |
+| `deepseek_v2_lite/decode` | 17 | 14.5 mJ | 88% | 6 experts of one token each; DRAM again |
 
 Each README has the per-kernel table, the energy per useful MAC, and the
 messages the run prints. NPUWattch counts the useful MACs of each GEMM
 kernel from the operator and its tensor shapes, charges them in the compute
 mode of the PE, and charges the active PE cycles that hold no real weight in
-the idle mode (`INFO NW-6222` gives both numbers). The `MAC ops` and
+the idle mode, which costs leakage only (`INFO NW-6222` gives both numbers). The `MAC ops` and
 `pJ/MAC` of the report are therefore per useful MAC.
 
 ## Three things these runs show
 
 **Prefill and decode are different machines.** On the Llama block, 512
-prefill tokens cost 691 mJ (1.35 mJ per token) with the arrays at 83%. One
-decode token costs 44 mJ with DRAM at 88%. The same ratio appears in
+prefill tokens cost 664.6 mJ (1.30 mJ per token) with the arrays at 87%. One
+decode token costs 43.6 mJ with DRAM at 89%. The same ratio appears in
 the Timeloop runs of the same block on the Gemmini-like and NVDLA-like
 designs.
 
-**Array occupancy decides the energy per MAC.** The dense GEMMs of the LLM
-blocks cost 5.7 to 6.0 pJ per useful MAC. The expert GEMMs of DeepSeek, with
-48 rows each, cost 8.8 to 9.5 pJ. The conv1 layer of ResNet-50, with three
-input channels, costs 132 pJ: the array is active for 315 300 cycles with
-1.2% of its PEs doing useful work, and the clocked but empty PEs cost about
-1.3 pJ per cycle each.
+**Reuse decides the energy per MAC.** The dense GEMMs of the LLM blocks
+cost 5.5 to 6.8 pJ per useful MAC. The expert GEMMs of DeepSeek, with 48 rows
+each, cost 8.6 to 9.3 pJ. The conv1 layer of ResNet-50, with three input
+channels, costs 11.8 pJ: only 1.2% of its active PE cycles do useful work.
+The empty PEs are clock-gated and cost leakage only, so the extra cost is
+the data movement of nearly empty tiles.
 
 **The non-GEMM kernels are small but visible.** Softmax, RMSNorm, and the
-activation are 2 to 3% of a prefill block and under 1% of a decode block.
-In the softmax run alone, the vector register file takes 45% of the energy.
+activation are 1 to 2% of a prefill block and under 1% of a decode block.
+In the softmax run alone, DRAM takes 83% of the energy, and the vector
+datapath is the largest on-chip line.
 This is work the Timeloop examples do not see.
 
 ## How the sample data was made

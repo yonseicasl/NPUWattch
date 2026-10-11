@@ -57,6 +57,8 @@ __all__ = [
     "CANONICAL",
     "LEGACY_ALIASES",
     "PRIMITIVE_PARAMS",
+    "UNIVERSAL_OPTIONAL",
+    "clock_gating_of",
     "validate_attributes",
 ]
 
@@ -70,7 +72,7 @@ class Param:
     """One NPUWattch attribute name."""
 
     name: str
-    kind: str            # "int" | "float" | "str"
+    kind: str            # "int" | "float" | "str" | "bool"
     doc: str
     unit: str = ""       # Only for information. The name gives the unit.
 
@@ -92,6 +94,13 @@ CANONICAL: Dict[str, Param] = dict([
        "primitive-specific: int units 2-5, fpadd/fpmul 2-9, fpmac 4-18, "
        "fpsfu 4-10)"),
     _p("number_format", "str", "Numeric family: int | fp | mx"),
+    # Clock gating (user ruling 2026-10-11). NPUWattch assumes that each
+    # block is clock-gated: an idle cycle costs leakage only. The value
+    # false models a block without clock gating. Then each idle cycle costs
+    # the un-gated idle energy of the estimator (manual §6.1).
+    _p("clock_gating", "bool",
+       "Clock gating of the block: true (default) or false. False charges "
+       "the clocked idle energy of each idle cycle"),
 
     # -- integer arithmetic (asymmetric operands) ---------------------------
     _p("data_width_a", "int", "Operand A width", "bits"),
@@ -178,6 +187,28 @@ CONTEXT_NAMES: Tuple[str, ...] = (
     "node", "transistor", "corner", "voltage_offset_V", "temperature_C",
     "clock_mhz", "stim_mode",
 )
+
+#: Attributes that each primitive accepts. They are not in the ParamSet of a
+#: primitive, because they are not a design parameter of the RTL.
+UNIVERSAL_OPTIONAL: Tuple[str, ...] = ("clock_gating",)
+
+#: The text values that turn clock gating off.
+_FALSE_TEXT = ("false", "no", "off", "0")
+
+
+def clock_gating_of(attributes: Mapping[str, Any]) -> bool:
+    """Return the clock gating of a component. The default is True.
+
+    The value can be a bool, a number, or a text (an Accelergy attribute can
+    be the text "false"). Only an explicit false value gives False.
+    """
+    value = attributes.get("clock_gating")
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSE_TEXT
+    return bool(value)
+
 
 # ---------------------------------------------------------------------------
 # Legacy aliases. No estimator accepts them. The table lets the error message
@@ -378,7 +409,7 @@ def validate_attributes(
     warnings: List[str] = []
     prim = primitive_of(primitive)
     spec = PRIMITIVE_PARAMS.get(prim)
-    allowed = set(policy_keys) | set(CONTEXT_NAMES)
+    allowed = set(policy_keys) | set(CONTEXT_NAMES) | set(UNIVERSAL_OPTIONAL)
 
     for key in attributes:
         if key in CANONICAL or key in allowed:

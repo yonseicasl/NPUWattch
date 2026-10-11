@@ -100,23 +100,26 @@ which no design uses.
 
 | | ResNet-50 | Llama-3-8B block |
 | --- | --- | --- |
-| Total energy | 1219 µJ | 1021 mJ (prefill 1006 mJ, decode 15 mJ) |
-| DRAM share | 58% | prefill 90%, decode 98% |
+| Total energy | 1182 µJ | 1013 mJ (prefill 998 mJ, decode 15 mJ) |
+| DRAM share | 60% | prefill 90%, decode 98% |
 | SDP share | 2.0% | 0.05% |
-| Average power | 91 mW | 569 mW |
-| On-chip energy per MAC | 0.96 pJ | 0.91 pJ |
+| Average power | 88 mW | 565 mW |
+| On-chip energy per MAC | 0.89 pJ | 0.84 pJ |
 | Area | 0.088 mm² | 0.088 mm² |
 
-On chip, `mac` uses about 75% of the energy. Without a per-PE partial-sum
-register, the datapath uses about 40% less energy per MAC than the
-Gemmini-like design.
+On chip, `mac` uses 80 to 84% of the energy. Without a per-PE partial-sum
+register, and with a smaller accumulator, the datapath uses about 13% less
+energy per MAC than the Gemmini-like design on ResNet-50 (0.89 against
+1.03 pJ). On this run, the extra DRAM traffic of the small buffers is larger
+than that saving (see `../README.md`).
 
 The accumulator is the bottleneck. CACC holds 256 int32 partial sums, and
 NVDLA can't write partial sums to memory (see "No partial-sum spill" below).
 So for each block of 256 outputs, the core reads the inputs and weights for
 the whole reduction from DRAM again. In Llama-3-8B prefill, the reductions are
-long (up to 14336), and DRAM takes 90% of the energy. The whole block uses 3.3
-times the energy of the Gemmini-like design, whose accumulator holds 64 KB.
+long (up to 14336), and DRAM takes 90% of the energy. On this run the whole
+block uses 4.0 times the energy of the Gemmini-like design, whose
+accumulator holds 64 KB.
 
 The SDP costs 15.65 pJ per output. Each output takes hundreds to thousands of
 MACs, so the SDP is 2% of the ResNet-50 energy and almost nothing in the

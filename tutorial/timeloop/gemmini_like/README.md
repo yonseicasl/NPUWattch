@@ -57,16 +57,18 @@ system_top_level
 
 | | ResNet-50 | Llama-3-8B block |
 | --- | --- | --- |
-| Total energy | 1323 µJ | 310 mJ (prefill 295 mJ, decode 15 mJ) |
-| DRAM share | 39% | prefill 44%, decode 97% |
-| Average power | 316 mW | 673 mW |
-| On-chip energy per MAC | 1.53 pJ | 1.45 pJ |
+| Total energy | 1056 µJ | 252 mJ (prefill 237 mJ, decode 15 mJ) |
+| DRAM share | 48% | prefill 55%, decode 98% |
+| Average power | 252 mW | 547 mW |
+| On-chip energy per MAC | 1.03 pJ | 0.94 pJ |
 | Area | 0.423 mm² | 0.423 mm² |
 
-On chip, `mac` uses about half of the energy, and `psum_reg` uses 35–38%.
-Every cycle, each PE reads and writes a 32-bit partial sum. The NVDLA-like
-design doesn't have this register (its adder tree reduces the partial sums),
-and that's the main reason its datapath uses less energy per MAC.
+On chip, `mac` uses 69 to 75% of the energy, the accumulator 9 to 16%, and
+`psum_reg` 11 to 13%. Every cycle, each PE writes a 32-bit partial
+sum: 0.059 pJ, 8% of the MAC, because the register is clock-gated. The
+NVDLA-like design doesn't have this register (its adder tree reduces the
+partial sums), and with its smaller accumulator its datapath uses less
+energy per MAC.
 
 Like the NVDLA-like design, `arch.yaml` prevents partial-sum spills (see "No
 partial-sum spill" in `../nvdla_like/README.md`). The reduction loops are the

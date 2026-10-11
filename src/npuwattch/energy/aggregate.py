@@ -12,6 +12,13 @@ instances for C cycles has an activity count of N·C. The dynamic energy is that
 count times the unit energy, and it is not multiplied by N again. Area and
 leakage use the instance count of the component.
 
+Clock gating (user ruling 2026-10-11): each block is clock-gated by default.
+An idle cycle costs no dynamic energy, only the leakage of E_leak. The
+provider gives the charged energy of one event (for example, a register-file
+read is E_read - E_idle). A component with ``clock_gating: false`` gets the
+clocked idle energy of each cycle without an event
+(``_book_idle_per_cycle``).
+
 ``aggregate_native`` is the entry point. Its inputs are a description
 (manual §3.1) and its activity rows (manual §3.3). All input paths (a harness
 or the ``-d``/``-l`` files) use it.
@@ -22,8 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from npuwattch.diagnostics import NPUWattchError, about, warning
-from ..naming import validate_attributes
+from npuwattch.diagnostics import Diagnostic, NPUWattchError, about, info, warning
+from ..naming import clock_gating_of, validate_attributes
 from ..user_components import user_components_of
 from .unit_cost import NoModelError, TechContext, UnitCostProvider
 
@@ -114,41 +121,48 @@ def _book_idle_per_cycle(
     exec_cycles: int,
     warnings: List[str],
 ) -> None:
-    """Charge the clocked-idle energy of a memory one time for each cycle.
+    """Charge the clocked idle energy of a component one time for each cycle.
 
     A provider can have the optional method ``idle_terms(primitive, features)
-    -> (e_idle_per_cycle, idle_displaced_per_access)``. The unit cost of one
-    access of such a provider includes idle energy: the energy of all the
-    other clocked decoder groups in a cycle that has one access. This idle
-    part is ``e_idle - displaced``.
+    -> (e_idle_per_cycle, idle_displaced_per_access)``. A component without
+    idle terms is clock-gated: its idle cycles cost leakage only, and this
+    function does not change it. This is the default (user ruling
+    2026-10-11). Two types of component have idle terms:
 
-    If each event includes this idle part, the idle energy is too large for
-    a cycle that has two or more accesses (parallel banks). It is too small
+    * A logic primitive with ``clock_gating: false``. Its terms are
+      ``(E_idle, E_idle)``: each event takes the place of one idle cycle.
+    * A memory whose unit cost of one access includes idle energy: the
+      energy of the other clocked decoder groups in a cycle with one access.
+      This idle part is ``e_idle - displaced``.
+
+    If each event includes an idle part, the idle energy is too large for a
+    cycle that has two or more accesses (parallel banks). It is too small
     for a cycle that has no access. Thus, if the cycle count of the window is
     known, this function moves the idle part out of the events:
 
         E_events = Σ N_mode · (E_mode - (e_idle - displaced))
         E_idle   = max(0, instances · e_idle · cycles - N_total · displaced)
 
-    A component that has ``idle`` rows in its activity is not changed. If the
-    window has no cycle count, each access event keeps its idle part, and the
-    window gets a warning.
+    N_total includes the ``idle`` events of the activity. The provider gives
+    E_idle for such an event, thus each idle event takes the place of one
+    idle cycle of the budget. A component that has no event in the window
+    gets the full budget. If the window has no cycle count, each access
+    event keeps its idle part, and the window gets a warning.
     """
     idle_fn = getattr(provider, "idle_terms", None)
     if idle_fn is None:
         return
     pending: List[str] = []
     for name, (primitive, config, instances) in components.items():
-        modes = dyn_modes.get(name)
-        if not modes or "idle" in modes:
-            continue
         terms = idle_fn(primitive, _features(config, tech, clock_mhz=clock_MHz))
         if not terms:
             continue
         e_idle_cycle, displaced = float(terms[0]), float(terms[1])
         if exec_cycles <= 0:
-            pending.append(name)
+            if dyn_modes.get(name):
+                pending.append(name)
             continue
+        modes = dyn_modes.setdefault(name, {})
         per_event_idle = e_idle_cycle - displaced
         n_total = 0.0
         for mode_key, n in events_by_mode.get(name, {}).items():
@@ -164,6 +178,45 @@ def _book_idle_per_cycle(
         dyn[name] = sum(modes.values())
     if pending:
         warnings.append(warning(3102, components=", ".join(pending)))
+
+
+def _clock_gating_messages(
+    components: Mapping[str, tuple],
+    *,
+    provider: UnitCostProvider,
+    tech: TechContext,
+    clock_MHz: float,
+) -> List[Diagnostic]:
+    """Return the clock-gating messages of a run.
+
+    * One INFO (NW-3105) for each component with ``clock_gating: false`` and
+      idle terms. Its idle cycles cost the clocked idle energy.
+    * One WARNING (NW-3106) for each component with ``clock_gating: false``
+      and no idle terms. The attribute has no effect.
+    * One INFO (NW-3107) for the run, if one or more other components are
+      clock-gated by the default assumption. Such a component has idle terms
+      when it is not clock-gated.
+    """
+    idle_fn = getattr(provider, "idle_terms", None)
+    if idle_fn is None:
+        return []
+    out: List[Diagnostic] = []
+    gated = 0
+    for name, (primitive, config, _) in components.items():
+        feats = _features(config, tech, clock_mhz=clock_MHz)
+        if not clock_gating_of(config):
+            terms = idle_fn(primitive, feats)
+            if terms:
+                out.append(info(3105, component=name,
+                                e_idle=float(terms[0])))
+            else:
+                out.append(warning(3106, component=name, primitive=primitive))
+        elif (not idle_fn(primitive, feats)
+              and idle_fn(primitive, {**feats, "clock_gating": False})):
+            gated += 1
+    if gated:
+        out.append(info(3107, count=gated))
+    return out
 
 
 def _aggregate_one_window(
@@ -354,6 +407,13 @@ def aggregate_native(
             feats["clock_check"] = clock_check
             for w in envelope_fn(primitive, feats):
                 warnings.append(about(name, w))
+
+    # Clock gating (user ruling 2026-10-11): NPUWattch assumes that each
+    # block is clock-gated. Tell the user one time for the run, and one time
+    # for each component that sets clock_gating to false.
+    if warnings is not None:
+        warnings.extend(_clock_gating_messages(
+            components, provider=provider, tech=tech, clock_MHz=float(clock)))
 
     by_window: Dict[int, List[Mapping[str, Any]]] = {}
     for r in activity_rows:

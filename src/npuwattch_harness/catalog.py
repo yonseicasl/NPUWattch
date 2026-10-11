@@ -343,4 +343,10 @@ register("NW", blocks={
            "The harness reads the projection whose 'tool' key is the harness "
            "name. Set 'tool' in the projection file to the name in the "
            "message."),
+    5348: (_C, "Compound {compound!r} element {element!r}: 'clock_gating' "
+               "is {value!r}, not true or false.",
+           "The clock_gating key of an element is true or false. False "
+           "models an element without clock gating: its idle cycles cost the "
+           "clocked idle energy. The default is clock-gated. Write true or "
+           "false without quotes."),
 }, retired=(), source=__name__)

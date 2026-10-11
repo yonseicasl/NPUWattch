@@ -122,6 +122,14 @@ register("NW", blocks={
            "Give one of the known metrics."),
     8182: (INFO, "[{component}] rows={rows}  samples: {samples}, "
                  "dropped={dropped}"),
+    8183: (INFO, "[{component}] energy_delta: {pairs} mode/idle pairs, "
+                 "{zero} zero and {negative} negative deltas removed, "
+                 "{samples} samples.",
+           "The energy_delta target is the mode energy minus the idle energy "
+           "of the same implementation. A zero delta is a structural zero, "
+           "for example the read of a one-entry register file. A negative "
+           "delta is measurement noise. The log10 target cannot use them, "
+           "thus the trainer removes them. eval_report.json lists the counts."),
 
     # -- 82xx sram: sram.py -----------------------------------------------
     8201: ("SramQueryError",

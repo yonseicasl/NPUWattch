@@ -242,6 +242,10 @@ class CompoundElement:
     config: object                       # "{mac_config}", a dict, or a literal
     count: Union[int, str]               # e.g. "lanes*lanes"
     per: str = "array"                   # multiplier of the instance count
+    #: False: the element is not clock-gated (attribute ``clock_gating``).
+    #: None: the config decides, and the default is clock-gated. This key
+    #: also applies to an element whose config is "{mac_config}".
+    clock_gating: Optional[bool] = None
 
     @property
     def primitive_is_template(self) -> bool:
@@ -274,12 +278,17 @@ def _parse_compound(name: str, obj: Mapping) -> Compound:
         if per not in ELEMENT_PER:
             raise CompoundBundleError.nw(5320, compound=name, element=ename,
                                          choices=ELEMENT_PER, per=per)
+        clock_gating = espec.get("clock_gating")
+        if clock_gating is not None and not isinstance(clock_gating, bool):
+            raise CompoundBundleError.nw(5348, compound=name, element=ename,
+                                         value=clock_gating)
         elements[ename] = CompoundElement(
             name=ename,
             primitive=espec["primitive"],
             config=espec.get("config"),
             count=count,
             per=per,
+            clock_gating=clock_gating,
         )
     default_mode = obj.get("default_mode", "idle")
     if default_mode not in DEFAULT_MODES:
@@ -589,6 +598,9 @@ def _resolve_element(
                 config[k] = v  # a string that is not an expression, a list, or None
     else:
         config = cfg
+    if el.clock_gating is not None:
+        config = {**(config if isinstance(config, Mapping) else {}),
+                  "clock_gating": el.clock_gating}
     count = _resolve_scalar_expr(
         el.count, symbols, f"compound {compound_name}.{el.name}.count"
     )

@@ -91,18 +91,20 @@ attention layers use one group per query head (G=32).
 
 | | Gemmini-like | NVDLA-like |
 | --- | --- | --- |
-| ResNet-50, total | 1323 µJ | **1219 µJ** |
-| ResNet-50, DRAM share | 39% | 58% |
-| On-chip energy per MAC | 1.53 pJ | 0.96 pJ |
-| Llama-3-8B block, total | **310 mJ** | 1021 mJ |
-| Llama-3-8B, DRAM share in prefill | 44% | 90% |
-| Llama-3-8B, DRAM share in decode | 97% | 98% |
+| ResNet-50, total | 1056 µJ | 1182 µJ |
+| ResNet-50, DRAM bytes | 8.0 MB | 11.1 MB |
+| ResNet-50, DRAM share | 48% | 60% |
+| On-chip energy per MAC | 1.03 pJ | 0.89 pJ |
+| Llama-3-8B block, total | 252 mJ | 1013 mJ |
+| Llama-3-8B, DRAM share in prefill | 55% | 90% |
+| Llama-3-8B, DRAM share in decode | 98% | 98% |
 
-The better design depends on the workload. For ResNet-50, the NVDLA-like
-design uses less energy because its datapath is cheaper. It has no per-PE
-partial-sum register, which accounts for 35% of the Gemmini-like design's
-on-chip energy. For Llama-3-8B, the Gemmini-like design uses 3.3 times less
-energy. Neither design can write partial sums to memory, so the accumulator
+For ResNet-50, the two designs are within about 10%. The NVDLA-like design
+has a cheaper datapath: no per-PE partial-sum register (11% of the
+Gemmini-like design's on-chip energy) and a smaller accumulator. But its
+small buffers make it read 1.4 times the DRAM bytes, and on this run that
+costs more than the datapath saves. For Llama-3-8B, the Gemmini-like design
+uses 4 times less energy. Neither design can write partial sums to memory, so the accumulator
 size determines how often the inputs and weights of a long reduction have to
 be read again. The Gemmini-like accumulator holds 64 KB, while the NVDLA-like
 CACC holds only 1 KB. Decode is a matrix-vector product on both designs, so

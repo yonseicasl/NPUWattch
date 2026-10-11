@@ -13,17 +13,17 @@ Compare the two.
 | | 1 core (this folder) | 2 cores (`../matmul_2048_2core/`) |
 | --- | --- | --- |
 | Cycles | 313 749 | 169 707 |
-| Energy at 7nm | 49.1 mJ | 48.8 mJ |
-| DRAM share | 8.0% | 7.5% |
+| Energy at 7nm | 47.7 mJ | 47.5 mJ |
+| DRAM share | 8.2% | 7.7% |
 | Area | 88.8 mm² | 177.5 mm² |
-| Average power | 147 W | 270 W |
-| Power density | 1.66 W/mm² | 1.52 W/mm² |
-| pJ/FLOP | 2.86 | 2.84 |
+| Average power | 143 W | 263 W |
+| Power density | 1.61 W/mm² | 1.48 W/mm² |
+| pJ/FLOP | 2.78 | 2.76 |
 
 The second core cuts the time by 1.85× (the ISPASS PyTorchSim tutorial shows
 the same speed-up). The energy stays the same: the work is the same, and the
-systolic arrays take 89% of it in both runs. The second core doubles the
-area and the power. The power density stays the same, so for a TDP or a
+systolic arrays take 91% of it in both runs. The second core doubles the
+area and the power. The power density stays about the same, so for a TDP or a
 cooling budget the second core costs as much as the first one.
 
 The 2-core run uses a different PyTorchSim config

@@ -81,7 +81,7 @@
   <!-- 1. Header -->
   <h1>NPUWattch PPA Report — decode</h1>
   <div class="sub">
-    Generated 2026-10-11 11:38:43 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-11 13:12:24 · NPUWattch 0.9 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 940.0 MHz ·
@@ -93,15 +93,15 @@
   <!-- 2. Summary cards — row 0: efficiency · energy · power,
        row 1: area · f_max · cycles (user layout, 2026-08-12) -->
   <div class="cards">
-    <div class="card kpi"><div class="v">99 pJ/FLOP</div>
+    <div class="card kpi"><div class="v">97.7 pJ/FLOP</div>
       <div class="l">Efficiency — 0.111 TFLOP/s over
         this run · MAC = 2 FLOP · includes DRAM ·
         fp32 datapath</div></div>
-    <div class="card kpi"><div class="v">4.42e+04 µJ</div>
-      <div class="l">Total energy — dyn 4.31e+04 µJ + leak 1.06e+03 µJ</div></div>
-    <div class="card kpi"><div class="v">11 W</div>
+    <div class="card kpi"><div class="v">4.36e+04 µJ</div>
+      <div class="l">Total energy — dyn 4.25e+04 µJ + leak 1.06e+03 µJ</div></div>
+    <div class="card kpi"><div class="v">10.9 W</div>
       <div class="l">Average power ·
-        0.124 W/mm² of modeled area</div></div>
+        0.123 W/mm² of modeled area</div></div>
     <div class="card kpi"><div class="v">88.75 mm²</div>
       <div class="l">Total area — modeled components only (no IO/PHY,
         controllers, scalar core or whitespace)</div></div>
@@ -114,14 +114,14 @@
     <div class="card">
       <h2>Energy breakdown <span class="sub">dynamic 97.6% ·
         leakage 2.4%</span></h2>
-      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 0 1 179.72 93.26" fill="none" stroke="#C1793A" stroke-width="32.0"><title>icnt_buf: 1.24e+03 µJ (23.7%)</title></path><path class="slice" d="M 179.72 93.26 A 80.00 80.00 0 0 1 120.81 177.25" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.vmem: 1.16e+03 µJ (22.2%)</title></path><path class="slice" d="M 120.81 177.25 A 80.00 80.00 0 0 1 53.07 164.79" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>core0.array0.pe: 743 µJ (14.2%)</title></path><path class="slice" d="M 53.07 164.79 A 80.00 80.00 0 0 1 20.12 104.35" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.array1.pe: 743 µJ (14.2%)</title></path><path class="slice" d="M 20.12 104.35 A 80.00 80.00 0 0 1 36.83 50.91" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.dma_q: 597 µJ (11.4%)</title></path><path class="slice" d="M 36.83 50.91 A 80.00 80.00 0 0 1 63.16 28.99" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.vpu_spad: 360 µJ (6.9%)</title></path><path class="slice" d="M 63.16 28.99 A 80.00 80.00 0 0 1 81.25 22.23" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>icnt_xbar: 202 µJ (3.9%)</title></path><path class="slice" d="M 81.25 22.23 A 80.00 80.00 0 0 1 90.33 20.59" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.vrf: 96.3 µJ (1.8%)</title></path><path class="slice" d="M 90.33 20.59 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A97A0" stroke-width="32.0"><title>other: 101 µJ (1.9%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">5.25e+03 µJ</text></svg></div>
-      <div class="chart"><svg viewBox="0 0 560 198" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#C1793A"/><text x="16" y="14" font-size="11" fill="#1c1c1c">icnt_buf</text><rect x="190" y="4" width="250.0" height="12" fill="#C1793A" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">1.24e+03 µJ · 23.7%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#7A8B2F"/><text x="16" y="36" font-size="11" fill="#1c1c1c">core0.vmem</text><rect x="190" y="26" width="234.1" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">1.16e+03 µJ · 22.2%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#6E59B5"/><text x="16" y="58" font-size="11" fill="#1c1c1c">core0.array0.pe</text><rect x="190" y="48" width="149.7" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">743 µJ · 14.2%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#A5518E"/><text x="16" y="80" font-size="11" fill="#1c1c1c">core0.array1.pe</text><rect x="190" y="70" width="149.6" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">743 µJ · 14.2%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#3A9A8F"/><text x="16" y="102" font-size="11" fill="#1c1c1c">core0.dma_q</text><rect x="190" y="92" width="120.3" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">597 µJ · 11.4%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#3A9A8F"/><text x="16" y="124" font-size="11" fill="#1c1c1c">core0.vpu_spad</text><rect x="190" y="114" width="72.6" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">360 µJ · 6.9%</text></g><g class="bar-row"><rect x="0" y="137" width="10" height="10" fill="#6E59B5"/><text x="16" y="146" font-size="11" fill="#1c1c1c">icnt_xbar</text><rect x="190" y="136" width="40.7" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="146" font-size="11" fill="#6b6b6b" text-anchor="end">202 µJ · 3.9%</text></g><g class="bar-row"><rect x="0" y="159" width="10" height="10" fill="#7A8B2F"/><text x="16" y="168" font-size="11" fill="#1c1c1c">core0.vrf</text><rect x="190" y="158" width="19.4" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="168" font-size="11" fill="#6b6b6b" text-anchor="end">96.3 µJ · 1.8%</text></g><g class="bar-row"><rect x="0" y="181" width="10" height="10" fill="#8A97A0"/><text x="16" y="190" font-size="11" fill="#1c1c1c">other</text><rect x="190" y="180" width="20.4" height="12" fill="#8A97A0" opacity="0.85"/><text x="560" y="190" font-size="11" fill="#6b6b6b" text-anchor="end">101 µJ · 1.9%</text></g></svg></div>
+      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 0 1 179.57 108.25" fill="none" stroke="#C1793A" stroke-width="32.0"><title>icnt_buf: 1.24e+03 µJ (26.6%)</title></path><path class="slice" d="M 179.57 108.25 A 80.00 80.00 0 0 1 91.98 179.60" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.vmem: 1.16e+03 µJ (25.0%)</title></path><path class="slice" d="M 91.98 179.60 A 80.00 80.00 0 0 1 29.88 138.52" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>core0.array0.pe: 718 µJ (15.4%)</title></path><path class="slice" d="M 29.88 138.52 A 80.00 80.00 0 0 1 28.51 64.10" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.array1.pe: 717 µJ (15.4%)</title></path><path class="slice" d="M 28.51 64.10 A 80.00 80.00 0 0 1 53.56 34.86" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.vpu_spad: 360 µJ (7.7%)</title></path><path class="slice" d="M 53.56 34.86 A 80.00 80.00 0 0 1 72.81 24.76" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>icnt_xbar: 202 µJ (4.3%)</title></path><path class="slice" d="M 72.81 24.76 A 80.00 80.00 0 0 1 91.07 20.50" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.dma_q: 174 µJ (3.7%)</title></path><path class="slice" d="M 91.07 20.50 A 80.00 80.00 0 0 1 94.94 20.16" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.dma_addr: 36 µJ (0.8%)</title></path><path class="slice" d="M 94.94 20.16 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A97A0" stroke-width="32.0"><title>other: 46.9 µJ (1.0%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">4.66e+03 µJ</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 198" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#C1793A"/><text x="16" y="14" font-size="11" fill="#1c1c1c">icnt_buf</text><rect x="190" y="4" width="250.0" height="12" fill="#C1793A" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">1.24e+03 µJ · 26.6%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#7A8B2F"/><text x="16" y="36" font-size="11" fill="#1c1c1c">core0.vmem</text><rect x="190" y="26" width="234.1" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">1.16e+03 µJ · 25.0%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#6E59B5"/><text x="16" y="58" font-size="11" fill="#1c1c1c">core0.array0.pe</text><rect x="190" y="48" width="144.6" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">718 µJ · 15.4%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#A5518E"/><text x="16" y="80" font-size="11" fill="#1c1c1c">core0.array1.pe</text><rect x="190" y="70" width="144.5" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">717 µJ · 15.4%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#3A9A8F"/><text x="16" y="102" font-size="11" fill="#1c1c1c">core0.vpu_spad</text><rect x="190" y="92" width="72.6" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">360 µJ · 7.7%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#6E59B5"/><text x="16" y="124" font-size="11" fill="#1c1c1c">icnt_xbar</text><rect x="190" y="114" width="40.7" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">202 µJ · 4.3%</text></g><g class="bar-row"><rect x="0" y="137" width="10" height="10" fill="#3A9A8F"/><text x="16" y="146" font-size="11" fill="#1c1c1c">core0.dma_q</text><rect x="190" y="136" width="35.1" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="146" font-size="11" fill="#6b6b6b" text-anchor="end">174 µJ · 3.7%</text></g><g class="bar-row"><rect x="0" y="159" width="10" height="10" fill="#A5518E"/><text x="16" y="168" font-size="11" fill="#1c1c1c">core0.dma_addr</text><rect x="190" y="158" width="7.3" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="168" font-size="11" fill="#6b6b6b" text-anchor="end">36 µJ · 0.8%</text></g><g class="bar-row"><rect x="0" y="181" width="10" height="10" fill="#8A97A0"/><text x="16" y="190" font-size="11" fill="#1c1c1c">other</text><rect x="190" y="180" width="9.5" height="12" fill="#8A97A0" opacity="0.85"/><text x="560" y="190" font-size="11" fill="#6b6b6b" text-anchor="end">46.9 µJ · 1.0%</text></g></svg></div>
       <div class="chart-spacer"></div>
-      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="NPU vs DRAM energy share"><rect class="seg-a" x="0" y="0" width="66.5" height="20" fill="#3b6ea5"><title>NPU (on-chip) 5.25e+03 µJ (11.9%)</title></rect><rect class="seg-b" x="66.5" y="0" width="493.5" height="20" fill="#948C22"><title>DRAM 3.89e+04 µJ (88.1%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">NPU (on-chip) 5.25e+03 µJ · 11.9%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">DRAM 3.89e+04 µJ · 88.1%</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="NPU vs DRAM energy share"><rect class="seg-a" x="0" y="0" width="59.8" height="20" fill="#3b6ea5"><title>NPU (on-chip) 4.66e+03 µJ (10.7%)</title></rect><rect class="seg-b" x="59.8" y="0" width="500.2" height="20" fill="#948C22"><title>DRAM 3.89e+04 µJ (89.3%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">NPU (on-chip) 4.66e+03 µJ · 10.7%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">DRAM 3.89e+04 µJ · 89.3%</text></svg></div>
       <div class="sub">DRAM device energy sits on its own bar (details in the
         DRAM section below); the donut and list cover the on-chip (NPU)
         components only.</div>
-      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="dynamic vs leakage energy split"><rect class="seg-dyn" x="0" y="0" width="546.5" height="20" fill="#3b6ea5"><title>dynamic 4.31e+04 µJ (97.6%)</title></rect><rect class="seg-leak" x="546.5" y="0" width="13.5" height="20" fill="#8A97A0"><title>leakage 1.06e+03 µJ (2.4%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">dynamic 97.6%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">leakage 2.4%</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="dynamic vs leakage energy split"><rect class="seg-dyn" x="0" y="0" width="546.4" height="20" fill="#3b6ea5"><title>dynamic 4.25e+04 µJ (97.6%)</title></rect><rect class="seg-leak" x="546.4" y="0" width="13.6" height="20" fill="#8A97A0"><title>leakage 1.06e+03 µJ (2.4%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">dynamic 97.6%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">leakage 2.4%</text></svg></div>
     </div>
     <div class="card">
       <h2>Area breakdown</h2>
@@ -133,7 +133,7 @@
   <!-- 4b. DRAM device energy (per-command split of the hbm components) -->
   <div class="card">
     <h2>DRAM device energy <span class="sub">dram_chan
-      · 3.89e+04 µJ (88.1% of run total)</span></h2>
+      · 3.89e+04 µJ (89.3% of run total)</span></h2>
     <div class="tblwrap"><table>
       <thead><tr><th>Command</th><th>Energy</th><th>Share</th></tr></thead>
       <tbody>
@@ -156,59 +156,59 @@
   <!-- 5. Cycle-level energy -->
   <div class="card">
     <h2>Cycle-level energy</h2>
-      <div class="chart"><svg viewBox="0 0 960 410" role="img" aria-label="energy and power per kernel window over cycles"><line x1="72" x2="884" y1="236.0" y2="236.0" stroke="#e3e1dc"/><text x="64" y="240.0" text-anchor="end" font-size="10" fill="#3b6ea5">0 pJ</text><text x="892" y="240.0" font-size="10" fill="#C27200">0 mW</text><line x1="72" x2="884" y1="180.5" y2="180.5" stroke="#e3e1dc"/><text x="64" y="184.5" text-anchor="end" font-size="10" fill="#3b6ea5">5.84e+03 µJ</text><text x="892" y="184.5" font-size="10" fill="#C27200">4.4 W</text><line x1="72" x2="884" y1="125.0" y2="125.0" stroke="#e3e1dc"/><text x="64" y="129.0" text-anchor="end" font-size="10" fill="#3b6ea5">1.17e+04 µJ</text><text x="892" y="129.0" font-size="10" fill="#C27200">8.79 W</text><line x1="72" x2="884" y1="69.5" y2="69.5" stroke="#e3e1dc"/><text x="64" y="73.5" text-anchor="end" font-size="10" fill="#3b6ea5">1.75e+04 µJ</text><text x="892" y="73.5" font-size="10" fill="#C27200">13.2 W</text><line x1="72" x2="884" y1="14.0" y2="14.0" stroke="#e3e1dc"/><text x="64" y="18.0" text-anchor="end" font-size="10" fill="#3b6ea5">2.34e+04 µJ</text><text x="892" y="18.0" font-size="10" fill="#C27200">17.6 W</text><rect class="w-dyn" x="72.0" y="209.9" width="41.2" height="26.1" fill="#3b6ea5"><title>1_q_proj: dynamic 2.75e+03 µJ</title></rect><rect class="w-leak" x="72.0" y="209.3" width="41.2" height="0.5" fill="#8A97A0" opacity="0.6"><title>1_q_proj: leakage 57.4 µJ</title></rect><rect class="w-dyn" x="116.2" y="222.9" width="20.7" height="13.1" fill="#3b6ea5"><title>2_kv_proj: dynamic 1.38e+03 µJ</title></rect><rect class="w-leak" x="116.2" y="222.6" width="20.7" height="0.3" fill="#8A97A0" opacity="0.6"><title>2_kv_proj: leakage 28.9 µJ</title></rect><rect class="w-dyn" x="139.9" y="232.7" width="5.9" height="3.3" fill="#3b6ea5"><title>3_attn_qk: dynamic 346 µJ</title></rect><rect class="w-leak" x="139.9" y="232.6" width="5.9" height="0.1" fill="#8A97A0" opacity="0.6"><title>3_attn_qk: leakage 8.27 µJ</title></rect><rect class="w-dyn" x="148.8" y="232.7" width="6.1" height="3.3" fill="#3b6ea5"><title>4_attn_av: dynamic 349 µJ</title></rect><rect class="w-leak" x="148.8" y="232.6" width="6.1" height="0.1" fill="#8A97A0" opacity="0.6"><title>4_attn_av: leakage 8.47 µJ</title></rect><rect class="w-dyn" x="157.9" y="209.9" width="41.2" height="26.1" fill="#3b6ea5"><title>5_o_proj: dynamic 2.75e+03 µJ</title></rect><rect class="w-leak" x="157.9" y="209.3" width="41.2" height="0.5" fill="#8A97A0" opacity="0.6"><title>5_o_proj: leakage 57.4 µJ</title></rect><rect class="w-dyn" x="202.0" y="38.0" width="287.4" height="198.0" fill="#3b6ea5"><title>6_ffn_up_gate: dynamic 2.09e+04 µJ</title></rect><rect class="w-leak" x="202.0" y="34.2" width="287.4" height="3.8" fill="#8A97A0" opacity="0.6"><title>6_ffn_up_gate: leakage 401 µJ</title></rect><rect class="w-dyn" x="492.4" y="97.2" width="358.6" height="138.8" fill="#3b6ea5"><title>7_ffn_down: dynamic 1.46e+04 µJ</title></rect><rect class="w-leak" x="492.4" y="92.5" width="358.6" height="4.7" fill="#8A97A0" opacity="0.6"><title>7_ffn_down: leakage 500 µJ</title></rect><rect class="w-dyn" x="854.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>8_softmax_p0: dynamic 10.9 µJ</title></rect><rect class="w-leak" x="854.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p0: leakage 284 nJ</title></rect><rect class="w-dyn" x="859.0" y="235.8" width="2.0" height="0.2" fill="#3b6ea5"><title>8_softmax_p1: dynamic 17.2 µJ</title></rect><rect class="w-leak" x="859.0" y="235.8" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p1: leakage 406 nJ</title></rect><rect class="w-dyn" x="864.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>8_softmax_p2: dynamic 7.62 µJ</title></rect><rect class="w-leak" x="864.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p2: leakage 183 nJ</title></rect><rect class="w-dyn" x="869.0" y="235.7" width="2.0" height="0.3" fill="#3b6ea5"><title>9_rmsnorm_p0: dynamic 28.6 µJ</title></rect><rect class="w-leak" x="869.0" y="235.7" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>9_rmsnorm_p0: leakage 658 nJ</title></rect><rect class="w-dyn" x="874.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>9_rmsnorm_p1: dynamic 4.6 µJ</title></rect><rect class="w-leak" x="874.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>9_rmsnorm_p1: leakage 131 nJ</title></rect><rect class="w-dyn" x="879.0" y="235.8" width="2.0" height="0.2" fill="#3b6ea5"><title>10_silu_mul: dynamic 17.2 µJ</title></rect><rect class="w-leak" x="879.0" y="235.8" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>10_silu_mul: leakage 335 nJ</title></rect><line class="w-leader" x1="126.5" x2="126.5" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="142.8" x2="142.8" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="178.4" x2="178.4" y1="236" y2="320" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="860.0" x2="860.0" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="865.0" x2="865.0" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="870.0" x2="870.0" y1="236" y2="320" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="875.0" x2="875.0" y1="236" y2="346" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="880.0" x2="880.0" y1="236" y2="372" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><rect x="63.6" y="242" width="58.0" height="24" fill="#fff"/><text x="92.6" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">1_q_proj</text><text x="92.6" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">203356 cyc</text><rect x="97.5" y="268" width="58.0" height="24" fill="#fff"/><text x="126.5" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">2_kv_pro</text><text x="126.5" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">102319 cyc</text><rect x="116.5" y="294" width="52.6" height="24" fill="#fff"/><text x="142.8" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">3_attn_q</text><text x="142.8" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">29304 cyc</text><rect x="125.5" y="242" width="52.6" height="24" fill="#fff"/><text x="151.8" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">4_attn_a</text><text x="151.8" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">30034 cyc</text><rect x="149.4" y="320" width="58.0" height="24" fill="#fff"/><text x="178.4" y="329" text-anchor="middle" font-size="10" fill="#6b6b6b">5_o_proj</text><text x="178.4" y="342" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">203356 cyc</text><rect x="314.0" y="242" width="63.4" height="24" fill="#fff"/><text x="345.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">6_ffn_up</text><text x="345.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1420007 cyc</text><rect x="640.0" y="242" width="63.4" height="24" fill="#fff"/><text x="671.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">7_ffn_do</text><text x="671.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1771963 cyc</text><rect x="829.0" y="242" width="52.0" height="24" fill="#fff"/><text x="855.0" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="855.0" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1005 cyc</text><rect x="834.0" y="268" width="52.0" height="24" fill="#fff"/><text x="860.0" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="860.0" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1440 cyc</text><rect x="839.0" y="294" width="52.0" height="24" fill="#fff"/><text x="865.0" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="865.0" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">647 cyc</text><rect x="844.0" y="320" width="52.0" height="24" fill="#fff"/><text x="870.0" y="329" text-anchor="middle" font-size="10" fill="#6b6b6b">9_rmsnor</text><text x="870.0" y="342" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">2334 cyc</text><rect x="849.0" y="346" width="52.0" height="24" fill="#fff"/><text x="875.0" y="355" text-anchor="middle" font-size="10" fill="#6b6b6b">9_rmsnor</text><text x="875.0" y="368" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">465 cyc</text><rect x="854.0" y="372" width="52.0" height="24" fill="#fff"/><text x="880.0" y="381" text-anchor="middle" font-size="10" fill="#6b6b6b">10_silu_</text><text x="880.0" y="394" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1188 cyc</text><polyline class="p-line" points="92.6,72.1 126.5,72.5 142.8,92.5 151.8,94.6 178.4,72.1 345.7,58.4 671.7,134.8 855.0,103.6 860.0,91.0 865.0,92.9 870.0,87.3 875.0,115.4 880.0,60.9" fill="none" stroke="#C27200" stroke-width="2"/><circle cx="92.6" cy="72.1" r="3" fill="#C27200"/><circle cx="126.5" cy="72.5" r="3" fill="#C27200"/><circle cx="142.8" cy="92.5" r="3" fill="#C27200"/><circle cx="151.8" cy="94.6" r="3" fill="#C27200"/><circle cx="178.4" cy="72.1" r="3" fill="#C27200"/><circle cx="345.7" cy="58.4" r="3" fill="#C27200"/><circle cx="671.7" cy="134.8" r="3" fill="#C27200"/><circle cx="855.0" cy="103.6" r="3" fill="#C27200"/><circle cx="860.0" cy="91.0" r="3" fill="#C27200"/><circle cx="865.0" cy="92.9" r="3" fill="#C27200"/><circle cx="870.0" cy="87.3" r="3" fill="#C27200"/><circle cx="875.0" cy="115.4" r="3" fill="#C27200"/><circle cx="880.0" cy="60.9" r="3" fill="#C27200"/><line x1="72" x2="884" y1="236" y2="236" stroke="#6b6b6b"/><text x="72" y="408" font-size="10" fill="#6b6b6b"><tspan fill="#3b6ea5">bars: window energy (dyn + leak)</tspan>&#160;·&#160;<tspan fill="#C27200">line: average power</tspan>&#160;·&#160;bar width ∝ cycles</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 960 410" role="img" aria-label="energy and power per kernel window over cycles"><line x1="72" x2="884" y1="236.0" y2="236.0" stroke="#e3e1dc"/><text x="64" y="240.0" text-anchor="end" font-size="10" fill="#3b6ea5">0 pJ</text><text x="892" y="240.0" font-size="10" fill="#C27200">0 mW</text><line x1="72" x2="884" y1="180.5" y2="180.5" stroke="#e3e1dc"/><text x="64" y="184.5" text-anchor="end" font-size="10" fill="#3b6ea5">5.77e+03 µJ</text><text x="892" y="184.5" font-size="10" fill="#C27200">4.34 W</text><line x1="72" x2="884" y1="125.0" y2="125.0" stroke="#e3e1dc"/><text x="64" y="129.0" text-anchor="end" font-size="10" fill="#3b6ea5">1.15e+04 µJ</text><text x="892" y="129.0" font-size="10" fill="#C27200">8.68 W</text><line x1="72" x2="884" y1="69.5" y2="69.5" stroke="#e3e1dc"/><text x="64" y="73.5" text-anchor="end" font-size="10" fill="#3b6ea5">1.73e+04 µJ</text><text x="892" y="73.5" font-size="10" fill="#C27200">13 W</text><line x1="72" x2="884" y1="14.0" y2="14.0" stroke="#e3e1dc"/><text x="64" y="18.0" text-anchor="end" font-size="10" fill="#3b6ea5">2.31e+04 µJ</text><text x="892" y="18.0" font-size="10" fill="#C27200">17.4 W</text><rect class="w-dyn" x="72.0" y="209.9" width="41.2" height="26.1" fill="#3b6ea5"><title>1_q_proj: dynamic 2.71e+03 µJ</title></rect><rect class="w-leak" x="72.0" y="209.3" width="41.2" height="0.6" fill="#8A97A0" opacity="0.6"><title>1_q_proj: leakage 57.4 µJ</title></rect><rect class="w-dyn" x="116.2" y="222.9" width="20.7" height="13.1" fill="#3b6ea5"><title>2_kv_proj: dynamic 1.36e+03 µJ</title></rect><rect class="w-leak" x="116.2" y="222.6" width="20.7" height="0.3" fill="#8A97A0" opacity="0.6"><title>2_kv_proj: leakage 28.9 µJ</title></rect><rect class="w-dyn" x="139.9" y="232.8" width="5.9" height="3.2" fill="#3b6ea5"><title>3_attn_qk: dynamic 335 µJ</title></rect><rect class="w-leak" x="139.9" y="232.7" width="5.9" height="0.1" fill="#8A97A0" opacity="0.6"><title>3_attn_qk: leakage 8.27 µJ</title></rect><rect class="w-dyn" x="148.8" y="232.8" width="6.1" height="3.2" fill="#3b6ea5"><title>4_attn_av: dynamic 336 µJ</title></rect><rect class="w-leak" x="148.8" y="232.7" width="6.1" height="0.1" fill="#8A97A0" opacity="0.6"><title>4_attn_av: leakage 8.47 µJ</title></rect><rect class="w-dyn" x="157.9" y="209.9" width="41.2" height="26.1" fill="#3b6ea5"><title>5_o_proj: dynamic 2.71e+03 µJ</title></rect><rect class="w-leak" x="157.9" y="209.3" width="41.2" height="0.6" fill="#8A97A0" opacity="0.6"><title>5_o_proj: leakage 57.4 µJ</title></rect><rect class="w-dyn" x="202.0" y="38.0" width="287.4" height="198.0" fill="#3b6ea5"><title>6_ffn_up_gate: dynamic 2.06e+04 µJ</title></rect><rect class="w-leak" x="202.0" y="34.2" width="287.4" height="3.9" fill="#8A97A0" opacity="0.6"><title>6_ffn_up_gate: leakage 401 µJ</title></rect><rect class="w-dyn" x="492.4" y="96.7" width="358.6" height="139.3" fill="#3b6ea5"><title>7_ffn_down: dynamic 1.45e+04 µJ</title></rect><rect class="w-leak" x="492.4" y="91.9" width="358.6" height="4.8" fill="#8A97A0" opacity="0.6"><title>7_ffn_down: leakage 500 µJ</title></rect><rect class="w-dyn" x="854.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>8_softmax_p0: dynamic 3.06 µJ</title></rect><rect class="w-leak" x="854.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p0: leakage 284 nJ</title></rect><rect class="w-dyn" x="859.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>8_softmax_p1: dynamic 3.71 µJ</title></rect><rect class="w-leak" x="859.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p1: leakage 406 nJ</title></rect><rect class="w-dyn" x="864.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>8_softmax_p2: dynamic 4.61 µJ</title></rect><rect class="w-leak" x="864.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>8_softmax_p2: leakage 183 nJ</title></rect><rect class="w-dyn" x="869.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>9_rmsnorm_p0: dynamic 3.18 µJ</title></rect><rect class="w-leak" x="869.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>9_rmsnorm_p0: leakage 658 nJ</title></rect><rect class="w-dyn" x="874.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>9_rmsnorm_p1: dynamic 1.86 µJ</title></rect><rect class="w-leak" x="874.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>9_rmsnorm_p1: leakage 131 nJ</title></rect><rect class="w-dyn" x="879.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>10_silu_mul: dynamic 6.48 µJ</title></rect><rect class="w-leak" x="879.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>10_silu_mul: leakage 335 nJ</title></rect><line class="w-leader" x1="126.5" x2="126.5" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="142.8" x2="142.8" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="178.4" x2="178.4" y1="236" y2="320" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="860.0" x2="860.0" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="865.0" x2="865.0" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="870.0" x2="870.0" y1="236" y2="320" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="875.0" x2="875.0" y1="236" y2="346" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="880.0" x2="880.0" y1="236" y2="372" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><rect x="63.6" y="242" width="58.0" height="24" fill="#fff"/><text x="92.6" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">1_q_proj</text><text x="92.6" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">203356 cyc</text><rect x="97.5" y="268" width="58.0" height="24" fill="#fff"/><text x="126.5" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">2_kv_pro</text><text x="126.5" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">102319 cyc</text><rect x="116.5" y="294" width="52.6" height="24" fill="#fff"/><text x="142.8" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">3_attn_q</text><text x="142.8" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">29304 cyc</text><rect x="125.5" y="242" width="52.6" height="24" fill="#fff"/><text x="151.8" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">4_attn_a</text><text x="151.8" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">30034 cyc</text><rect x="149.4" y="320" width="58.0" height="24" fill="#fff"/><text x="178.4" y="329" text-anchor="middle" font-size="10" fill="#6b6b6b">5_o_proj</text><text x="178.4" y="342" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">203356 cyc</text><rect x="314.0" y="242" width="63.4" height="24" fill="#fff"/><text x="345.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">6_ffn_up</text><text x="345.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1420007 cyc</text><rect x="640.0" y="242" width="63.4" height="24" fill="#fff"/><text x="671.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">7_ffn_do</text><text x="671.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1771963 cyc</text><rect x="829.0" y="242" width="52.0" height="24" fill="#fff"/><text x="855.0" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="855.0" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1005 cyc</text><rect x="834.0" y="268" width="52.0" height="24" fill="#fff"/><text x="860.0" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="860.0" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1440 cyc</text><rect x="839.0" y="294" width="52.0" height="24" fill="#fff"/><text x="865.0" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">8_softma</text><text x="865.0" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">647 cyc</text><rect x="844.0" y="320" width="52.0" height="24" fill="#fff"/><text x="870.0" y="329" text-anchor="middle" font-size="10" fill="#6b6b6b">9_rmsnor</text><text x="870.0" y="342" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">2334 cyc</text><rect x="849.0" y="346" width="52.0" height="24" fill="#fff"/><text x="875.0" y="355" text-anchor="middle" font-size="10" fill="#6b6b6b">9_rmsnor</text><text x="875.0" y="368" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">465 cyc</text><rect x="854.0" y="372" width="52.0" height="24" fill="#fff"/><text x="880.0" y="381" text-anchor="middle" font-size="10" fill="#6b6b6b">10_silu_</text><text x="880.0" y="394" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1188 cyc</text><polyline class="p-line" points="92.6,72.2 126.5,72.6 142.8,95.1 151.8,98.1 178.4,72.2 345.7,58.4 671.7,134.4 855.0,196.0 860.0,201.7 865.0,146.9 870.0,216.2 875.0,184.6 880.0,167.1" fill="none" stroke="#C27200" stroke-width="2"/><circle cx="92.6" cy="72.2" r="3" fill="#C27200"/><circle cx="126.5" cy="72.6" r="3" fill="#C27200"/><circle cx="142.8" cy="95.1" r="3" fill="#C27200"/><circle cx="151.8" cy="98.1" r="3" fill="#C27200"/><circle cx="178.4" cy="72.2" r="3" fill="#C27200"/><circle cx="345.7" cy="58.4" r="3" fill="#C27200"/><circle cx="671.7" cy="134.4" r="3" fill="#C27200"/><circle cx="855.0" cy="196.0" r="3" fill="#C27200"/><circle cx="860.0" cy="201.7" r="3" fill="#C27200"/><circle cx="865.0" cy="146.9" r="3" fill="#C27200"/><circle cx="870.0" cy="216.2" r="3" fill="#C27200"/><circle cx="875.0" cy="184.6" r="3" fill="#C27200"/><circle cx="880.0" cy="167.1" r="3" fill="#C27200"/><line x1="72" x2="884" y1="236" y2="236" stroke="#6b6b6b"/><text x="72" y="408" font-size="10" fill="#6b6b6b"><tspan fill="#3b6ea5">bars: window energy (dyn + leak)</tspan>&#160;·&#160;<tspan fill="#C27200">line: average power</tspan>&#160;·&#160;bar width ∝ cycles</text></svg></div>
       <div class="tblwrap"><table>
         <thead><tr><th>#</th><th>Kernel</th><th>Kind</th><th>Cycles</th>
           <th>Dynamic</th><th>Leakage</th><th>Total</th><th>Avg power</th></tr></thead>
         <tbody>
           <tr><td>0</td><td><code>1_q_proj</code></td>
-<td>fused</td>            <td>203356</td><td>2.75e+03 µJ</td><td>57.4 µJ</td>
-            <td>2.81e+03 µJ</td><td>13 W</td></tr>
+<td>fused</td>            <td>203356</td><td>2.71e+03 µJ</td><td>57.4 µJ</td>
+            <td>2.77e+03 µJ</td><td>12.8 W</td></tr>
           <tr><td>1</td><td><code>2_kv_proj</code></td>
-<td>fused</td>            <td>102319</td><td>1.38e+03 µJ</td><td>28.9 µJ</td>
-            <td>1.41e+03 µJ</td><td>13 W</td></tr>
+<td>fused</td>            <td>102319</td><td>1.36e+03 µJ</td><td>28.9 µJ</td>
+            <td>1.39e+03 µJ</td><td>12.8 W</td></tr>
           <tr><td>2</td><td><code>3_attn_qk</code></td>
-<td>fused</td>            <td>29304</td><td>346 µJ</td><td>8.27 µJ</td>
-            <td>354 µJ</td><td>11.4 W</td></tr>
+<td>fused</td>            <td>29304</td><td>335 µJ</td><td>8.27 µJ</td>
+            <td>344 µJ</td><td>11 W</td></tr>
           <tr><td>3</td><td><code>4_attn_av</code></td>
-<td>fused</td>            <td>30034</td><td>349 µJ</td><td>8.47 µJ</td>
-            <td>358 µJ</td><td>11.2 W</td></tr>
+<td>fused</td>            <td>30034</td><td>336 µJ</td><td>8.47 µJ</td>
+            <td>345 µJ</td><td>10.8 W</td></tr>
           <tr><td>4</td><td><code>5_o_proj</code></td>
-<td>fused</td>            <td>203356</td><td>2.75e+03 µJ</td><td>57.4 µJ</td>
-            <td>2.81e+03 µJ</td><td>13 W</td></tr>
+<td>fused</td>            <td>203356</td><td>2.71e+03 µJ</td><td>57.4 µJ</td>
+            <td>2.77e+03 µJ</td><td>12.8 W</td></tr>
           <tr><td>5</td><td><code>6_ffn_up_gate</code></td>
-<td>fused</td>            <td>1420007</td><td>2.09e+04 µJ</td><td>401 µJ</td>
-            <td>2.13e+04 µJ</td><td>14.1 W</td></tr>
+<td>fused</td>            <td>1420007</td><td>2.06e+04 µJ</td><td>401 µJ</td>
+            <td>2.1e+04 µJ</td><td>13.9 W</td></tr>
           <tr><td>6</td><td><code>7_ffn_down</code></td>
-<td>fused</td>            <td>1771963</td><td>1.46e+04 µJ</td><td>500 µJ</td>
-            <td>1.51e+04 µJ</td><td>8.02 W</td></tr>
+<td>fused</td>            <td>1771963</td><td>1.45e+04 µJ</td><td>500 µJ</td>
+            <td>1.5e+04 µJ</td><td>7.95 W</td></tr>
           <tr><td>7</td><td><code>8_softmax_p0</code></td>
-<td>non_mac</td>            <td>1005</td><td>10.9 µJ</td><td>284 nJ</td>
-            <td>11.2 µJ</td><td>10.5 W</td></tr>
+<td>non_mac</td>            <td>1005</td><td>3.06 µJ</td><td>284 nJ</td>
+            <td>3.34 µJ</td><td>3.13 W</td></tr>
           <tr><td>8</td><td><code>8_softmax_p1</code></td>
-<td>non_mac</td>            <td>1440</td><td>17.2 µJ</td><td>406 nJ</td>
-            <td>17.6 µJ</td><td>11.5 W</td></tr>
+<td>non_mac</td>            <td>1440</td><td>3.71 µJ</td><td>406 nJ</td>
+            <td>4.11 µJ</td><td>2.69 W</td></tr>
           <tr><td>9</td><td><code>8_softmax_p2</code></td>
-<td>non_mac</td>            <td>647</td><td>7.62 µJ</td><td>183 nJ</td>
-            <td>7.8 µJ</td><td>11.3 W</td></tr>
+<td>non_mac</td>            <td>647</td><td>4.61 µJ</td><td>183 nJ</td>
+            <td>4.79 µJ</td><td>6.97 W</td></tr>
           <tr><td>10</td><td><code>9_rmsnorm_p0</code></td>
-<td>non_mac</td>            <td>2334</td><td>28.6 µJ</td><td>658 nJ</td>
-            <td>29.3 µJ</td><td>11.8 W</td></tr>
+<td>non_mac</td>            <td>2334</td><td>3.18 µJ</td><td>658 nJ</td>
+            <td>3.84 µJ</td><td>1.55 W</td></tr>
           <tr><td>11</td><td><code>9_rmsnorm_p1</code></td>
-<td>non_mac</td>            <td>465</td><td>4.6 µJ</td><td>131 nJ</td>
-            <td>4.73 µJ</td><td>9.55 W</td></tr>
+<td>non_mac</td>            <td>465</td><td>1.86 µJ</td><td>131 nJ</td>
+            <td>1.99 µJ</td><td>4.02 W</td></tr>
           <tr><td>12</td><td><code>10_silu_mul</code></td>
-<td>non_mac</td>            <td>1188</td><td>17.2 µJ</td><td>335 nJ</td>
-            <td>17.5 µJ</td><td>13.9 W</td></tr>
+<td>non_mac</td>            <td>1188</td><td>6.48 µJ</td><td>335 nJ</td>
+            <td>6.81 µJ</td><td>5.39 W</td></tr>
         </tbody>
         <tfoot><tr><td colspan="3">Run total</td><td>3767418</td>
-          <td>4.31e+04 µJ</td><td>1.06e+03 µJ</td>
-          <td>4.42e+04 µJ</td><td>11 W</td></tr></tfoot>
+          <td>4.25e+04 µJ</td><td>1.06e+03 µJ</td>
+          <td>4.36e+04 µJ</td><td>10.9 W</td></tr></tfoot>
       </table></div>
-      <p class="sub">GEMM kernels: 4.41e+04 µJ &nbsp;·&nbsp;
-        non-GEMM kernels: 88.1 µJ
+      <p class="sub">GEMM kernels: 4.36e+04 µJ &nbsp;·&nbsp;
+        non-GEMM kernels: 24.9 µJ
         (6 kernel(s),
-        0.2% of total)</p>
+        0.1% of total)</p>
       <h2 style="margin-top:18px">Per-kernel component energy
         <span class="sub">dynamic energy per kernel; leakage-only components omitted</span></h2>
       <div class="tblwrap"><table>
@@ -216,23 +216,23 @@
 <th><code>1_q_proj</code></th><th><code>2_kv_proj</code></th><th><code>3_attn_qk</code></th><th><code>4_attn_av</code></th><th><code>5_o_proj</code></th><th><code>6_ffn_up_gate</code></th><th><code>7_ffn_down</code></th><th><code>8_softmax_p0</code></th><th><code>8_softmax_p1</code></th><th><code>8_softmax_p2</code></th><th><code>9_rmsnorm_p0</code></th><th><code>9_rmsnorm_p1</code></th><th><code>10_silu_mul</code></th>        </tr></thead>
         <tbody>
           <tr><td><code>core0.array0.pe</code></td>
-<td>43.7 µJ</td><td>21.9 µJ</td><td>5.99 µJ</td><td>8.15 µJ</td><td>43.7 µJ</td><td>311 µJ</td><td>153 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<td>42.4 µJ</td><td>21.2 µJ</td><td>5.33 µJ</td><td>5.34 µJ</td><td>42.4 µJ</td><td>297 µJ</td><td>148 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr><td><code>core0.array0.w_reg</code></td>
-<td>1.41 µJ</td><td>705 nJ</td><td>233 nJ</td><td>474 nJ</td><td>1.41 µJ</td><td>10.4 µJ</td><td>4.94 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<td>61.8 nJ</td><td>30.9 nJ</td><td>7.77 nJ</td><td>7.78 nJ</td><td>61.8 nJ</td><td>432 nJ</td><td>216 nJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr><td><code>core0.array1.pe</code></td>
-<td>43.7 µJ</td><td>21.9 µJ</td><td>5.92 µJ</td><td>8.02 µJ</td><td>43.7 µJ</td><td>311 µJ</td><td>153 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<td>42.4 µJ</td><td>21.2 µJ</td><td>5.27 µJ</td><td>5.26 µJ</td><td>42.4 µJ</td><td>297 µJ</td><td>148 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr><td><code>core0.array1.w_reg</code></td>
-<td>1.41 µJ</td><td>705 nJ</td><td>230 nJ</td><td>466 nJ</td><td>1.41 µJ</td><td>10.4 µJ</td><td>4.94 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<td>61.8 nJ</td><td>30.9 nJ</td><td>7.68 nJ</td><td>7.66 nJ</td><td>61.8 nJ</td><td>432 nJ</td><td>216 nJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr><td><code>core0.vmem</code></td>
 <td>60.5 µJ</td><td>30.3 µJ</td><td>8.09 µJ</td><td>8.11 µJ</td><td>60.5 µJ</td><td>423 µJ</td><td>218 µJ</td><td>59 nJ</td><td>59.1 nJ</td><td>115 nJ</td><td>14.7 nJ</td><td>43.5 nJ</td><td>151 nJ</td></tr>
           <tr><td><code>core0.vpu_spad</code></td>
 <td>485 nJ</td><td>242 nJ</td><td>60.6 nJ</td><td>60.6 nJ</td><td>485 nJ</td><td>3.39 µJ</td><td>1.7 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr><td><code>core0.vrf</code></td>
-<td>484 nJ</td><td>290 nJ</td><td>5.03 µJ</td><td>2.71 µJ</td><td>484 nJ</td><td>3.05 µJ</td><td>2.52 µJ</td><td>8.1 µJ</td><td>13.9 µJ</td><td>3.05 µJ</td><td>26.3 µJ</td><td>2.81 µJ</td><td>11 µJ</td></tr>
+<td>16 nJ</td><td>9.57 nJ</td><td>166 nJ</td><td>89.4 nJ</td><td>16 nJ</td><td>101 nJ</td><td>83 nJ</td><td>267 nJ</td><td>459 nJ</td><td>101 nJ</td><td>867 nJ</td><td>92.6 nJ</td><td>363 nJ</td></tr>
           <tr><td><code>core0.vfu</code></td>
 <td>32 nJ</td><td>19.2 nJ</td><td>333 nJ</td><td>179 nJ</td><td>32 nJ</td><td>201 nJ</td><td>166 nJ</td><td>536 nJ</td><td>919 nJ</td><td>201 nJ</td><td>1.74 µJ</td><td>185 nJ</td><td>727 nJ</td></tr>
           <tr><td><code>core0.dma_q</code></td>
-<td>44.7 µJ</td><td>22.4 µJ</td><td>6 µJ</td><td>6 µJ</td><td>44.7 µJ</td><td>312 µJ</td><td>161 µJ</td><td>43.5 nJ</td><td>43.6 nJ</td><td>87.2 nJ</td><td>10.9 nJ</td><td>32.8 nJ</td><td>114 nJ</td></tr>
+<td>13 µJ</td><td>6.52 µJ</td><td>1.75 µJ</td><td>1.75 µJ</td><td>13 µJ</td><td>91 µJ</td><td>46.8 µJ</td><td>12.7 nJ</td><td>12.7 nJ</td><td>25.4 nJ</td><td>3.17 nJ</td><td>9.55 nJ</td><td>33.3 nJ</td></tr>
           <tr><td><code>core0.dma_addr</code></td>
 <td>2.69 µJ</td><td>1.35 µJ</td><td>362 nJ</td><td>362 nJ</td><td>2.69 µJ</td><td>18.8 µJ</td><td>9.69 µJ</td><td>2.63 nJ</td><td>2.63 nJ</td><td>5.26 nJ</td><td>656 pJ</td><td>1.98 nJ</td><td>6.88 nJ</td></tr>
           <tr><td><code>core0.sfu_pipe</code></td>
@@ -302,8 +302,8 @@
           <td>5.05</td><td>0.00237</td>
           <td>483</td>
           <td>1.31e+08</td>
-          <td>587 µJ</td><td>156 µJ</td>
-          <td>743 µJ</td><td>1.7%</td>
+          <td>562 µJ</td><td>156 µJ</td>
+          <td>718 µJ</td><td>1.6%</td>
         </tr>
         <tr>
           <td><code>core0.array0.w_reg</code>
@@ -311,11 +311,11 @@
           <td>regfile</td>
           <td><span class="chip cal">cal</span></td>
           <td>16384</td>
-          <td>0.203</td><td>0.000132</td>
+          <td>0.0589</td><td>0.000132</td>
           <td>15.4</td>
           <td>1.31e+08</td>
-          <td>19.6 µJ</td><td>8.69 µJ</td>
-          <td>28.3 µJ</td><td>0.1%</td>
+          <td>819 nJ</td><td>8.69 µJ</td>
+          <td>9.51 µJ</td><td>0.0%</td>
         </tr>
         <tr>
           <td><code>core0.array1.pe</code>
@@ -326,8 +326,8 @@
           <td>5.05</td><td>0.00237</td>
           <td>483</td>
           <td>1.31e+08</td>
-          <td>587 µJ</td><td>156 µJ</td>
-          <td>743 µJ</td><td>1.7%</td>
+          <td>562 µJ</td><td>156 µJ</td>
+          <td>717 µJ</td><td>1.6%</td>
         </tr>
         <tr>
           <td><code>core0.array1.w_reg</code>
@@ -335,11 +335,11 @@
           <td>regfile</td>
           <td><span class="chip cal">cal</span></td>
           <td>16384</td>
-          <td>0.203</td><td>0.000132</td>
+          <td>0.0589</td><td>0.000132</td>
           <td>15.4</td>
           <td>1.31e+08</td>
-          <td>19.5 µJ</td><td>8.69 µJ</td>
-          <td>28.2 µJ</td><td>0.1%</td>
+          <td>818 nJ</td><td>8.69 µJ</td>
+          <td>9.51 µJ</td><td>0.0%</td>
         </tr>
         <tr>
           <td><code>core0.vmem</code>
@@ -351,7 +351,7 @@
           <td>3.56e+07</td>
           <td>5.63e+07</td>
           <td>808 µJ</td><td>354 µJ</td>
-          <td>1.16e+03 µJ</td><td>2.6%</td>
+          <td>1.16e+03 µJ</td><td>2.7%</td>
         </tr>
         <tr>
           <td><code>core0.vpu_spad</code>
@@ -371,11 +371,11 @@
           <td>regfile</td>
           <td><span class="chip cal">cal</span></td>
           <td>128</td>
-          <td>31.1 / 32.3</td><td>0.0323</td>
+          <td>0.852 / 1.41</td><td>0.0323</td>
           <td>4.16e+03</td>
           <td>2.53e+06</td>
-          <td>79.7 µJ</td><td>16.6 µJ</td>
-          <td>96.3 µJ</td><td>0.2%</td>
+          <td>2.63 µJ</td><td>16.6 µJ</td>
+          <td>19.2 µJ</td><td>0.0%</td>
         </tr>
         <tr>
           <td><code>core0.vfu</code>
@@ -395,11 +395,11 @@
           <td>fifo</td>
           <td><span class="chip cal">cal</span></td>
           <td>1</td>
-          <td>21.2</td><td>0.0166</td>
+          <td>6.19</td><td>0.0166</td>
           <td>2.38e+03</td>
           <td>2.81e+07</td>
-          <td>597 µJ</td><td>66.5 nJ</td>
-          <td>597 µJ</td><td>1.4%</td>
+          <td>174 µJ</td><td>66.5 nJ</td>
+          <td>174 µJ</td><td>0.4%</td>
         </tr>
         <tr>
           <td><code>core0.dma_addr</code>
@@ -459,7 +459,7 @@
           <td>n/a</td>
           <td>4.13e+07</td>
           <td>3.89e+04 µJ</td><td>0 pJ</td>
-          <td>3.89e+04 µJ</td><td>88.1%</td>
+          <td>3.89e+04 µJ</td><td>89.3%</td>
         </tr>
       </tbody>
     </table></div>
@@ -478,36 +478,36 @@
     <h2>Provenance</h2>
     <div class="sub">Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.</div>
     <div class="sub">
-      inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>bc7bbe2cfdaa</code>, compound_components.yaml <code>863394b6c68a</code>, projection.yaml <code>8c307be04626</code>, user_components.yaml <code>f3121db86801</code>    </div>
+      inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>bc7bbe2cfdaa</code>, compound_components.yaml <code>a36b9a81cdc3</code>, projection.yaml <code>4d2d79572bfb</code>, user_components.yaml <code>f3121db86801</code>    </div>
     <details><summary style="cursor:pointer;font-size:13px">
-      34 warnings recorded during this run
-      (32 distinct)</summary>
+      35 warnings recorded during this run
+      (33 distinct)</summary>
       <div class="tblwrap"><table class="msgs">
         <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>qf2u6pwfefi: the gem5 counts are scaled by the tile graph (3 compute nodes, 2049 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>2</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>qf2u6pwfefi: 16777216 useful MACs of 16777216 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>2</td></tr>
+          <td>INFO</td><td><details class="why"><summary>qf2u6pwfefi: 16777216 useful MACs of 16777216 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>2</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>zoc2mqr5ybk: the gem5 counts are scaled by the tile graph (3 compute nodes, 1025 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>zoc2mqr5ybk: 8388608 useful MACs of 8388608 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>zoc2mqr5ybk: 8388608 useful MACs of 8388608 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>oa52pdopd2q: the gem5 counts are scaled by the tile graph (3 compute nodes, 288 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>oa52pdopd2q: 2097152 useful MACs of 2867200 active PE cycles (73.1%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>oa52pdopd2q: 2097152 useful MACs of 2867200 active PE cycles (73.1%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>qe4zxjwzzag: the gem5 counts are scaled by the tile graph (3 compute nodes, 288 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>qe4zxjwzzag: 2097152 useful MACs of 6209536 active PE cycles (33.8%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>qe4zxjwzzag: 2097152 useful MACs of 6209536 active PE cycles (33.8%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>l3g7wgugjfc: the gem5 counts are scaled by the tile graph (3 compute nodes, 14338 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>l3g7wgugjfc: 117440512 useful MACs of 124600320 active PE cycles (94.3%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>l3g7wgugjfc: 117440512 useful MACs of 124600320 active PE cycles (94.3%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
           <td>INFO</td><td><details class="why"><summary>3zn5oxuk6p7: the gem5 counts are scaled by the tile graph (3 compute nodes, 7184 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6222</code></td>
-          <td>INFO</td><td><details class="why"><summary>3zn5oxuk6p7: 58720256 useful MACs of 58769408 active PE cycles (99.9%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which the PE is clocked and holds its data. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>3zn5oxuk6p7: 58720256 useful MACs of 58769408 active PE cycles (99.9%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-warning"><td><code>NW-6201</code></td>
           <td>WARNING</td><td><details class="why"><summary>wdpiae4vm5p: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-6217</code></td>
@@ -548,6 +548,8 @@
           <td>WARNING</td><td><details class="why"><summary>CustomMatMulwVpush: NPUWattch divides the kernel total between the arrays by their active cycles.</summary>The log gives this stat as one total for the kernel. NPUWattch divides it between the arrays in proportion to the active cycles of each array. The per-array energy is approximate. The total energy does not change.</details></td><td>1</td></tr>
 <tr class="lvl-warning"><td><code>NW-8111</code></td>
           <td>WARNING</td><td><details class="why"><summary>core0.vrf: width=256 is outside the characterized range 8-128 of regfile.</summary>The model of this primitive has training data only in this range. NPUWattch extrapolates the value. The result of this component is less accurate.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-3107</code></td>
+          <td>INFO</td><td><details class="why"><summary>Clock gating is assumed: idle cycles of 8 logic component(s) cost leakage only.</summary>NPUWattch assumes that each block is clock-gated, thus an idle cycle costs no dynamic energy. A register-file or FIFO access costs its mode energy minus the idle energy, because a gated array clocks only the accessed row. A datapath event is one active cycle and costs its full energy. To model a block without clock gating, set clock_gating: false on its component.</details></td><td>1</td></tr>
       </table></div></details>
     <details><summary style="cursor:pointer;font-size:13px">
       12 declared exclusions and notes (INFO —

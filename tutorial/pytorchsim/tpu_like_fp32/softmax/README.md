@@ -14,15 +14,16 @@ PyTorchSim compiles the softmax into three kernels. `exp2` is one kernel.
 
 | Window | What it computes | Cycles | Energy at 7nm |
 | --- | --- | --- | --- |
-| `01_softmax_p0` | row maximum | 14 102 | 246 µJ |
-| `01_softmax_p1` | exp(x − max) and the row sum | 15 224 | 293 µJ |
-| `01_softmax_p2` | exp(x − max) / sum | 26 837 | 525 µJ |
-| `02_exp2` | 2ˣ | 52 301 | 1.00 mJ |
+| `01_softmax_p0` | row maximum | 14 102 | 191 µJ |
+| `01_softmax_p1` | exp(x − max) and the row sum | 15 224 | 198 µJ |
+| `01_softmax_p2` | exp(x − max) / sum | 26 837 | 376 µJ |
+| `02_exp2` | 2ˣ | 52 301 | 391 µJ |
 
-Total: **2.07 mJ**. Every window is `non_mac`. The vector register file
-takes 45% of the energy, DRAM 47%, and the vector FPU 3%. The SFU pipes
-are a small part: the exponent is one operation per element, while the
-register file is read for every operand of every vector instruction.
+Total: **1.16 mJ**. Every window is `non_mac`. DRAM takes 83% of the
+energy. On chip, the vector datapath (`vfu`, 5.3%) is the largest line, and
+the register file (`vrf`, 2.7%) is small, because a clock-gated access costs
+only its per-access energy. The SFU pipes are a small part (0.3%): the
+exponent is one operation per element.
 
 `exp2` has no `CustomVexp2` instruction in this PyTorchSim build. The
 compiler lowers it to `CustomVexp` with a scaled argument, which is why its
@@ -62,8 +63,8 @@ out/                        report.html + report.json (included; ./run overwrite
   kernels that use the exponent.
 - `NW-8212` ×3 and `NW-8111`, as in the parent folder. The register-file
   extrapolation (`NW-8111`, width 256 outside the characterized 8 to 128)
-  matters more here than in a matmul, because the register file is the
-  largest on-chip consumer of this run.
+  matters more here than in a matmul, because the register file is a
+  visible part (2.7%) of this run.
 
 ## How the sample data was made
 

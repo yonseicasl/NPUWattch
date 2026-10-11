@@ -519,6 +519,31 @@ register("NW", blocks={
            "Give the area and the action energies of the component in the "
            "user component library. "
            "Use --user-components to give the library."),
+    3105: (INFO, "{component}: clock_gating is false, so each idle cycle "
+                 "costs {e_idle:.3g} pJ for each instance.",
+           "NPUWattch assumes that each block is clock-gated. This component "
+           "sets clock_gating to false. Thus NPUWattch charges the clocked "
+           "idle energy of the estimator for each instance cycle that has no "
+           "event. Each event costs its full energy, which includes the clock "
+           "tree. No action is necessary."),
+    3106: (WARNING, "{component}: clock_gating is false, but the estimator "
+                    "of {primitive!r} has no idle energy, so the attribute "
+                    "has no effect.",
+           "Only an estimator with a characterized idle mode can charge the "
+           "idle cycles of a block without clock gating. The estimator of "
+           "this primitive has no idle mode. Thus the idle cycles of this "
+           "component cost leakage only. "
+           "Remove the attribute, or give the idle energy of the block in the "
+           "user component library."),
+    3107: (INFO, "Clock gating is assumed: idle cycles of {count} logic "
+                 "component(s) cost leakage only.",
+           "NPUWattch assumes that each block is clock-gated, thus an idle "
+           "cycle costs no dynamic energy. "
+           "A register-file or FIFO access costs its mode energy minus the "
+           "idle energy, because a gated array clocks only the accessed row. "
+           "A datapath event is one active cycle and costs its full energy. "
+           "To model a block without clock gating, set clock_gating: false "
+           "on its component."),
 
     # -- 32xx: continuous node axis (energy.node_scaling) ---------------------
     3201: ("NodeError", "Technology node {value!r} is not a valid length in "

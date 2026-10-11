@@ -21,53 +21,53 @@ Prefill (T = 512):
 
 | Window | Shape | Cycles | Energy at 7nm | pJ per useful MAC |
 | --- | --- | --- | --- | --- |
-| `1_q_proj` | 512×3584 @ 3584×4096 | 411 821 | 43.6 mJ | 5.8 |
-| `2_kv_proj` | 512×3584 @ 3584×4096 | 415 722 | 43.6 mJ | 5.8 |
-| `3_attn_qk` | 16 × (512×256 @ 256×512) | 100 824 | 6.87 mJ | 6.4 |
-| `4_attn_av` | 16 × (512×512 @ 512×256) | 101 085 | 6.86 mJ | 6.4 |
-| `5_o_proj` | 512×4096 @ 4096×3584 | 316 815 | 43.7 mJ | 5.8 |
-| `6_ffn_up_gate` | 512×3584 @ 3584×28672 | 5 575 632 | 358 mJ | 6.8 |
-| `7_ffn_down` | 512×14336 @ 14336×3584 | 2 691 664 | 178 mJ | 6.8 |
-| `8_softmax_p0..p2` | 16×512×512 | 208 556 | 4.71 mJ | — |
-| `9_rmsnorm_p0..p1` | 512×3584 | 86 747 | 1.35 mJ | — |
-| `10_gelu_mul` | 512×14336 | 471 933 | 9.50 mJ | — |
+| `1_q_proj` | 512×3584 @ 3584×4096 | 411 821 | 42.5 mJ | 5.7 |
+| `2_kv_proj` | 512×3584 @ 3584×4096 | 415 722 | 42.5 mJ | 5.7 |
+| `3_attn_qk` | 16 × (512×256 @ 256×512) | 100 824 | 6.65 mJ | 6.2 |
+| `4_attn_av` | 16 × (512×512 @ 512×256) | 101 085 | 6.66 mJ | 6.2 |
+| `5_o_proj` | 512×4096 @ 4096×3584 | 316 815 | 42.6 mJ | 5.7 |
+| `6_ffn_up_gate` | 512×3584 @ 3584×28672 | 5 575 632 | 349 mJ | 6.6 |
+| `7_ffn_down` | 512×14336 @ 14336×3584 | 2 691 664 | 173 mJ | 6.6 |
+| `8_softmax_p0..p2` | 16×512×512 | 208 556 | 2.94 mJ | — |
+| `9_rmsnorm_p0..p1` | 512×3584 | 86 747 | 1.13 mJ | — |
+| `10_gelu_mul` | 512×14336 | 471 933 | 3.94 mJ | — |
 
-Total: **696 mJ** over 10.4 M cycles, 104 G useful MACs, 6.7 pJ per useful
-MAC. The two systolic arrays take 75% of the energy and DRAM 19%. The six
-non-GEMM windows are 2.2%.
+Total: **671.7 mJ** over 10.4 M cycles, 104 G useful MACs, 6.5 pJ per useful
+MAC. The two systolic arrays take 78% of the energy and DRAM 20%. The six
+non-GEMM windows are 1.2%.
 
 Decode (T = 1):
 
 | Window | Cycles | Energy at 7nm | pJ per useful MAC |
 | --- | --- | --- | --- |
-| `1_q_proj` | 179 060 | 2.74 mJ | 187 |
-| `2_kv_proj` | 179 087 | 2.74 mJ | 187 |
-| `3_attn_qk` (KV 512) | 27 509 | 360 µJ | 172 |
-| `4_attn_av` (KV 512) | 27 477 | 352 µJ | 168 |
-| `5_o_proj` | 178 464 | 2.46 mJ | 167 |
-| `6_ffn_up_gate` | 1 242 039 | 18.6 mJ | 181 |
-| `7_ffn_down` | 1 049 115 | 12.3 mJ | 239 |
-| non-GEMM kernels (6 windows) | 6 340 | 78 µJ | — |
+| `1_q_proj` | 179 060 | 2.71 mJ | 185 |
+| `2_kv_proj` | 179 087 | 2.71 mJ | 185 |
+| `3_attn_qk` (KV 512) | 27 509 | 353 µJ | 168 |
+| `4_attn_av` (KV 512) | 27 477 | 345 µJ | 164 |
+| `5_o_proj` | 178 464 | 2.42 mJ | 165 |
+| `6_ffn_up_gate` | 1 242 039 | 18.4 mJ | 179 |
+| `7_ffn_down` | 1 049 115 | 12.2 mJ | 237 |
+| non-GEMM kernels (6 windows) | 6 340 | 20 µJ | — |
 
-Total: **39.6 mJ** over 2.89 M cycles, 202 M useful MACs, 196 pJ per useful
-MAC. DRAM is 88% of the energy.
+Total: **39.1 mJ** over 2.89 M cycles, 203 M useful MACs, 192 pJ per useful
+MAC. DRAM is 90% of the energy.
 
 ## Gemma next to Llama
 
 | | Gemma-2-9B prefill | Llama-3-8B prefill | Gemma-2-9B decode | Llama-3-8B decode |
 | --- | --- | --- | --- | --- |
-| Useful MACs | 104 G | 114 G | 202 M | 222 M |
-| Energy | 696 mJ | 691 mJ | 39.6 mJ | 44.2 mJ |
-| pJ per useful MAC | 6.7 | 6.1 | 196 | 199 |
-| DRAM share | 19% | 12% | 88% | 88% |
+| Useful MACs | 104 G | 114 G | 203 M | 223 M |
+| Energy | 671.7 mJ | 664.6 mJ | 39.1 mJ | 43.6 mJ |
+| pJ per useful MAC | 6.5 | 5.8 | 192 | 195 |
+| DRAM share | 20% | 12% | 90% | 89% |
 
 The Gemma block has 9% fewer MACs than the Llama block but costs the same in
-prefill. Its FFN GEMMs cost 6.8 pJ per MAC against 6.0 in Llama: the hidden
+prefill. Its FFN GEMMs cost 6.6 pJ per MAC against 5.6 to 5.8 in Llama: the hidden
 size 3584 is 28 tiles of 128, and the two FFN kernels take 1.7 times more
 cycles than Llama's for 0.9 times the MACs, which the simulator's tiling of
 this shape explains. DRAM takes a larger share because the FFN runs longer
 and the wider heads move more key-value data. In decode both blocks are
-matrix-vector products and cost about 200 pJ per MAC.
+matrix-vector products and cost about 190 pJ per MAC.
 
 ## The GELU kernel
 

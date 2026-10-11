@@ -153,18 +153,18 @@ Here is the per-layer table from the console:
 ┏━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
 ┃ # ┃ window   ┃  cycles ┃  dyn (pJ) ┃ leak (pJ) ┃ total (pJ) ┃ avg power (mW) ┃
 ┡━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
-│ 0 │ 01_conv1 │  638880 │ 6.627e+08 │ 1.873e+06 │  6.646e+08 │           1040 │
-│ 1 │ 02_conv2 │ 2332800 │ 2.688e+09 │  6.84e+06 │  2.695e+09 │           1155 │
-│ 2 │ 03_conv3 │  718848 │ 1.134e+09 │ 2.108e+06 │  1.136e+09 │           1581 │
-│ 3 │ 04_conv4 │ 1437696 │ 1.472e+09 │ 4.215e+06 │  1.476e+09 │           1027 │
-│ 4 │ 05_conv5 │  638976 │ 9.741e+08 │ 1.873e+06 │  9.759e+08 │           1527 │
-│ 5 │ 06_fc6   │  393216 │ 2.968e+09 │ 1.153e+06 │  2.969e+09 │           7550 │
-│ 6 │ 07_fc7   │  262144 │ 1.318e+09 │ 7.686e+05 │  1.318e+09 │           5029 │
-│ 7 │ 08_fc8   │   40960 │ 3.219e+08 │ 1.201e+05 │   3.22e+08 │           7862 │
+│ 0 │ 01_conv1 │  638880 │ 9.419e+07 │ 1.873e+06 │  9.606e+07 │          150.4 │
+│ 1 │ 02_conv2 │ 2332800 │ 8.403e+08 │  6.84e+06 │  8.472e+08 │          363.2 │
+│ 2 │ 03_conv3 │  718848 │  1.85e+08 │ 2.108e+06 │  1.871e+08 │          260.3 │
+│ 3 │ 04_conv4 │ 1437696 │ 2.056e+08 │ 4.215e+06 │  2.098e+08 │          145.9 │
+│ 4 │ 05_conv5 │  638976 │ 1.374e+08 │ 1.873e+06 │  1.393e+08 │            218 │
+│ 5 │ 06_fc6   │  393216 │ 2.461e+09 │ 1.153e+06 │  2.463e+09 │           6263 │
+│ 6 │ 07_fc7   │  262144 │ 1.094e+09 │ 7.686e+05 │  1.095e+09 │           4175 │
+│ 7 │ 08_fc8   │   40960 │ 2.672e+08 │ 1.201e+05 │  2.673e+08 │           6527 │
 └───┴──────────┴─────────┴───────────┴───────────┴────────────┴────────────────┘
 ```
 
-Total: **11.6 mJ**, 1.79 W average power, 0.459 mm² area, and 16.2 pJ per MAC.
+Total: **5.30 mJ**, 0.82 W average power, 0.459 mm² area, and 7.4 pJ per MAC.
 
 The per-component table below it shows *where* the energy goes. The component
 names are shown relative to the hierarchy prefix they all share, which is
@@ -178,13 +178,13 @@ INFO (NW-1037): Per-window component energy (dynamic, pJ):
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
 │ DRAM                              │ 2.956e+07 │  6.33e+08 │ 2.417e+09 │ 2.625e+08 │
 │ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 4.925e+04 │      1550 │
-│ eyeriss.PE_column.PE.weights_spad │ 4.042e+08 │ 1.312e+09 │ 4.273e+08 │ 4.637e+07 │
+│ eyeriss.PE_column.PE.weights_spad │ 6.652e+06 │ 2.232e+07 │ 1.339e+07 │ 1.453e+06 │
 │ eyeriss.PE_column.PE.mac          │ 4.609e+07 │ 1.469e+08 │ 2.475e+07 │ 2.686e+06 │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┘
 ```
 
 (Only four of the eight columns and four of the six rows are shown here.) In
-the conv layers, the weight scratchpads use the most energy. In the fully
+the conv layers, the MAC is the largest on-chip consumer. In the fully
 connected layers, DRAM traffic takes over. The fc6 layer alone spends
 2.42e+09 pJ in DRAM, because each weight is used only once. This kind of
 breakdown is exactly what NPUWattch is designed to show.
@@ -245,9 +245,9 @@ chip
     └── dram_chan [×16]  (class: hbm)
 ```
 
-Result: **6.14 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
-2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 88% of the
-dynamic energy and DRAM for 8%, which is what you'd expect from a matmul.
+Result: **5.96 mJ** over 52 022 cycles, 108 W average power, 88.75 mm²,
+2.78 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
+energy and DRAM for 8%, which is what you'd expect from a matmul.
 
 The long INFO block in this run (`NW-6008` and `NW-2209`) is worth a look.
 It lists the parts that are *not* included in the totals (the scalar core and its caches, the VCIX
@@ -268,7 +268,7 @@ A real TPU multiplies in bf16. This design reads the simulator files of
 `tpu_like_fp32/matmul_1024` and changes only `compound_components.yaml`: the `pe` element
 uses a fixed bf16 `fpmac` instead of the `{mac_primitive}` / `{mac_config}`
 templates. The PE energy drops from 5.05 to 1.56 pJ per MAC, and the total is
-**2.29 mJ, 1.07 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
+**2.21 mJ, 1.03 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
 float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
 
 ### More workloads

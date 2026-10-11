@@ -13,10 +13,10 @@ config: two cores with two 128×128 arrays each, 32 HBM2 channels, and a
 | | `../matmul_2048_1core/` | 2 cores (this folder) |
 | --- | --- | --- |
 | Cycles | 313 749 | 169 707 |
-| Energy at 7nm | 49.1 mJ | 48.8 mJ |
+| Energy at 7nm | 47.7 mJ | 47.5 mJ |
 | Area | 88.8 mm² | 177.5 mm² |
-| Average power | 147 W | 270 W |
-| Power density | 1.66 W/mm² | 1.52 W/mm² |
+| Average power | 143 W | 263 W |
+| Power density | 1.61 W/mm² | 1.48 W/mm² |
 
 Each core does half of the GEMM tiles. The log shows the same COMP count on
 `Core [0]` and `Core [1]`, and each array is active for 131 072 cycles, half

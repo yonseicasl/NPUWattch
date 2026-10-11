@@ -123,8 +123,12 @@ run and stays at the end of the file.
   `transfer`, or `idle`. It has no effect on the energy.
 - **`mode`** sets the energy. It names the **stimulus mode** the primitive
   was characterized in: `hold_b` for a weight-stationary MAC, `random` for
-  random operands, `read` or `write` for a memory, `idle` for a clocked
-  but inactive block, and so on. Each primitive has its own list of
+  random operands, `read` or `write` for a memory, `idle` for an inactive
+  block, and so on. NPUWattch assumes clock gating: an `idle` row costs no
+  dynamic energy (only leakage), and a register-file `read` or `write`
+  costs one access without the clock tree of the whole array. The
+  attribute `clock_gating: false` on a component models a block without
+  clock gating. Each primitive has its own list of
   characterized modes, and NPUWattch checks every row against that list,
   so a typo in a mode name is caught before anything is computed.
 - **`count`** is the number of events in that window, summed over all
@@ -240,7 +244,8 @@ compounds:
 The first entry reads as: for every useful MAC of the kernel, charge one PE
 operation in weight-stationary mode, and charge the weight register one
 idle cycle. The second charges the active PE cycles that hold no real weight
-in the idle mode. Elements an action does not name are charged
+in the idle mode. With clock gating (the default), these idle events cost
+leakage only. Elements an action does not name are charged
 idle, or nothing if the compound declares `default_mode: gated`. Every
 (primitive, mode) pair is validated against the list of characterized modes.
 A counter with activity that no action uses gives a coverage warning, unless

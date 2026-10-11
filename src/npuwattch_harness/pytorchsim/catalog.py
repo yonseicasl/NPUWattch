@@ -353,8 +353,8 @@ register("NW", blocks={
            "many PEs hold a real weight. NPUWattch computes the useful MAC "
            "count from the operator and the tensor shapes. It charges this "
            "count in the compute mode of the PE. It charges the other active "
-           "PE cycles in the idle mode, in which the PE is clocked and holds "
-           "its data. No action is necessary."),
+           "PE cycles in the idle mode, in which a clock-gated PE costs "
+           "leakage only. No action is necessary."),
     6223: (WARNING,
            "{kernel}: the tile graph file is not readable ({error}), so the "
            "gem5 counts are scaled by the COMP counts.",

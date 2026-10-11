@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from npuwattch.diagnostics import info, warning
-from npuwattch.naming import CONTEXT_NAMES, PRIMITIVE_PARAMS
+from npuwattch.naming import CONTEXT_NAMES, PRIMITIVE_PARAMS, clock_gating_of
 from .dram import CONSTANT_NAMES, constants_for
 from ..vocabulary import (
     AttributeReader,
@@ -160,6 +160,12 @@ def attributes_for(
         stages = reader.take_int("pipeline_stages")
         if stages is not None:
             out["pipeline_stages"] = stages
+
+    # Each primitive accepts clock_gating. An Accelergy value can be a text,
+    # thus the value becomes a bool here.
+    gating = reader.take("clock_gating")
+    if gating is not None:
+        out["clock_gating"] = clock_gating_of({"clock_gating": gating})
 
     ignored = reader.ignored()
     if ignored:

@@ -66,7 +66,25 @@ TARGET_COLUMNS = {
     "timing": "pnr_min_period_ns",
     "area": "pnr_total_area_um2",
 }
-TARGET_UNITS = {"energy": "pJ", "leakage": "mW", "timing": "ns", "area": "um2"}
+TARGET_UNITS = {"energy": "pJ", "leakage": "mW", "timing": "ns", "area": "um2",
+                "energy_delta": "pJ"}
+
+#: Derived metrics. Their target is calculated from two dataset rows, not
+#: read from one column. They are not in METRICS, thus ``available`` does not
+#: need them.
+#:
+#: ``energy_delta`` (user ruling 2026-10-11, clock gating): the energy of one
+#: access of an access primitive without the clock tree of the array. The
+#: target is dyn_energy_pJ(mode row) - dyn_energy_pJ(idle row) of the same
+#: implementation (the same flow_run_id). The features and the stim_mode
+#: one-hot are the same as for ``energy``. The idle column of the one-hot is
+#: always 0 in the training data.
+DERIVED_METRICS = ("energy_delta",)
+
+#: The components that have an ``energy_delta`` model.
+DELTA_COMPONENTS = ("regfile", "fifo")
+
+TARGET_COLUMNS["energy_delta"] = "dyn_energy_pJ"
 
 #: The metrics that have one row for each stim_mode (a one-hot input). Timing
 #: and area are properties of the implementation. They have one row for each
@@ -141,6 +159,7 @@ DEFAULT_ARCH: Dict[str, List[int]] = {
     "leakage": [128, 128, 128],
     "timing": [64, 64],                 # one row for each design (no mode axis)
     "area": [64, 64],
+    "energy_delta": [128, 128, 128],    # the same net as the energy model
 }
 
 
@@ -152,7 +171,9 @@ def node_nm(node: str) -> int:
 
 
 def modes_for(component: str, metric: str) -> Tuple[str, ...]:
-    return STIM_MODES[component] if metric in MODE_METRICS else ()
+    if metric in MODE_METRICS or metric in DERIVED_METRICS:
+        return STIM_MODES[component]
+    return ()
 
 
 def base_feature_names(component: str, metric: str) -> List[str]:

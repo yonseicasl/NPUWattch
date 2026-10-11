@@ -12,7 +12,10 @@
 # of the operator, from the operation name in the log and the shapes in
 # meta.txt). The active PE cycles above that count are PEs that hold no real
 # weight (array_idle_slots); the CustomMatMulIdle action charges them in the
-# idle mode, in which the PE is clocked and holds its data.
+# idle mode. NPUWattch assumes clock gating: an idle PE is clock-gated and
+# costs leakage only (no dynamic energy). To model a PE without clock gating,
+# set `clock_gating: false` on the pe element in compound_components.yaml.
+# The weight-register write is one access: E_write - E_idle of the regfile.
 # The gem5 instruction counts (pushes, pops, SFU operations) come from the
 # sample program and are scaled by the tile graph (*_tog.py) to the kernel.
 #
@@ -99,13 +102,13 @@ compounds:
         stat: useful_macs             # M·K·N of the operator (log operation + meta.txt shapes)
       elements:
         pe: hold_b                    # PE computes with b latched
-        w_reg: idle                   # the weight stays, this action has no write
+        w_reg: idle                   # the weight stays and is clock-gated: leakage only
 
     CustomMatMulIdle:                 # active PE cycles without a real weight
       count_from:
         stat: array_idle_slots        # systolic_active_cycles × lanes² − useful_macs
       elements:
-        pe: idle                      # the PE is clocked, its data does not change
+        pe: idle                      # the PE is clock-gated: leakage only
         w_reg: idle
 
     CustomMatMulwVpush:               # weight load (push of a new weight)
@@ -113,7 +116,7 @@ compounds:
         stat: CustomMatMulwVpush
         scale: lanes
       elements:
-        pe: idle                      # the PE does not compute during a load
+        pe: idle                      # the PE does not compute during a load (clock-gated)
         w_reg: write                  # the weight-register write = weight-load energy
 
     # Sparsity variant: if the log gives the activation sparsity, map

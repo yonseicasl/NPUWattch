@@ -1,0 +1,68 @@
+{
+ "component": "regfile",
+ "model": "energy_delta",
+ "version": "v2",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 16,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_width",
+  "log2_depth",
+  "log2_num_read_ports",
+  "log2_num_write_ports",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random",
+  "mode_read",
+  "mode_write",
+  "mode_idle"
+ ],
+ "stim_modes": [
+  "none",
+  "random",
+  "read",
+  "write",
+  "idle"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "78a6e0af20a609051773a86990bb8902d3c9ad7f0be101a3543878cf9a2bacee",
+ "seed": 42,
+ "split": {
+  "train": 1433,
+  "val": 180,
+  "test": 183
+ },
+ "epochs_run": 833,
+ "val_mape": 0.0744408369064331,
+ "test_mape": 0.07005192662347999,
+ "test_spearman": 0.9963735480485303,
+ "per_mode_test_mape": {
+  "none": 0.03163519105471167,
+  "random": 0.07358762750523977,
+  "read": 0.10387943402471025,
+  "write": 0.0718408345049372
+ },
+ "per_node_test_mape": {
+  "10nm": 0.06880479259601249,
+  "16nm": 0.09202137167094339,
+  "20nm": 0.08430238935051708,
+  "5nm": 0.06156778442019135,
+  "7nm": 0.04502086626681148
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
+ "loss_max_min_ratio": 192.39280700683594,
+ "date": "2026-10-11T12:47:50",
+ "torch": "2.13.0+cpu",
+ "target_definition": "dyn_energy_pJ(mode row) - dyn_energy_pJ(idle row) of the same flow_run_id; zero and negative deltas removed (eval_report.json delta_targets)"
+}

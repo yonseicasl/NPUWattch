@@ -84,7 +84,7 @@ What carries over from the float32 run:
   for any data type, so the 1 073 741 824 MACs and the active cycles apply to
   bf16 as well.
 - **DRAM, VMEM, and NoC traffic.** These counts come from the float32 run, so
-  they reflect float32 data sizes. At 7nm, DRAM accounts for 21% of the total
+  they reflect float32 data sizes. At 7nm, DRAM accounts for 22% of the total
   energy of this run.
   <!-- Internal note: a bf16 kernel moves half of these bytes. NPUWattch
   charges the counts from the log without scaling them, so the memory and NoC
@@ -102,8 +102,8 @@ Results at 7nm:
 | | `../tpu_like_fp32/matmul_1024/` | this design |
 | --- | --- | --- |
 | energy per MAC of one PE | 5.05 pJ | 1.56 pJ |
-| total energy | 6.14 mJ | 2.29 mJ |
-| pJ/FLOP (DRAM included) | 2.86 | 1.07 |
+| total energy | 5.96 mJ | 2.21 mJ |
+| pJ/FLOP (DRAM included) | 2.78 | 1.03 |
 
 For comparison, the TPUv4i (7nm, 4 × 128×128 bf16 MXUs) has a TDP of 175 W and
 a peak of 138 bf16 TFLOP/s (Jouppi et al., ISCA 2021), which works out to

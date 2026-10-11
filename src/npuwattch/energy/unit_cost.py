@@ -4,7 +4,7 @@ energy calculation.
 A ``UnitCostProvider`` gives the four unit costs of manual §6 for one instance
 of a primitive, at the technology, PVT, and frequency of the query:
 
-    energy_per_cycle(primitive, features)  pJ for one active cycle in one stim_mode
+    energy_per_cycle(primitive, features)  pJ charged for one event in one stim_mode
     leak_power(primitive, features)        mW for one instance (static)
     area(primitive, features)              µm² for one instance
     crit_path(primitive, features)         ns for one instance
@@ -14,6 +14,15 @@ technology context. For an energy query, it also contains ``stim_mode``.
 ``EstimatorHost.estimate_energy(module, features)`` uses the same dict
 convention. The provider of an estimator returns the predictions of its
 trained MLP models through this interface.
+
+``energy_per_cycle`` gives the CHARGED energy of one event, not the raw
+characterized value. NPUWattch assumes that each block is clock-gated (user
+ruling 2026-10-11). Thus an ``idle`` event of a logic primitive costs 0 pJ,
+and an access of a register file or a FIFO costs E_mode - E_idle (the logic
+estimator predicts it with a dedicated energy_delta model). A datapath
+event is one active cycle and costs E_mode. The component attribute
+``clock_gating: false`` gives E_mode for each mode, and the provider then
+gives idle terms (refer to ``idle_terms`` below).
 
 The providers make a chain (``provider_factory``). Each provider answers for
 its own primitives and sends the other queries to the next provider. The last
@@ -87,9 +96,11 @@ class UnitCostProvider(Protocol):
     #
     # ``idle_terms(primitive, features) ->
     # (e_idle_per_cycle_pJ, idle_displaced_per_access_pJ) | None``:
-    # with these terms, the energy calculation charges the clocked-idle energy
-    # of a memory one time for each cycle, not in each access event. Refer to
-    # aggregate._book_idle_per_cycle.
+    # with these terms, the energy calculation charges the clocked idle
+    # energy one time for each instance cycle, not in each event. None means
+    # that the block is clock-gated: an idle cycle costs leakage only. A
+    # logic primitive with ``clock_gating: false`` returns (E_idle, E_idle).
+    # Refer to aggregate._book_idle_per_cycle.
     #
     # ``envelope_warnings(primitive, features) -> List[str]``: the reasons why
     # a query is not a characterized design point (a clamped depth, or an

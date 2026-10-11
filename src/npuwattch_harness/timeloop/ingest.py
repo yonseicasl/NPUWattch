@@ -45,7 +45,8 @@ from ..run_inputs import (
 )
 from ..vocabulary import positive_int
 from .dram import select_table, warn_if_unused
-from npuwattch.naming import CANONICAL, NamingError, validate_attributes
+from npuwattch.naming import (CANONICAL, NamingError, clock_gating_of,
+                              validate_attributes)
 from .vocabulary import (
     VOCABULARY,
     attributes_for,
@@ -156,15 +157,24 @@ def _expand_compound(compound: Compound, name: str, entry: Any,
     function raises :class:`HarnessError`.
     """
     symbols: Dict[str, int] = {}
+    gating: Optional[bool] = None
     for key, value in (entry.attributes or {}).items():
+        norm = str(key).strip().replace("-", "_").lower()
+        if norm == "clock_gating":
+            # The attribute of the Accelergy component applies to each
+            # element that does not set clock_gating itself.
+            gating = clock_gating_of({"clock_gating": value})
+            continue
         number = positive_int(value)
         if number is not None and not isinstance(value, bool):
-            symbols[str(key).strip().replace("-", "_").lower()] = number
+            symbols[norm] = number
     try:
         resolved = resolve_compound(compound, None, symbols)
         for element, rel in resolved.items():
             attrs = {k: v for k, v in (rel.config or {}).items()
                      if v is not None}
+            if gating is not None:
+                attrs.setdefault("clock_gating", gating)
             component = f"{name}.{element}"
             # A name that is not a symbol stays a string. For a numeric
             # attribute that is an expression that has no value.
