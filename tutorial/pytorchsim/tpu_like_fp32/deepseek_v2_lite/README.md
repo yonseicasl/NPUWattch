@@ -36,59 +36,59 @@ Prefill (T = 512):
 
 | Window | Shape | Cycles | Energy at 7nm | pJ per useful MAC |
 | --- | --- | --- | --- | --- |
-| `1_q_proj` | 512×2048 @ 2048×3072 | 139 312 | 17.8 mJ | 5.5 |
-| `2_kv_a_proj` | 512×2048 @ 2048×576 | 54 389 | 3.64 mJ | 6.0 |
-| `3_kv_b_proj` | 512×512 @ 512×4096 | 61 383 | 6.26 mJ | 5.8 |
+| `1_q_proj` | 512×2048 @ 2048×3072 | 139 312 | 17.9 mJ | 5.5 |
+| `2_kv_a_proj` | 512×2048 @ 2048×576 | 54 389 | 3.65 mJ | 6.0 |
+| `3_kv_b_proj` | 512×512 @ 512×4096 | 61 383 | 6.27 mJ | 5.8 |
 | `4_attn_qk` | 16 × (512×192 @ 192×512) | 100 308 | 5.29 mJ | 6.6 |
-| `5_attn_av` | 16 × (512×512 @ 512×128) | 76 224 | 3.64 mJ | 6.8 |
-| `6_o_proj` | 512×2048 @ 2048×2048 | 101 607 | 12.0 mJ | 5.6 |
-| `7_router` | 512×2048 @ 2048×64 | 16 117 | 0.52 mJ | 7.7 |
-| `8_experts_up_gate` | 64 × (48×2048 @ 2048×2816) | 4 625 367 | 152 mJ | 8.6 |
-| `9_experts_down` | 64 × (48×1408 @ 1408×2048) | 3 164 956 | 82.2 mJ | 9.3 |
-| `10_shared_up_gate` | 512×2048 @ 2048×5632 | 226 925 | 32.9 mJ | 5.6 |
+| `5_attn_av` | 16 × (512×512 @ 512×128) | 76 224 | 3.63 mJ | 6.8 |
+| `6_o_proj` | 512×2048 @ 2048×2048 | 101 607 | 12 mJ | 5.6 |
+| `7_router` | 512×2048 @ 2048×64 | 16 117 | 517 µJ | 7.7 |
+| `8_experts_up_gate` | 64 × (48×2048 @ 2048×2816) | 4 625 367 | 151 mJ | 8.5 |
+| `9_experts_down` | 64 × (48×1408 @ 1408×2048) | 3 164 956 | 81.9 mJ | 9.2 |
+| `10_shared_up_gate` | 512×2048 @ 2048×5632 | 226 925 | 33 mJ | 5.6 |
 | `11_shared_down` | 512×2816 @ 2816×2048 | 246 805 | 17.9 mJ | 6.1 |
-| `12_softmax_p0..p2` | 16×512×512 | 209 654 | 2.87 mJ | — |
-| `13_rmsnorm_p0..p1` | 512×2048 | 52 561 | 0.55 mJ | — |
-| `14_silu_mul` | 512×1408 | 42 656 | 0.36 mJ | — |
+| `12_softmax_p0..p2` | 16×512×512 | 209 654 | 2.92 mJ | — |
+| `13_rmsnorm_p0..p1` | 512×2048 | 52 561 | 536 µJ | — |
+| `14_silu_mul` | 512×1408 | 42 656 | 357 µJ | — |
 
-Total: **337.9 mJ** over 9.12 M cycles, 43.9 G useful MACs, 7.7 pJ per useful
+Total: **337.2 mJ** over 9.12 M cycles, 43.9 G useful MACs, 7.7 pJ per useful
 MAC. DRAM is 31% of the energy. The non-GEMM kernels are 1.1%.
 
 Decode (T = 1):
 
 | Window | Cycles | Energy at 7nm | pJ per useful MAC |
 | --- | --- | --- | --- |
-| `1_q_proj` | 76 946 | 1.03 mJ | 164 |
-| `2_kv_a_proj` | 16 736 | 211 µJ | 179 |
-| `3_kv_b_proj` | 26 466 | 365 µJ | 174 |
-| `4_attn_qk` (KV 512) | 27 305 | 348 µJ | 221 |
-| `5_attn_av` (KV 512) | 15 057 | 163 µJ | 155 |
-| `6_o_proj` | 51 924 | 688 µJ | 164 |
-| `7_router` | 2 371 | 21.6 µJ | 165 |
-| `8_experts_up_gate` (6 experts) | 420 210 | 5.76 mJ | 166 |
-| `9_experts_down` (6 experts) | 211 418 | 2.91 mJ | 168 |
-| `10_shared_up_gate` | 140 446 | 1.91 mJ | 165 |
-| `11_shared_down` | 101 989 | 1.09 mJ | 190 |
-| non-GEMM kernels (6 windows) | 4 414 | 12 µJ | — |
+| `1_q_proj` | 76 946 | 1.02 mJ | 161 |
+| `2_kv_a_proj` | 16 736 | 207 µJ | 176 |
+| `3_kv_b_proj` | 26 466 | 360 µJ | 172 |
+| `4_attn_qk` (KV 512) | 27 305 | 342 µJ | 217 |
+| `5_attn_av` (KV 512) | 15 057 | 160 µJ | 153 |
+| `6_o_proj` | 51 924 | 678 µJ | 162 |
+| `7_router` | 2 371 | 21.2 µJ | 162 |
+| `8_experts_up_gate` (6 experts) | 420 210 | 5.67 mJ | 164 |
+| `9_experts_down` (6 experts) | 211 418 | 2.86 mJ | 165 |
+| `10_shared_up_gate` | 140 446 | 1.88 mJ | 163 |
+| `11_shared_down` | 101 989 | 1.08 mJ | 187 |
+| non-GEMM kernels (6 windows) | 4 414 | 12.1 µJ | — |
 
-Total: **14.5 mJ** over 1.10 M cycles, 86.3 M useful MACs, 168 pJ per useful
-MAC. DRAM is 88% of the energy.
+Total: **14.3 mJ** over 1.10 M cycles, 86.3 M useful MACs, 166 pJ per useful
+MAC. DRAM is 90% of the energy.
 
 ## What to look at
 
 - **Prefill: the experts.** The two expert kernels are 69% of the block's
   energy and 85% of its cycles. Each expert GEMM has only 48 rows, so the
   weight-stationary array loads a 128×128 weight tile and streams 48 inputs
-  through it before the next load. The energy per useful MAC is 8.6 to 9.3 pJ,
+  through it before the next load. The energy per useful MAC is 8.5 to 9.2 pJ,
   against 5.5 to 5.6 pJ in the dense projections with 512 rows. The array is full in
   both cases; the difference is the weight loads and the DRAM traffic per
   MAC. This is the cost of
   MoE on a large systolic array: fewer MACs per token than a dense FFN, but
   each MAC is more expensive.
 - **Decode: DRAM.** Every GEMM is a matrix-vector product. The weights are
-  read once from DRAM and used once, so DRAM takes 88% of the energy and
-  the arrays 4%. One decoded token costs 14.5 mJ, and 512 prefill tokens
-  cost 337.9 mJ, or 0.66 mJ per token.
+  read once from DRAM and used once, so DRAM takes 90% of the energy and
+  the arrays 4%. One decoded token costs 14.3 mJ, and 512 prefill tokens
+  cost 337.2 mJ, or 0.66 mJ per token.
 - **The router** is a small GEMM (N = 64) with a higher cost per MAC: the
   weight tile has 64 real columns of 128, so half of the active PE cycles are
   empty (`NW-6222` reports 50%). The empty PEs are clock-gated and cost

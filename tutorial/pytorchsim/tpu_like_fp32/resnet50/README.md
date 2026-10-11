@@ -12,28 +12,28 @@ norm. All kernels are float32.
 ## Kernels
 
 PyTorchSim compiles a convolution into two or three kernels: one or two
-vector kernels that lay out and pad the input (`_p0`, `_p1`), and the GEMM.
-A 1×1 convolution with no padding has no padding kernel, so it gives two
-kernels. The window names come from `kernels.yaml`.
+layout kernels (they pad the input, or re-lay the weights, as `06_res5_3x3_p1`
+does), and the GEMM, which is the last kernel of the layer. A 1×1
+convolution with no padding has one layout kernel, so it gives two kernels. The window names come from `kernels.yaml`.
 
 | Layer | Shape | GEMM window | Cycles | Energy at 7nm | Useful MACs | Array occupancy | pJ per useful MAC |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| conv1 | C=3, M=64, 7×7, 112×112, stride 2 | `01_conv1_p2` | 315 300 | 1.40 mJ | 118 M | 1.2% | 11.8 |
+| conv1 | C=3, M=64, 7×7, 112×112, stride 2 | `01_conv1_p2` | 315 300 | 1.62 mJ | 118 M | 1.2% | 13.7 |
 | res2 1×1 | C=64, M=64, 56×56 | `02_res2_1x1_p1` | 5 913 | 125 µJ | 12.8 M | 25% | 9.7 |
-| res2 3×3 | C=64, M=64, 3×3, 56×56 | `03_res2_3x3_p2` | 18 920 | 720 µJ | 116 M | 25% | 6.2 |
-| res3 3×3 | C=128, M=128, 3×3, 28×28 | `04_res3_3x3_p2` | 9 612 | 671 µJ | 116 M | 100% | 5.8 |
-| res4 1×1 expand | C=256, M=1024, 14×14 | `05_res4_1x1_exp_p1` | 9 021 | 341 µJ | 51 M | 100% | 6.6 |
+| res2 3×3 | C=64, M=64, 3×3, 56×56 | `03_res2_3x3_p2` | 18 920 | 728 µJ | 116 M | 25% | 6.3 |
+| res3 3×3 | C=128, M=128, 3×3, 28×28 | `04_res3_3x3_p2` | 9 612 | 672 µJ | 116 M | 100% | 5.8 |
+| res4 1×1 expand | C=256, M=1024, 14×14 | `05_res4_1x1_exp_p1` | 9 021 | 340 µJ | 51 M | 100% | 6.6 |
 | res5 3×3 | C=512, M=512, 3×3, 7×7 | `06_res5_3x3_p2` | 43 981 | 1.13 mJ | 116 M | 88% | 9.8 |
-| fc | C=2048, M=1000 | `07_fc` | 26 246 | 339 µJ | 2 M | 98% | 166 |
+| fc | C=2048, M=1000 | `07_fc` | 26 246 | 334 µJ | 2 M | 98% | 163 |
 
 "Array occupancy" is the useful MACs divided by the active PE cycles of the
 layer, as `INFO (NW-6222)` reports it. The twelve vector kernels (`_p0`,
-`_p1`, `08_relu`, `09_bn`) add 1.18 mJ, 20% of the total. The whole run is
-**5.91 mJ** over 531 107 cycles, 533 M useful MACs, 11.1 pJ per useful MAC.
+`_p1`, `08_relu`, `09_bn`) add 1.16 mJ, 19% of the total. The whole run is
+**6.10 mJ** over 531 107 cycles, 533 M useful MACs, 11.5 pJ per useful MAC.
 
 ## Read the conv1 window first
 
-conv1 is 24% of the energy, the largest layer. Its GEMM is active for 315 300 cycles, and both
+conv1 is 27% of the energy, the largest layer. Its GEMM window is 315 300 cycles, and both
 arrays report 97% active cycles, but the layer has only 118 M useful MACs.
 Two 128×128 arrays can do 118 M MACs in 3 600 cycles. The array is busy for
 87 times longer, because conv1 has three input channels: the reduction
@@ -43,17 +43,18 @@ MLIR), and the simulator runs 5 831 small GEMM tiles.
 
 NPUWattch charges the 118 M useful MACs in the compute mode of the PE and
 the other 9.96 G active PE cycles in the idle mode. NPUWattch assumes clock
-gating, so an idle PE costs leakage only. The window costs 11.8 pJ per
+gating, so an idle PE costs leakage only. The window costs 13.7 pJ per
 useful MAC, against 5.8 pJ in `04_res3_3x3_p2`, where the tiles are full.
 The difference is data movement: DRAM is 5.4 pJ per useful MAC in conv1 and
-0.7 pJ in `04_res3_3x3_p2`, because a nearly empty tile does few MACs for the
-data it moves. The report's `MAC ops` (533 M) and `pJ/MAC` (11.1) count the
-useful MACs.
+0.7 pJ in `04_res3_3x3_p2`, and the input pushes through the lane
+scratchpads are 2.5 pJ against 0.04 pJ, because a nearly empty tile does few
+MACs for the data it moves. The report's `MAC ops` (533 M) and `pJ/MAC`
+(11.5) count the useful MACs.
 
 The low reuse of nearly empty tiles is the cost of running a batch-1 CNN on
-a large weight-stationary array with this tiling. The Timeloop runs of the same layers map each layer
-onto a 16×16 or 8×8 array with a mapper that keeps the PEs full, so they do
-not see this effect.
+a large weight-stationary array with this tiling. The Timeloop runs of the
+same layers map each layer onto a 16×16 or 8×8 array. Their conv1 is not full
+either (48 of 256 and 24 of 64 PEs), but the small arrays lose less to it.
 
 ## The same layers on the Timeloop designs
 
@@ -61,10 +62,10 @@ not see this effect.
 | --- | --- | --- | --- |
 | Operands | fp32 | int8 | int8 |
 | Array | 2 × 128×128 | 16×16 | 8×8 |
-| Energy, 7 layers | 5.91 mJ | 1.06 mJ | 1.18 mJ |
-| Energy, without conv1 | 4.47 mJ | 0.84 mJ | 0.98 mJ |
+| Energy, 7 layers | 6.10 mJ | 1.03 mJ | 1.18 mJ |
+| Energy, without conv1 | 4.49 mJ | 0.81 mJ | 0.98 mJ |
 | Useful MACs | 533 M | 531 M | 531 M |
-| Area | 88.8 mm² | 0.42 mm² | 0.09 mm² |
+| Area | 53.2 mm² | 0.42 mm² | 0.09 mm² |
 
 The TPU-like design multiplies in fp32 (5.05 pJ per MAC in the PE, against
 0.7 pJ for the int8 MAC of the two Timeloop designs) and has 128 times more

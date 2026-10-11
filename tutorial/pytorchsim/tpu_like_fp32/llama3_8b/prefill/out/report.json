@@ -1,7 +1,7 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "prefill",
- "timestamp": "2026-10-11 16:08:02",
+ "timestamp": "2026-10-11 16:35:56",
  "version": "0.9",
  "git_commit": "n/a",
  "tech": {
@@ -1045,7 +1045,7 @@
    },
    {
     "name": "projection.yaml",
-    "sha": "10e43b1ea47ee64ce1b857d150f4a653f4155b4f54c97c5d4a21645bf625ceef"
+    "sha": "48b4b34813c82be34d5a3f91ef84d418d6078e5b3937ac17f6c92ab5bcb31210"
    },
    {
     "name": "user_components.yaml",
@@ -1099,7 +1099,7 @@
    "(NW-6008): Out of scope: DRAM background/standby power and the NPU-side memory controller / HBM PHY are not charged: vendor IDD/standby currents for HBM are not public (no open HBM power tool exists), so the dram compound charges command energies only (activate / read / write / refresh, constants cited from O'Connor & Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic (scratchpad fills/drains, DMA engine, NoC flits) are charged by their own compounds",
    "(NW-6001): 6 non-MAC kernel(s) use the f32 datapath of MAC kernel kkakzpc7ouf.",
    "(NW-2209): Activity stat 'CustomMatMul' (total 54272 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: compute is charged as useful MACs (useful_macs action) plus idle PE cycles (array_idle_slots action); this instruction count is a redundant counter of the same work",
-   "(NW-2209): Activity stat 'comp_gemm_ops' (total 75008 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count",
+   "(NW-2209): Activity stat 'comp_gemm_ops' (total 75008 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: COMP GEMM op counter: the same GEMM work is charged as useful MACs (CustomMatMul action) plus idle PE cycles (CustomMatMulIdle action); charging both would double-count",
    "(NW-2209): Activity stat 'comp_vector_ops' (total 1248 in 13 window(s)) is not charged, because projection 'pytorchsim' waives it: COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count",
    "(NW-2209): Activity stat 'systolic_active_cycles' (total 6951233 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: the active cycles of the arrays are split into useful_macs and array_idle_slots, which the systolic_mac actions charge; the raw cycle count also gives the share of each array",
    "(NW-6014): The window names come from kernels.yaml.",
@@ -1413,7 +1413,7 @@
     {
      "code": "NW-2209",
      "level": "INFO",
-     "message": "Activity stat 'comp_gemm_ops' (total 75008 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count",
+     "message": "Activity stat 'comp_gemm_ops' (total 75008 in 7 window(s)) is not charged, because projection 'pytorchsim' waives it: COMP GEMM op counter: the same GEMM work is charged as useful MACs (CustomMatMul action) plus idle PE cycles (CustomMatMulIdle action); charging both would double-count",
      "count": 1,
      "explain": "The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary."
     },

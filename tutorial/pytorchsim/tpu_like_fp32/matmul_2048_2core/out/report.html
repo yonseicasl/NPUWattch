@@ -81,7 +81,7 @@
   <!-- 1. Header -->
   <h1>NPUWattch PPA Report — matmul_2048_2core</h1>
   <div class="sub">
-    Generated 2026-10-11 16:07:55 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-11 16:35:49 · NPUWattch 0.9 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 940.0 MHz ·
@@ -574,7 +574,7 @@
     <h2>Provenance</h2>
     <div class="sub">Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.</div>
     <div class="sub">
-      inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>392b5767bb76</code>, compound_components.yaml <code>830542e46943</code>, projection.yaml <code>10e43b1ea47e</code>, user_components.yaml <code>f3121db86801</code>    </div>
+      inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>392b5767bb76</code>, compound_components.yaml <code>830542e46943</code>, projection.yaml <code>48b4b34813c8</code>, user_components.yaml <code>f3121db86801</code>    </div>
     <details><summary style="cursor:pointer;font-size:13px">
       14 warnings recorded during this run
       (14 distinct)</summary>
@@ -627,7 +627,7 @@
 <tr class="lvl-info"><td><code>NW-2209</code></td>
           <td>INFO</td><td><details class="why"><summary>Activity stat &#39;CustomMatMul&#39; (total 4096 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: compute is charged as useful MACs (useful_macs action) plus idle PE cycles (array_idle_slots action); this instruction count is a redundant counter of the same work</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-2209</code></td>
-          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_gemm_ops&#39; (total 5120 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP GEMM op counter: the same GEMM work is charged per systolic active cycle (CustomMatMul action); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_gemm_ops&#39; (total 5120 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP GEMM op counter: the same GEMM work is charged as useful MACs (CustomMatMul action) plus idle PE cycles (CustomMatMulIdle action); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-2209</code></td>
           <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_vector_ops&#39; (total 4 in 1 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-2209</code></td>

@@ -57,14 +57,14 @@ system_top_level
 
 | | ResNet-50 | Llama-3-8B block |
 | --- | --- | --- |
-| Total energy | 1056 µJ | 252 mJ (prefill 237 mJ, decode 15 mJ) |
-| DRAM share | 48% | prefill 55%, decode 98% |
-| Average power | 252 mW | 547 mW |
-| On-chip energy per MAC | 1.03 pJ | 0.94 pJ |
+| Total energy | 1025 µJ | 245 mJ (prefill 231 mJ, decode 15 mJ) |
+| DRAM share | 50% | prefill 56%, decode 98% |
+| Average power | 245 mW | 532 mW |
+| On-chip energy per MAC | 0.97 pJ | 0.89 pJ |
 | Area | 0.423 mm² | 0.423 mm² |
 
-On chip, `mac` uses 69 to 75% of the energy, the accumulator 9 to 16%, and
-`psum_reg` 11 to 13%. Every cycle, each PE writes a 32-bit partial
+On chip, `mac` uses 73 to 80% of the energy, the accumulator 10 to 17%, and
+`psum_reg` 6 to 7%. Every cycle, each PE writes a 32-bit partial
 sum: 0.059 pJ, 8% of the MAC, because the register is clock-gated. The
 NVDLA-like design doesn't have this register (its adder tree reduces the
 partial sums), and with its smaller accumulator its datapath uses less

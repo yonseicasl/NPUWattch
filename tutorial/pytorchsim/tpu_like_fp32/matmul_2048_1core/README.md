@@ -13,12 +13,11 @@ Compare the two.
 | | 1 core (this folder) | 2 cores (`../matmul_2048_2core/`) |
 | --- | --- | --- |
 | Cycles | 313 749 | 169 707 |
-| Energy at 7nm | 47.7 mJ | 47.5 mJ |
+| Energy at 7nm | 47.9 mJ | 47.6 mJ |
 | DRAM share | 8.2% | 7.7% |
-| Area | 88.8 mm² | 177.5 mm² |
-| Average power | 143 W | 263 W |
-| Power density | 1.61 W/mm² | 1.48 W/mm² |
-| pJ/FLOP | 2.78 | 2.76 |
+| Area | 53.2 mm² | 106.4 mm² |
+| Average power | 143 W | 264 W |
+| pJ/FLOP | 2.79 | 2.77 |
 
 The second core cuts the time by 1.85× (the ISPASS PyTorchSim tutorial shows
 the same speed-up). The energy stays the same: the work is the same, and the

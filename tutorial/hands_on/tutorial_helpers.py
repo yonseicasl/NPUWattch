@@ -172,8 +172,10 @@ def components_df(rep, top=None):
             "energy": c["energy_str"],
             "share %": round(c["energy_pct"], 1),
             "area": c["area_str"],
+            "_pJ": c["energy_pJ"],
         })
-    df = pd.DataFrame(rows).sort_values("share %", ascending=False).reset_index(drop=True)
+    df = (pd.DataFrame(rows).sort_values("_pJ", ascending=False)
+          .drop(columns="_pJ").reset_index(drop=True))
     return df.head(top) if top else df
 
 

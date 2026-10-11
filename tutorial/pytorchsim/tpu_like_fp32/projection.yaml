@@ -49,8 +49,9 @@ waivers:
     array_idle_slots, which the systolic_mac actions charge; the raw cycle
     count also gives the share of each array
   comp_gemm_ops: >-
-    COMP GEMM op counter: the same GEMM work is charged per systolic active
-    cycle (CustomMatMul action); charging both would double-count
+    COMP GEMM op counter: the same GEMM work is charged as useful MACs
+    (CustomMatMul action) plus idle PE cycles (CustomMatMulIdle action);
+    charging both would double-count
   comp_vector_ops: >-
     COMP vector op counter: the same vector work is charged per vector-unit
     active cycle (vpu compound actions); charging both would double-count
@@ -281,10 +282,9 @@ compounds:
   # `unit: flits`: the emitter converts for each element type (§3.9):
   #   sram buffer -> flit_bits / word_bits word accesses (write in, read out)
   #   crossbar    -> flits / (valid_fraction(mode) x ports) active cycles
-  #                  valid25 is the characterized partial-activity point that
-  #                  is nearest to the 5-10% utilization of the sample logs.
+  #                  valid25 is the characterized partial-activity point.
   #                  The division by its 25% keeps the energy proportional to
-  #                  the flits.
+  #                  the flits, so the utilization of a run does not matter.
   #   d2dlink     -> one crossing for each flit
 
   noc:

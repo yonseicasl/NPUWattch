@@ -103,16 +103,16 @@ attention layers use one group per query head (G=32).
 
 | | Gemmini-like | NVDLA-like |
 | --- | --- | --- |
-| ResNet-50, total | 1056 µJ | 1182 µJ |
+| ResNet-50, total | 1025 µJ | 1182 µJ |
 | ResNet-50, DRAM bytes | 8.0 MB | 11.1 MB |
-| ResNet-50, DRAM share | 48% | 60% |
-| On-chip energy per MAC | 1.03 pJ | 0.89 pJ |
-| Llama-3-8B block, total | 252 mJ | 1013 mJ |
-| Llama-3-8B, DRAM share in prefill | 55% | 90% |
+| ResNet-50, DRAM share | 50% | 60% |
+| On-chip energy per MAC | 0.97 pJ | 0.89 pJ |
+| Llama-3-8B block, total | 245 mJ | 1013 mJ |
+| Llama-3-8B, DRAM share in prefill | 56% | 90% |
 | Llama-3-8B, DRAM share in decode | 98% | 98% |
 
-For ResNet-50, the two designs are within about 10%. The NVDLA-like design
-has a cheaper datapath: no per-PE partial-sum register (11% of the
+For ResNet-50, the two designs are about 15% apart. The NVDLA-like design
+has a cheaper datapath: no per-PE partial-sum register (6% of the
 Gemmini-like design's on-chip energy) and a smaller accumulator. But its
 small buffers make it read 1.4 times the DRAM bytes, and on this run that
 costs more than the datapath saves. For Llama-3-8B, the Gemmini-like design

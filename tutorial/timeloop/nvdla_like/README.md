@@ -108,9 +108,9 @@ which no design uses.
 | Area | 0.088 mm² | 0.088 mm² |
 
 On chip, `mac` uses 80 to 84% of the energy. Without a per-PE partial-sum
-register, and with a smaller accumulator, the datapath uses about 13% less
+register, and with a smaller accumulator, the datapath uses about 8% less
 energy per MAC than the Gemmini-like design on ResNet-50 (0.89 against
-1.03 pJ). On this run, the extra DRAM traffic of the small buffers is larger
+0.97 pJ). On this run, the extra DRAM traffic of the small buffers is larger
 than that saving (see `../README.md`).
 
 The accumulator is the bottleneck. CACC holds 256 int32 partial sums, and

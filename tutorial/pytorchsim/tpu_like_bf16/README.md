@@ -103,8 +103,8 @@ Results at 7nm:
 | | `../tpu_like_fp32/matmul_1024/` | this design |
 | --- | --- | --- |
 | energy per MAC of one PE | 5.05 pJ | 1.56 pJ |
-| total energy | 5.96 mJ | 2.21 mJ |
-| pJ/FLOP (DRAM included) | 2.78 | 1.03 |
+| total energy | 5.98 mJ | 2.22 mJ |
+| pJ/FLOP (DRAM included) | 2.78 | 1.04 |
 
 For comparison, the TPUv4i (7nm, 4 × 128×128 bf16 MXUs) has a TDP of 175 W and
 a peak of 138 bf16 TFLOP/s (Jouppi et al., ISCA 2021), which works out to
