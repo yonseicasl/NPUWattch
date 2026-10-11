@@ -26,6 +26,7 @@ from npuwattch.energy.dram_table import (
     load_energy_table,
     table_for_type,
 )
+from npuwattch.diagnostics import info, warning
 from ..registry import HarnessError
 
 __all__ = ["CONSTANT_NAMES", "FALLBACK_TYPE", "constants_for", "select_table",
@@ -70,10 +71,10 @@ def constants_for(dram_type: Any, table: Optional[EnergyTable], *,
     not available. This includes a ``type`` that has no table.
     """
     if table is not None:
-        notes.append(
-            f"{component}: {table.transfer_pj_per_bit:g} pJ/bit from "
-            f"--energy-table {table.name!r} "
-            f"({table.path.name}: {table.transfer_split_str()})")
+        notes.append(info(7401, component=component,
+                          pj_per_bit=table.transfer_pj_per_bit,
+                          table=table.name, file=table.path.name,
+                          split=table.transfer_split_str()))
         return table.attributes()
 
     own = {key: declared[key] for key in CONSTANT_NAMES
@@ -81,28 +82,23 @@ def constants_for(dram_type: Any, table: Optional[EnergyTable], *,
     if dram_type:
         type_table = table_for_type(dram_type)
         if type_table is None:
-            raise HarnessError(
-                f"{component}: DRAM type {dram_type!r} has no energy table in "
-                f"{TABLE_DIR.name}/ — declare an Accelergy type (LPDDR4, "
-                f"LPDDR, DDR3, GDDR5, HBM2, HMC) or pass --energy-table")
-        notes.append(
-            f"{component} (DRAM type {type_table.name}): "
-            f"{type_table.transfer_pj_per_bit:g} pJ/bit from the shipped table "
-            f"{type_table.path.name} (override with --energy-table)")
+            raise HarnessError.nw(7402, component=component,
+                                  dram_type=dram_type,
+                                  table_dir=TABLE_DIR.name)
+        notes.append(info(7403, component=component,
+                          dram_type=type_table.name,
+                          pj_per_bit=type_table.transfer_pj_per_bit,
+                          file=type_table.path.name))
     else:
         type_table = table_for_type(FALLBACK_TYPE)
         if type_table is None:
-            raise HarnessError(
-                f"{component}: no DRAM type declared and the fallback table "
-                f"{TABLE_DIR.name}/{FALLBACK_TYPE.lower()}.yml is not "
-                f"available — declare an Accelergy type or pass "
-                f"--energy-table")
-        warnings.append(
-            f"{component}: no DRAM type declared — priced with the "
-            f"{FALLBACK_TYPE} table ({type_table.path.name}, "
-            f"{type_table.transfer_pj_per_bit:g} pJ/bit); declare an "
-            f"Accelergy type (LPDDR4, LPDDR, DDR3, GDDR5, HBM2, HMC) or pass "
-            f"--energy-table")
+            raise HarnessError.nw(7404, component=component,
+                                  table_dir=TABLE_DIR.name,
+                                  file=f"{FALLBACK_TYPE.lower()}.yml")
+        warnings.append(warning(7405, component=component,
+                                fallback=FALLBACK_TYPE,
+                                file=type_table.path.name,
+                                pj_per_bit=type_table.transfer_pj_per_bit))
     return {**type_table.attributes(), **own}
 
 
@@ -113,6 +109,4 @@ def warn_if_unused(description: Mapping[str, Any],
         return
     if not any(c.get("class") == "hbm"
                for c in description["npuwattch"]["components"]):
-        warnings.append(
-            f"--energy-table {table.path.name} supplied but the "
-            f"description has no DRAM component — the table is unused")
+        warnings.append(warning(7406, file=table.path.name))

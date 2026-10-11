@@ -32,9 +32,12 @@ primitive estimator gives that energy, and this module does not calculate it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
+
+from npuwattch.diagnostics import info, warning
 
 from ..compounds.loader import (
     Compound,
@@ -47,13 +50,16 @@ from ..compounds.loader import (
 from .booksim import derive_noc
 from .definitions import VOCABULARY
 from .dram import dram_stats
-from .gem5_stats import parse_sections, sum_committed_inst, sum_stat
+from .gem5_stats import parse_sections, section_committed_inst, sum_committed_inst, sum_stat
+from .tile_graph import find_tile_graph, read_tile_graph
+from .useful_macs import useful_macs
 from .mac_config import (
     MacConfig,
     MacInferenceError,
     NotAMatmulKernel,
     infer_mac_config_from_dir,
     infer_mac_config_from_meta,
+    parse_meta,
 )
 from .togsim_log import TogsimActivity, TogsimLogError, parse_togsim_log
 
@@ -68,6 +74,12 @@ _SFU_INSTS = VOCABULARY.stats["sfu_instructions"]
 # bits). The SFU is a floating-point unit. It uses this default if the kernel
 # has no operand datatype or has an integer datatype.
 _SFU_FALLBACK_EXP_MANT = (8, 23)
+
+# The vector type of an SFU operation in the kernel MLIR, for example
+# ``math.exp %t : vector<16xf32>``. The width is the number of elements that
+# one SFU instruction processes in one lane (the RVV register group).
+_SFU_MLIR_OP = re.compile(
+    r"math\.(?:exp2?|erf|tanh|sin|cos)\b[^\n:]*:\s*vector<(\d+)x")
 
 
 @dataclass(frozen=True)
@@ -144,50 +156,165 @@ def _mac_config_for(kernel_dir: Path, act: TogsimActivity,
     if has_mlir:
         try:
             mac_config = infer_mac_config_from_dir(
-                kernel_dir, act.lanes, pipeline_stages=pipeline_stages
+                kernel_dir, act.lanes, pipeline_stages=pipeline_stages,
+                kernel=khash,
             )
             warnings.extend(mac_config.warnings)
         except NotAMatmulKernel:
-            warnings.append(f"{khash}: kernel has no linalg.matmul; no MAC config")
+            warnings.append(warning(6201, kernel=khash))
         except MacInferenceError as e:
-            warnings.append(f"{khash}: MAC config inference failed: {e}")
+            warnings.append(warning(6202, kernel=khash, error=e))
     elif not gemm_active:
-        warnings.append(
-            f"{khash}: no kernel MLIR and no systolic/GEMM activity in the "
-            f"log; treated as a non-MAC kernel"
-        )
+        warnings.append(warning(6203, kernel=khash))
     elif meta_path.is_file():
         try:
             mac_config = infer_mac_config_from_meta(
                 meta_path.read_text(encoding="utf-8"), act.lanes,
-                pipeline_stages=pipeline_stages,
+                pipeline_stages=pipeline_stages, kernel=khash,
             )
-            warnings.extend(f"{khash}: {w}" for w in mac_config.warnings)
+            warnings.extend(mac_config.warnings)
         except MacInferenceError as e:
-            warnings.append(
-                f"{khash}: meta.txt-only MAC config inference failed: {e}"
-            )
+            warnings.append(warning(6204, kernel=khash, error=e))
     else:
-        warnings.append(
-            f"{khash}: no kernel MLIR and no meta.txt; MAC config unavailable"
-        )
+        warnings.append(warning(6205, kernel=khash))
     return mac_config
 
 
 def _gem5_instruction_stats(kernel_dir: Path, khash: str,
-                            warnings: List[str]) -> Dict[str, float]:
-    """Return the gem5 instruction counts and ``numCycles`` of one kernel."""
+                            warnings: List[str], act: TogsimActivity) -> Dict[str, float]:
+    """Return the kernel totals of the gem5 instruction counts, and ``numCycles``.
+
+    gem5 runs the sample program of the kernel: one execution of each compute
+    node of the tile graph, with one statistics dump after each node
+    (``tile_graph.py``, ``gem5_stats.py``). The counts of a dump are the
+    counts of one execution of its node. This function scales them to the
+    kernel:
+
+    * With the tile graph (``*_tog.py`` in the kernel directory): the counts
+      of node ``k`` times the executions of node ``k``. This is exact.
+    * Without it: the average of the GEMM-type sections times the COMP GEMM
+      count of the log, and the average of the vector-type sections times the
+      COMP vector count. This is approximate (``NW-6218``).
+
+    ``numCycles`` stays the sum over the sections: it is the cycle count of
+    the sample program and is informational.
+    """
     stats: Dict[str, float] = {}
     stats_path = kernel_dir / "m5out" / "stats.txt"
-    if stats_path.is_file():
-        sections = parse_sections(stats_path.read_text(encoding="utf-8", errors="ignore"))
-        inst = sum_committed_inst(sections)
-        for name in _MATMUL_INSTS + _SFU_INSTS:
-            stats[name] = float(inst.get(name, 0))
-        stats["numCycles"] = sum_stat(sections, "system.cpu.numCycles")
+    if not stats_path.is_file():
+        warnings.append(warning(6206, kernel=khash))
+        return stats
+    sections = parse_sections(stats_path.read_text(encoding="utf-8", errors="ignore"))
+    stats["numCycles"] = sum_stat(sections, "system.cpu.numCycles")
+    per_section = [section_committed_inst(sec) for sec in sections]
+    names = list(_MATMUL_INSTS) + list(_SFU_INSTS)
+    totals: Dict[str, float] = {n: 0.0 for n in names}
+
+    graph = None
+    tog_path = find_tile_graph(kernel_dir)
+    if tog_path is not None:
+        try:
+            graph = read_tile_graph(tog_path)
+        except (OSError, ValueError, SyntaxError, KeyError) as e:
+            warnings.append(warning(6223, kernel=khash, error=e))
+    if graph is not None and len(per_section) - 1 != len(graph.nodes):
+        warnings.append(warning(6220, kernel=khash, sections=len(per_section),
+                                nodes=len(graph.nodes)))
+        graph = None
+
+    if graph is not None:
+        for node, counts in zip(graph.nodes, per_section):
+            for n in names:
+                totals[n] += counts.get(n, 0) * node.executions
+        if (graph.gemm_executions != act.comp_gemm_ops
+                or graph.vector_executions != act.comp_vector_ops):
+            warnings.append(warning(6219, kernel=khash,
+                                    graph_gemm=graph.gemm_executions,
+                                    graph_vector=graph.vector_executions,
+                                    log_gemm=act.comp_gemm_ops,
+                                    log_vector=act.comp_vector_ops))
+        warnings.append(info(6217, kernel=khash, nodes=len(graph.nodes),
+                             executions=sum(n.executions for n in graph.nodes)))
     else:
-        warnings.append(f"{khash}: no m5out/stats.txt; gem5 instruction counts unavailable")
+        body = per_section[:-1] if len(per_section) > 1 else per_section
+        gemm_secs = [c for c in body if any(c.get(n) for n in _MATMUL_INSTS)]
+        vec_secs = [c for c in body if c not in gemm_secs]
+        for n in _MATMUL_INSTS:
+            if gemm_secs:
+                totals[n] = (sum(c.get(n, 0) for c in gemm_secs) / len(gemm_secs)
+                             * act.comp_gemm_ops)
+        for n in _SFU_INSTS:
+            if vec_secs and any(c.get(n) for c in vec_secs):
+                totals[n] = (sum(c.get(n, 0) for c in vec_secs) / len(vec_secs)
+                             * act.comp_vector_ops)
+            elif gemm_secs and any(c.get(n) for c in gemm_secs):   # fused kernel
+                totals[n] = (sum(c.get(n, 0) for c in gemm_secs) / len(gemm_secs)
+                             * act.comp_gemm_ops)
+        if any(totals.values()):
+            warnings.append(warning(6218, kernel=khash))
+    for n in names:
+        stats[n] = float(totals[n])
     return stats
+
+
+def _useful_mac_stats(kernel_dir: Path, khash: str, act: TogsimActivity,
+                      mac_config: Optional[MacConfig],
+                      warnings: List[str]) -> Dict[str, float]:
+    """Return ``useful_macs`` and ``array_idle_slots`` of a MAC kernel.
+
+    ``array_idle_slots`` is the number of active PE cycles in which the PE
+    holds no real weight: ``systolic_active_cycles x lanes^2 - useful_macs``.
+    A kernel without a MAC configuration gives no stats. A kernel with an
+    unknown operator gets all active PE cycles as useful MACs (``NW-6221``).
+    """
+    if mac_config is None:
+        return {}
+    slots = act.systolic_active_cycles * act.lanes * act.lanes
+    macs: Optional[int] = None
+    meta_path = kernel_dir / "meta.txt"
+    if meta_path.is_file():
+        macs = useful_macs(act.operation, parse_meta(meta_path.read_text(encoding="utf-8",
+                                                                             errors="ignore")))
+    if macs is None:
+        warnings.append(warning(6221, kernel=khash, operation=act.operation))
+        return {"useful_macs": float(slots), "array_idle_slots": 0.0}
+    if macs > slots:
+        warnings.append(warning(6224, kernel=khash, useful=macs, slots=slots))
+        macs = slots
+    util = round(100.0 * macs / slots, 1) if slots else 0.0
+    warnings.append(info(6222, kernel=khash, useful=macs, slots=slots, utilization=util))
+    return {"useful_macs": float(macs), "array_idle_slots": float(slots - macs)}
+
+
+def _sfu_vector_elems(kernel_dir: Path, khash: str, stats: Mapping[str, float],
+                      lanes: int, warnings: List[str]) -> Optional[int]:
+    """Return the elements that one SFU instruction processes in one lane.
+
+    The kernel MLIR gives the vector type of each math operation
+    (``vector<16xf32>``). One committed ``CustomV*`` instruction processes
+    that many elements in each of the ``lanes`` lanes. The function reads the
+    largest width. It returns ``None`` if the kernel has no SFU instructions,
+    or if no MLIR gives the width; then the projection uses one vector
+    register (``vector_elems``), and the run gives a warning.
+    """
+    if not any(stats.get(name) for name in _SFU_INSTS):
+        return None
+    widths: List[int] = []
+    for path in sorted(kernel_dir.glob("*.mlir")):
+        if "_llvm" in path.name or "_sample" in path.name:
+            continue
+        try:
+            widths.extend(int(w) for w in _SFU_MLIR_OP.findall(
+                path.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            continue
+    if not widths:
+        warnings.append(warning(6226, kernel=khash))
+        return None
+    width = max(widths)
+    warnings.append(info(6225, kernel=khash, elems=width, lanes=lanes,
+                         total=width * lanes))
+    return width
 
 
 def _sfu_format(mac_config: Optional[MacConfig], stats: Mapping[str, float],
@@ -205,11 +332,10 @@ def _sfu_format(mac_config: Optional[MacConfig], stats: Mapping[str, float],
             and isinstance(od.exp_bits, int) and isinstance(od.mantissa_bits, int)):
         sfu_exp, sfu_mant = od.exp_bits, od.mantissa_bits
     elif any(stats.get(name) for name in _SFU_INSTS):
-        warnings.append(
-            f"{khash}: SFU ops present but the kernel's operand dtype is "
-            f"{'integer' if od is not None else 'unknown'}; charging the SFU "
-            f"at fp32 (e8m23) tables"
-        )
+        if od is not None:
+            warnings.append(warning(6207, kernel=khash))      # integer dtype
+        else:
+            warnings.append(warning(6208, kernel=khash))      # no dtype
     return sfu_exp, sfu_mant
 
 
@@ -246,19 +372,16 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
     log_dir = Path(togsim_dir)
     out_dir = Path(gem5_dir)
     if not log_dir.is_dir():
-        raise MacInferenceError(f"TOGSim log directory not found: {log_dir}")
+        raise MacInferenceError.nw(6209, path=log_dir)
     if not out_dir.is_dir():
-        raise MacInferenceError(f"gem5/codegen output directory not found: {out_dir}")
+        raise MacInferenceError.nw(6210, path=out_dir)
     if not sorted(log_dir.glob("*.log")):
-        raise MacInferenceError(
-            f"no *.log in {log_dir} — pass the run's final togsim_results/ "
-            f"directory (autotune logs under outputs/<hash>/togsim_result/ are "
-            f"candidates, not results)"
-        )
+        raise MacInferenceError.nw(6211, path=log_dir)
 
     windows: List[KernelWindow] = []
     skipped: List[str] = []
-    seen_noc_warnings: set = set()      # report each NoC message one time
+    seen_noc_warnings: set = set()
+    vlen_warned = False      # report each NoC message one time
     for idx, log_path in enumerate(sorted(log_dir.glob("*.log"))):
         warnings: List[str] = []
         try:
@@ -270,7 +393,7 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             skipped.append(f"{log_path.name}: {e}")
             continue
         khash = act.kernel_hash
-        warnings.extend(f"{khash}: {w}" for w in act.warnings)
+        warnings.extend(act.warnings)
         kernel_dir = out_dir / khash
 
         mac_config: Optional[MacConfig] = None
@@ -278,9 +401,7 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             mac_config = _mac_config_for(kernel_dir, act, pipeline_stages,
                                          warnings)
         else:
-            warnings.append(
-                f"{khash}: {out_dir.name}/{khash}/ not found; MAC config unavailable"
-            )
+            warnings.append(warning(6212, kernel=khash, directory=out_dir.name))
 
         # Activity from the TOGSim log. The DRAM, NoC, and gem5 stats follow.
         stats: Dict[str, float] = {
@@ -313,10 +434,19 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
                 seen_noc_warnings.add(msg)
                 warnings.append(msg)
 
-        stats.update(_gem5_instruction_stats(kernel_dir, khash, warnings))
+        stats.update(_gem5_instruction_stats(kernel_dir, khash, warnings, act))
+        stats.update(_useful_mac_stats(kernel_dir, khash, act, mac_config, warnings))
         (win_config["sfu_exponent_bits"],
          win_config["sfu_mantissa_bits"]) = _sfu_format(
             mac_config, stats, khash, warnings)
+        if not isinstance(win_config.get("vpu_vector_length_bits"), int):
+            if not vlen_warned:
+                vlen_warned = True
+                warnings.append(warning(6227))
+        sfu_elems = _sfu_vector_elems(kernel_dir, khash, stats, act.lanes,
+                                      warnings)
+        if sfu_elems is not None:
+            win_config["sfu_vector_elems"] = sfu_elems
 
         windows.append(
             KernelWindow(
@@ -333,14 +463,10 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
             )
         )
     if not windows and skipped:
-        raise MacInferenceError(
-            "no parseable TOGSim log in "
-            f"{log_dir} — " + "; ".join(skipped)
-        )
+        raise MacInferenceError.nw(6213, path=log_dir, skipped="; ".join(skipped))
     if skipped:
         windows[0].warnings.insert(
-            0, f"{len(skipped)} unparseable log(s) skipped: " + "; ".join(skipped)
-        )
+            0, warning(6214, count=len(skipped), skipped="; ".join(skipped)))
     return windows
 
 
@@ -371,9 +497,7 @@ def bind_window(
       errors in the definitions.
     """
     if window.mac_config is None:
-        raise MacInferenceError(
-            f"window {window.kernel_hash} has no MAC config; cannot bind projection"
-        )
+        raise MacInferenceError.nw(6215, kernel=window.kernel_hash)
     # Each integer key of the run configuration is also a symbol. The
     # compounds and the projection of this harness can use it in expressions.
     extra_symbols = {
@@ -393,7 +517,8 @@ def bind_window(
         except CompoundBundleError as e:
             if skipped is None:
                 raise
-            skipped.append(f"{compound.name}.{action_name}: not charged — {e}")
+            skipped.append(warning(6216, compound=compound.name,
+                                   action=action_name, error=e))
             continue
         stat_value = window.stats[stat]
         bound.append(

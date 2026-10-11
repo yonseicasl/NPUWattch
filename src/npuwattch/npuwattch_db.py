@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
+from npuwattch.diagnostics import info, warning
+
 
 @dataclass
 class ComponentEntry:
@@ -183,14 +185,14 @@ class DatabaseBuilder:
         """
         yaml_path = Path(yaml_path)
         
-        print(f"[INFO] Starting database construction from: {yaml_path}")
+        info(1301, source=yaml_path).emit()
         
         # Load the YAML file
         with yaml_path.open('r', encoding='utf-8') as f:
             content = yaml.safe_load(f)
         
         if not content:
-            print("[WARNING] Empty YAML file")
+            warning(1302).emit()
             return NPUWattchDatabase(source_file=yaml_path)
         
         # Read the architecture section
@@ -214,8 +216,7 @@ class DatabaseBuilder:
         if self.verbose >= 1:
             self._print_database_contents(db)
         
-        print(f"[INFO] Database construction complete. "
-              f"Loaded {len(db)} components with {db.total_instances()} total instances.")
+        info(1303, components=len(db), instances=db.total_instances()).emit()
         
         return db
     
@@ -232,7 +233,7 @@ class DatabaseBuilder:
             An NPUWattchDatabase that contains the component entries
         """
         if self.verbose >= 1:
-            print(f"[INFO] Starting database construction from: {source_name}")
+            info(1301, source=source_name).emit()
 
         # Read the architecture section
         arch = content.get('architecture', {})
@@ -255,25 +256,27 @@ class DatabaseBuilder:
             self._print_database_contents(db)
 
         if self.verbose >= 1:
-            print(f"[INFO] Database construction complete. "
-                  f"Loaded {len(db)} components with {db.total_instances()} total instances.")
+            info(1303, components=len(db),
+                 instances=db.total_instances()).emit()
 
         return db
     
     def _print_database_contents(self, db: NPUWattchDatabase) -> None:
         """Print the database contents to the console."""
-        print("[INFO] Registered Components List:")
-        print("=" * 100)
-        print(f"{'NAME':<60} {'CLASS':<20} {'INSTANCES':>10}")
-        print("-" * 100)
+        info(1304).emit()
+        print("=" * 100)  # nw-lint: text
+        print(f"{'NAME':<60} {'CLASS':<20} {'INSTANCES':>10}")  # nw-lint: text
+        print("-" * 100)  # nw-lint: text
         
         for comp in db.components:
             subclass_str = comp.subclass if comp.subclass else "-"
-            print(f"{comp.base_name:<60} {comp.comp_class:<20} {comp.instance_count:>10}")
+            print(f"{comp.base_name:<60} {comp.comp_class:<20} "  # nw-lint: text
+                  f"{comp.instance_count:>10}")
         
-        print("=" * 100)
-        print(f"Total: {len(db)} components, {db.total_instances()} instances")
-        print("=" * 100)
+        print("=" * 100)  # nw-lint: text
+        print(f"Total: {len(db)} components, "  # nw-lint: text
+              f"{db.total_instances()} instances")
+        print("=" * 100)  # nw-lint: text
 
 
 def build_database(

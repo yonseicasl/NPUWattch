@@ -1,27 +1,14 @@
 {
  "dataset": {
   "dir": "/home/KNUEEhdd1/ys_knu/kmk/NPUWattch/dataset_gen/logic/datasets",
-  "sha256": "47661ef68815aee4b1aa908585079698159e918ae410b5f59f3b44e3d01685ae",
+  "sha256": "78a6e0af20a609051773a86990bb8902d3c9ad7f0be101a3543878cf9a2bacee",
   "components": [
-   "fpadd",
-   "fpmul",
-   "fpmac",
-   "intadd",
-   "intmul",
-   "intmac",
-   "fpsfu",
-   "mxfpmac",
-   "crossbar",
-   "fifo",
-   "regfile",
-   "fattree",
-   "simplemux",
-   "foldedclos"
+   "regfile"
   ]
  },
  "seed": 42,
  "epochs_max": 6000,
- "date": "2026-09-30T21:09:34",
+ "date": "2026-10-11T12:47:37",
  "torch": "2.13.0+cpu",
  "models": {
   "fpadd.energy": {
@@ -6729,6 +6716,249 @@
     }
    ],
    "train_seconds": 4.0
+  },
+  "regfile.energy_delta": {
+   "arch": [
+    128,
+    128,
+    128
+   ],
+   "split": {
+    "train": 1433,
+    "val": 180,
+    "test": 183
+   },
+   "epochs_run": 833,
+   "val_mape": 0.0744408369064331,
+   "test_mape": 0.07005192662347999,
+   "test_spearman": 0.9963735480485303,
+   "per_mode_test_mape": {
+    "none": 0.03163519105471167,
+    "random": 0.07358762750523977,
+    "read": 0.10387943402471025,
+    "write": 0.0718408345049372
+   },
+   "per_node_test_mape": {
+    "10nm": 0.06880479259601249,
+    "16nm": 0.09202137167094339,
+    "20nm": 0.08430238935051708,
+    "5nm": 0.06156778442019135,
+    "7nm": 0.04502086626681148
+   },
+   "worst10_test": [
+    {
+     "node": "16nm",
+     "clock_ns": 1.25,
+     "params": "width=8;depth=64;num_read_ports=1;num_write_ports=1",
+     "mode": "read",
+     "truth": 0.08862499999999997,
+     "pred": 0.13154991054509582,
+     "rel_err": 0.484343137321251
+    },
+    {
+     "node": "5nm",
+     "clock_ns": 1.25,
+     "params": "width=8;depth=64;num_read_ports=1;num_write_ports=1",
+     "mode": "read",
+     "truth": 0.055374999999999945,
+     "pred": 0.08083122927747038,
+     "rel_err": 0.4597061720536427
+    },
+    {
+     "node": "10nm",
+     "clock_ns": 0.75,
+     "params": "width=32;depth=16;num_read_ports=1;num_write_ports=1",
+     "mode": "random",
+     "truth": 0.28830000000000006,
+     "pred": 0.1920182909118267,
+     "rel_err": 0.3339636111278992
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 0.75,
+     "params": "width=32;depth=16;num_read_ports=1;num_write_ports=1",
+     "mode": "random",
+     "truth": 0.3707250000000002,
+     "pred": 0.24814796590218532,
+     "rel_err": 0.3306414029208033
+    },
+    {
+     "node": "10nm",
+     "clock_ns": 0.75,
+     "params": "width=32;depth=16;num_read_ports=1;num_write_ports=1",
+     "mode": "write",
+     "truth": 0.27929999999999966,
+     "pred": 0.19568677878070814,
+     "rel_err": 0.29936706487394066
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 1.5,
+     "params": "width=16;depth=256;num_read_ports=1;num_write_ports=1",
+     "mode": "read",
+     "truth": 0.49500000000000455,
+     "pred": 0.6402468634566512,
+     "rel_err": 0.29342800698312177
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 1.25,
+     "params": "width=32;depth=32;num_read_ports=1;num_write_ports=1",
+     "mode": "write",
+     "truth": 0.3302500000000004,
+     "pred": 0.4268228998926441,
+     "rel_err": 0.29242361814577933
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 1.5,
+     "params": "width=8;depth=256;num_read_ports=1;num_write_ports=1",
+     "mode": "read",
+     "truth": 0.29400000000000404,
+     "pred": 0.3678670376433914,
+     "rel_err": 0.251248427358457
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 0.75,
+     "params": "width=32;depth=16;num_read_ports=1;num_write_ports=1",
+     "mode": "write",
+     "truth": 0.35775000000000023,
+     "pred": 0.27143814482398076,
+     "rel_err": 0.24126304731242323
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 1.25,
+     "params": "width=32;depth=128;num_read_ports=2;num_write_ports=2",
+     "mode": "read",
+     "truth": 1.3649999999999984,
+     "pred": 1.038845560005984,
+     "rel_err": 0.2389409816805969
+    }
+   ],
+   "train_seconds": 12.4
+  },
+  "fifo.energy_delta": {
+   "arch": [
+    128,
+    128,
+    128
+   ],
+   "split": {
+    "train": 768,
+    "val": 96,
+    "test": 96
+   },
+   "epochs_run": 775,
+   "val_mape": 0.0580567866563797,
+   "test_mape": 0.054043017490158766,
+   "test_spearman": 0.9982637004883345,
+   "per_mode_test_mape": {
+    "none": 0.036649490135023,
+    "random": 0.06883253892924643,
+    "stream": 0.05664702340620689
+   },
+   "per_node_test_mape": {
+    "10nm": 0.05403982564220099,
+    "16nm": 0.059532531904973825,
+    "20nm": 0.07489783660743422,
+    "5nm": 0.038215509405049794,
+    "7nm": 0.035585824552466
+   },
+   "worst10_test": [
+    {
+     "node": "20nm",
+     "clock_ns": 1.5,
+     "params": "width=256;depth=8",
+     "mode": "stream",
+     "truth": 4.2255,
+     "pred": 5.262180928345253,
+     "rel_err": 0.24533923283522724
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 1.5,
+     "params": "width=256;depth=8",
+     "mode": "random",
+     "truth": 3.0524999999999984,
+     "pred": 3.711544115397009,
+     "rel_err": 0.2159030681071288
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 1.25,
+     "params": "width=128;depth=16",
+     "mode": "stream",
+     "truth": 1.9600000000000009,
+     "pred": 2.304422727147186,
+     "rel_err": 0.17572588119754348
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 1.0,
+     "params": "width=128;depth=8",
+     "mode": "random",
+     "truth": 1.2350000000000012,
+     "pred": 1.4296498162699836,
+     "rel_err": 0.15761118726314344
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 2.5,
+     "params": "width=128;depth=16",
+     "mode": "random",
+     "truth": 1.8339999999999996,
+     "pred": 1.554562138539627,
+     "rel_err": 0.15236524616159902
+    },
+    {
+     "node": "10nm",
+     "clock_ns": 1.25,
+     "params": "width=16;depth=64",
+     "mode": "stream",
+     "truth": 0.4137500000000003,
+     "pred": 0.35469240934492663,
+     "rel_err": 0.14273737922676402
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 1.5,
+     "params": "width=256;depth=8",
+     "mode": "none",
+     "truth": 4.630500000000001,
+     "pred": 5.288043669661042,
+     "rel_err": 0.1420027361323919
+    },
+    {
+     "node": "16nm",
+     "clock_ns": 1.25,
+     "params": "width=256;depth=32",
+     "mode": "random",
+     "truth": 9.623750000000008,
+     "pred": 10.878177092623394,
+     "rel_err": 0.13034701572914767
+    },
+    {
+     "node": "20nm",
+     "clock_ns": 2.5,
+     "params": "width=128;depth=16",
+     "mode": "stream",
+     "truth": 2.559000000000001,
+     "pred": 2.2457089328669513,
+     "rel_err": 0.122427146202833
+    },
+    {
+     "node": "5nm",
+     "clock_ns": 1.25,
+     "params": "width=128;depth=64",
+     "mode": "stream",
+     "truth": 2.4299999999999997,
+     "pred": 2.143152514814578,
+     "rel_err": 0.1180442325865934
+    }
+   ],
+   "train_seconds": 9.6
   }
  },
  "audits": {},
@@ -7077,6 +7307,25 @@
    "pass_10pct": true,
    "modes_over_5pct": [
     "-"
+   ],
+   "modes_over_10pct": []
+  },
+  "regfile.energy_delta": {
+   "pass_10pct": false,
+   "modes_over_5pct": [
+    "random",
+    "read",
+    "write"
+   ],
+   "modes_over_10pct": [
+    "read"
+   ]
+  },
+  "fifo.energy_delta": {
+   "pass_10pct": true,
+   "modes_over_5pct": [
+    "random",
+    "stream"
    ],
    "modes_over_10pct": []
   }
@@ -25060,6 +25309,39 @@
    "value": "unknown stim_mode"
   }
  ],
+ "delta_targets": {
+  "regfile": {
+   "pairs": 1840,
+   "no_idle_partner": 0,
+   "zero_raw": {
+    "read": 40
+   },
+   "negative_raw": {
+    "write": 1
+   },
+   "negative_rows": [
+    {
+     "flow_run_id": "regfile_8_64_1_1_20nm_TT_0V9_25C_800MHz",
+     "mode": "write",
+     "delta_pJ": -0.05062500000000014,
+     "rel_to_idle": -0.014749799694078271
+    }
+   ],
+   "suspect_runs": [
+    "regfile_8_64_1_1_20nm_TT_0V9_25C_800MHz"
+   ],
+   "suspect_rows_removed": 3,
+   "samples": 1796
+  },
+  "fifo": {
+   "pairs": 960,
+   "no_idle_partner": 0,
+   "zero_raw": {},
+   "negative_raw": {},
+   "negative_rows": [],
+   "samples": 960
+  }
+ },
  "leakage_quarantine": {
   "fpadd": {
    "dex": 1.5,
@@ -25299,5 +25581,33 @@
     "7nm": 0
    }
   }
- }
+ },
+ "previous_runs": [
+  {
+   "date": "2026-09-30T21:09:34",
+   "components": [
+    "fpadd",
+    "fpmul",
+    "fpmac",
+    "intadd",
+    "intmul",
+    "intmac",
+    "fpsfu",
+    "mxfpmac",
+    "crossbar",
+    "fifo",
+    "regfile",
+    "fattree",
+    "simplemux",
+    "foldedclos"
+   ]
+  },
+  {
+   "date": "2026-10-11T12:46:44",
+   "components": [
+    "regfile",
+    "fifo"
+   ]
+  }
+ ]
 }

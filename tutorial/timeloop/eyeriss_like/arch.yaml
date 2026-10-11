@@ -14,6 +14,8 @@ architecture:
       type: "LPDDR4"
       width: 64
       datawidth: 8
+      read_bandwidth: 16    # added for NPUWattch: 16 B/cycle = 16 GB/s at 1 GHz
+      write_bandwidth: 16
 
   - !Container # Eyeriss accelerator
     name: eyeriss

@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
+from npuwattch.diagnostics import warning
 from .unit_cost import D2DLinkCostProvider, HBMCostProvider, NoModelProvider
 
 __all__ = ["ProviderChain", "build_provider"]
@@ -104,9 +105,12 @@ def build_provider(
                 fallback=provider, **extra
             )
         except Exception as e:                      # a plugin must not stop the run
-            built, error = None, str(e)
+            built, error = None, e
         if error or built is None:
-            notes.append(f"estimator {name!r}: unit_cost_provider unavailable ({error})")
+            # A catalog message or exception shows its text only (no second
+            # code in the line).
+            notes.append(warning(3601, estimator=name,
+                                 error=getattr(error, "text", None) or error))
             continue
         provider = built
         if uses_library:

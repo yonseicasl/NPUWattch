@@ -52,8 +52,11 @@ from .togsim_log import (
     TogsimLogError,
     parse_config,
     parse_kernel_hash,
+    parse_operation,
     parse_togsim_log,
 )
+from .tile_graph import TileGraph, find_tile_graph, read_tile_graph
+from .useful_macs import useful_macs
 
 
 #: The declaration of this harness. ``npuwattch_harness.registry`` reads it from this module.
@@ -91,6 +94,15 @@ HARNESS_SPEC = {
                     "anynet NoC topologies (their .net network file); fly NoCs "
                     "are self-contained in the log's BookSim config echo",
         },
+        "kernel_names": {
+            "flag": "--kernel-names",
+            "required": False,
+            "kind": "file",
+            "hint": "a kernels.yaml that names the kernels of the run "
+                    "(entries {name, hash, log}); the names become the window "
+                    "labels. Default: kernels.yaml in the directory of the run "
+                    "inputs, if it exists",
+        },
         "energy_table": {
             "flag": "--energy-table",
             "required": False,
@@ -126,7 +138,13 @@ __all__ = [
     "TogsimLogError",
     "parse_config",
     "parse_kernel_hash",
+    "parse_operation",
     "parse_togsim_log",
+    # tile_graph / useful_macs
+    "TileGraph",
+    "find_tile_graph",
+    "read_tile_graph",
+    "useful_macs",
     # activity
     "BoundAction",
     "KernelWindow",

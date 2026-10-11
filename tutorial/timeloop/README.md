@@ -55,6 +55,18 @@ paper: int8 operands, int32 accumulation, LPDDR4 DRAM, and
 | Post-processing | — | SDP: bias, batch norm, ReLU, and int8 requantization (a user component; see `nvdla_like/README.md`) |
 | Area at 7nm | 0.423 mm² | 0.088 mm² |
 
+**DRAM bandwidth.** In all three tutorial designs, the DRAM stream is limited
+to 16 B per cycle (16 GB/s at 1 GHz). In the Gemmini-like and NVDLA-like
+designs, the limit is `read_bandwidth: 16` and `write_bandwidth: 16` on the
+scratchpad and the CBUF: all inputs and weights go through these buffers, and
+the outputs go through the accumulator or the CACC. In the Eyeriss-like
+design, the limit is `read_bandwidth: 16` and `write_bandwidth: 16` on the
+DRAM component, because its global buffer bypasses the weights. That is why
+the memory-bound windows (fc layers, LLM decode) of all three designs show
+about 1 W average power on LPDDR4. In the Gemmini-like and NVDLA-like runs,
+the fc and decode windows use 16.0 B per cycle, prefill uses 2 to 8 B per
+cycle, and the conv layers use 0.25 to 8 B per cycle.
+
 ## The two workloads
 
 The window label for each layer is its stats file name. NPUWattch sorts the
@@ -91,18 +103,20 @@ attention layers use one group per query head (G=32).
 
 | | Gemmini-like | NVDLA-like |
 | --- | --- | --- |
-| ResNet-50, total | 1323 µJ | **1219 µJ** |
-| ResNet-50, DRAM share | 39% | 58% |
-| On-chip energy per MAC | 1.53 pJ | 0.96 pJ |
-| Llama-3-8B block, total | **310 mJ** | 1021 mJ |
-| Llama-3-8B, DRAM share in prefill | 44% | 90% |
-| Llama-3-8B, DRAM share in decode | 97% | 98% |
+| ResNet-50, total | 1025 µJ | 1182 µJ |
+| ResNet-50, DRAM bytes | 8.0 MB | 11.1 MB |
+| ResNet-50, DRAM share | 50% | 60% |
+| On-chip energy per MAC | 0.97 pJ | 0.89 pJ |
+| Llama-3-8B block, total | 245 mJ | 1013 mJ |
+| Llama-3-8B, DRAM share in prefill | 56% | 90% |
+| Llama-3-8B, DRAM share in decode | 98% | 98% |
 
-The better design depends on the workload. For ResNet-50, the NVDLA-like
-design uses less energy because its datapath is cheaper. It has no per-PE
-partial-sum register, which accounts for 35% of the Gemmini-like design's
-on-chip energy. For Llama-3-8B, the Gemmini-like design uses 3.3 times less
-energy. Neither design can write partial sums to memory, so the accumulator
+For ResNet-50, the two designs are about 15% apart. The NVDLA-like design
+has a cheaper datapath: no per-PE partial-sum register (6% of the
+Gemmini-like design's on-chip energy) and a smaller accumulator. But its
+small buffers make it read 1.4 times the DRAM bytes, and on this run that
+costs more than the datapath saves. For Llama-3-8B, the Gemmini-like design
+uses 4 times less energy. Neither design can write partial sums to memory, so the accumulator
 size determines how often the inputs and weights of a long reduction have to
 be read again. The Gemmini-like accumulator holds 64 KB, while the NVDLA-like
 CACC holds only 1 KB. Decode is a matrix-vector product on both designs, so

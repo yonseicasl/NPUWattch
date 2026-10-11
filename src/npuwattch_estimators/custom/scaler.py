@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from npuwattch.diagnostics import warning
+
 __all__ = ["scale", "scaling_warning"]
 
 
@@ -39,7 +41,6 @@ def scaling_warning(component: Any, target: Mapping[str, Any]) -> Optional[str]:
     node = str(target.get("node", "")).strip().lower()
     if not node or reference == node:
         return None
-    return (f"user component {component.name!r}: the values are for "
-            f"{component.reference.get('node')} and the run is at "
-            f"{target.get('node')}; the custom component scaler is not "
-            f"implemented, so the values are used WITHOUT scaling")
+    return warning(8302, component=component.name,
+                   reference=component.reference.get("node"),
+                   node=target.get("node"))

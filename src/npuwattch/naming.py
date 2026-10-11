@@ -47,6 +47,7 @@ Units                  A suffix only if the unit is not clear (``_bits``,
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError, warning
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -56,11 +57,13 @@ __all__ = [
     "CANONICAL",
     "LEGACY_ALIASES",
     "PRIMITIVE_PARAMS",
+    "UNIVERSAL_OPTIONAL",
+    "clock_gating_of",
     "validate_attributes",
 ]
 
 
-class NamingError(ValueError):
+class NamingError(NPUWattchError, ValueError):
     """A component attribute does not obey the naming rules."""
 
 
@@ -69,7 +72,7 @@ class Param:
     """One NPUWattch attribute name."""
 
     name: str
-    kind: str            # "int" | "float" | "str"
+    kind: str            # "int" | "float" | "str" | "bool"
     doc: str
     unit: str = ""       # Only for information. The name gives the unit.
 
@@ -91,6 +94,13 @@ CANONICAL: Dict[str, Param] = dict([
        "primitive-specific: int units 2-5, fpadd/fpmul 2-9, fpmac 4-18, "
        "fpsfu 4-10)"),
     _p("number_format", "str", "Numeric family: int | fp | mx"),
+    # Clock gating (user ruling 2026-10-11). NPUWattch assumes that each
+    # block is clock-gated: an idle cycle costs leakage only. The value
+    # false models a block without clock gating. Then each idle cycle costs
+    # the un-gated idle energy of the estimator (manual §6.1).
+    _p("clock_gating", "bool",
+       "Clock gating of the block: true (default) or false. False charges "
+       "the clocked idle energy of each idle cycle"),
 
     # -- integer arithmetic (asymmetric operands) ---------------------------
     _p("data_width_a", "int", "Operand A width", "bits"),
@@ -177,6 +187,28 @@ CONTEXT_NAMES: Tuple[str, ...] = (
     "node", "transistor", "corner", "voltage_offset_V", "temperature_C",
     "clock_mhz", "stim_mode",
 )
+
+#: Attributes that each primitive accepts. They are not in the ParamSet of a
+#: primitive, because they are not a design parameter of the RTL.
+UNIVERSAL_OPTIONAL: Tuple[str, ...] = ("clock_gating",)
+
+#: The text values that turn clock gating off.
+_FALSE_TEXT = ("false", "no", "off", "0")
+
+
+def clock_gating_of(attributes: Mapping[str, Any]) -> bool:
+    """Return the clock gating of a component. The default is True.
+
+    The value can be a bool, a number, or a text (an Accelergy attribute can
+    be the text "false"). Only an explicit false value gives False.
+    """
+    value = attributes.get("clock_gating")
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSE_TEXT
+    return bool(value)
+
 
 # ---------------------------------------------------------------------------
 # Legacy aliases. No estimator accepts them. The table lets the error message
@@ -377,22 +409,17 @@ def validate_attributes(
     warnings: List[str] = []
     prim = primitive_of(primitive)
     spec = PRIMITIVE_PARAMS.get(prim)
-    allowed = set(policy_keys) | set(CONTEXT_NAMES)
+    allowed = set(policy_keys) | set(CONTEXT_NAMES) | set(UNIVERSAL_OPTIONAL)
 
     for key in attributes:
         if key in CANONICAL or key in allowed:
             continue
         target = LEGACY_ALIASES.get(key)
         if target is not None:
-            raise NamingError(
-                f"{component} ({prim}): attribute '{key}' is a legacy alias; "
-                f"rename it to '{target}'. Estimators accept exactly one name "
-                f"per concept — see npuwattch.naming.CANONICAL."
-            )
-        warnings.append(
-            f"{component} ({prim}): unknown attribute '{key}' — not in the "
-            f"canonical vocabulary; no estimator will read it"
-        )
+            raise NamingError.nw(2001, component=component, primitive=prim,
+                                 key=key, target=target)
+        warnings.append(warning(2002, component=component, primitive=prim,
+                                key=key))
 
     if spec is None:
         return warnings
@@ -403,16 +430,13 @@ def validate_attributes(
     missing = [k for k in spec.required
                if k not in CONTEXT_NAMES and attributes.get(k) is None]
     if missing:
-        raise NamingError(
-            f"{component} ({prim}): missing required attribute(s) "
-            f"{', '.join(missing)}. Required: {', '.join(spec.required)}"
-        )
+        raise NamingError.nw(2003, component=component, primitive=prim,
+                             missing=", ".join(missing),
+                             required=", ".join(spec.required))
 
     extra = [k for k in attributes
              if k in CANONICAL and k not in spec.all() and k not in allowed]
     for key in sorted(extra):
-        warnings.append(
-            f"{component} ({prim}): '{key}' is canonical but not a "
-            f"{prim} parameter — it will be ignored"
-        )
+        warnings.append(warning(2004, component=component, primitive=prim,
+                                key=key))
     return warnings

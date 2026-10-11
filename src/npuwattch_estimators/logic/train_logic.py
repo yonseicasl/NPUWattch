@@ -26,9 +26,26 @@ Differences from SRAM:
 - The timing and area rows are one for each DESIGN, because the sweep
   implements each design one time. The trainer removes the duplicates across
   the modes.
+- The access primitives (``logic_mlp.DELTA_COMPONENTS``: regfile, fifo) also
+  get the derived metric ``energy_delta`` (clock-gating ruling 2026-10-11).
+  Its target is the energy of one access without the clock tree:
+  dyn_energy_pJ(mode row) - dyn_energy_pJ(idle row) of the same
+  implementation (flow_run_id). ``assemble_delta`` makes the samples. A delta
+  of exactly 0 is a structural zero (the read of a one-entry register file
+  has no read path, so the read row equals the idle row). A negative delta is
+  measurement noise: the idle row of that implementation is too high, so the
+  trainer removes all the deltas of that implementation. The log10 target
+  cannot use a zero or a negative delta. The trainer records the counts in
+  eval_report.json
+  (``delta_targets``). The inference code handles the structural zero with a
+  rule (logic.py).
+- A run with a subset of the components or the metrics updates the entries
+  of an existing eval_report.json. It does not remove the other entries.
 
 Outputs (to --out-dir, default = this directory):
   <component>_<metric>__<VERSION>.{pt,scalers.json,loss.json,meta.json}
+      (metric = energy, leakage, timing, area; and energy_delta for the
+      access primitives)
   eval_report.json
   envelope__<VERSION>.json  (the characterized envelope of the parameters and
                              the clock, for all components; the range checks
@@ -63,6 +80,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
+
+from npuwattch.diagnostics import error, info
 
 _HERE = Path(__file__).resolve().parent
 
@@ -160,6 +179,90 @@ def assemble(component: str, rows: List[Dict[str, str]]
             if s:
                 samples[metric].append(s)
     return samples, dropped
+
+
+#: The stim_mode of the idle row, which is the reference of energy_delta.
+_IDLE_MODE = "idle"
+
+
+def assemble_delta(component: str, rows: List[Dict[str, str]]
+                   ) -> Tuple[List[Sample], Dict[str, Any]]:
+    """Make the energy_delta samples of an access primitive.
+
+    For each row with a non-idle stim_mode, the target is
+    dyn_energy_pJ(row) - dyn_energy_pJ(idle row of the same flow_run_id).
+    A row without an idle partner is skipped. A delta of 0 (a structural
+    zero) and a negative delta (noise) are removed, because the target is
+    log10. A negative delta also removes the other deltas of the same
+    implementation, because its idle row is wrong. Return the samples and
+    the counts of each case.
+    """
+    col = lmlp.TARGET_COLUMNS["energy_delta"]
+    idle: Dict[str, float] = {}
+    for row in rows:
+        if row.get("stim_mode") == _IDLE_MODE:
+            try:
+                idle[row["flow_run_id"]] = float(row[col])
+            except (KeyError, ValueError):
+                pass
+    stats: Dict[str, Any] = {"pairs": 0, "no_idle_partner": 0,
+                             "zero_raw": {}, "negative_raw": {},
+                             "negative_rows": [], "suspect_runs": []}
+    # A negative delta shows that the idle row of the implementation is too
+    # high (noise). Then each delta of that implementation is wrong, thus
+    # the trainer removes all the rows of that flow_run_id.
+    suspect = set()
+    for row in rows:
+        ref = idle.get(row.get("flow_run_id", ""))
+        mode = row.get("stim_mode")
+        if ref is None or mode == _IDLE_MODE:
+            continue
+        try:
+            if float(row[col]) - ref < 0.0:
+                suspect.add(row["flow_run_id"])
+        except (KeyError, ValueError):
+            continue
+    stats["suspect_runs"] = sorted(suspect)
+    stats["suspect_rows_removed"] = 0
+    samples: List[Sample] = []
+    for row in rows:
+        mode = row.get("stim_mode")
+        if mode == _IDLE_MODE or mode not in lmlp.STIM_MODES[component]:
+            continue
+        ref = idle.get(row.get("flow_run_id", ""))
+        if ref is None:
+            stats["no_idle_partner"] += 1
+            continue
+        try:
+            delta = float(row[col]) - ref
+        except (KeyError, ValueError):
+            continue
+        stats["pairs"] += 1
+        if delta == 0.0:
+            stats["zero_raw"][mode] = stats["zero_raw"].get(mode, 0) + 1
+            continue
+        if delta < 0.0:
+            stats["negative_raw"][mode] = stats["negative_raw"].get(mode, 0) + 1
+            stats["negative_rows"].append({
+                "flow_run_id": row["flow_run_id"], "mode": mode,
+                "delta_pJ": delta, "rel_to_idle": delta / ref})
+            continue
+        if row["flow_run_id"] in suspect:
+            stats["suspect_rows_removed"] += 1
+            continue
+        s = _mk(component, "energy", row, [])
+        if s is None:
+            continue
+        params = {c: float(row[c]) if row.get(c, "") not in ("", None) else 1.0
+                  for c in lmlp.PARAM_COLUMNS[component]}
+        x = lmlp.feature_vector(component, "energy_delta",
+                                lmlp.node_nm(s.node), s.clock_ns, params, mode)
+        samples.append(Sample(component=component, node=s.node,
+                              clock_ns=s.clock_ns, params=s.params, mode=mode,
+                              scr=s.scr, sar=s.sar,
+                              y_log10=math.log10(delta), x=tuple(x)))
+    stats["samples"] = len(samples)
+    return samples, stats
 
 
 def leak_quarantine_keys(rows: List[Dict[str, str]], dex: float
@@ -503,7 +606,10 @@ def ab_none(component: str, samples: List[Sample], arch: List[int],
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--components", default=",".join(lmlp.COMPONENTS))
-    ap.add_argument("--metrics", default=",".join(lmlp.METRICS))
+    ap.add_argument("--metrics",
+                    default=",".join(lmlp.METRICS + lmlp.DERIVED_METRICS),
+                    help="energy_delta applies only to the access primitives "
+                         "(regfile, fifo); other components skip it")
     ap.add_argument("--dataset-dir", default=None)
     ap.add_argument("--out-dir", default=str(_HERE))
     ap.add_argument("--epochs", type=int, default=6000)
@@ -532,10 +638,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
     for c in components:
         if c not in lmlp.COMPONENTS:
-            ap.error(f"unknown component '{c}' (choose from {lmlp.COMPONENTS})")
+            ap.error(error(8180, component=c, known=lmlp.COMPONENTS))
     for m in metrics:
-        if m not in lmlp.METRICS:
-            ap.error(f"unknown metric '{m}' (choose from {lmlp.METRICS})")
+        if m not in lmlp.METRICS + lmlp.DERIVED_METRICS:
+            ap.error(error(8181, metric=m,
+                           known=lmlp.METRICS + lmlp.DERIVED_METRICS))
 
     ds_hash = lmlp.dataset_hash(ddir, components)
     report: Dict[str, Any] = {
@@ -545,8 +652,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "date": datetime.now().isoformat(timespec="seconds"),
         "torch": torch.__version__,
         "models": {}, "audits": {}, "gates": {}, "ab_none": {},
-        "dropped_rows": [],
+        "dropped_rows": [], "delta_targets": {},
     }
+    # A run for a subset updates the entries of the existing report.
+    prev_path = out_dir / "eval_report.json"
+    if prev_path.is_file():
+        try:
+            prev = json.loads(prev_path.read_text())
+        except (OSError, ValueError):
+            prev = {}
+        for key in ("models", "audits", "gates", "ab_none", "delta_targets",
+                    "leakage_quarantine"):
+            report[key] = dict(prev.get(key) or {})
+        report["dropped_rows"] = [
+            d for d in prev.get("dropped_rows") or []
+            if d.get("component") not in components]
+        report["previous_runs"] = (list(prev.get("previous_runs") or [])
+                                   + [{"date": prev.get("date"),
+                                       "components": (prev.get("dataset") or {})
+                                       .get("components")}])
 
     leak_excl = {n.strip() for n in args.leakage_exclude_nodes.split(",")
                  if n.strip()}
@@ -557,7 +681,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                       "models cover the remaining nodes only",
         }
 
-    report["leakage_quarantine"] = {}
+    report.setdefault("leakage_quarantine", {})
     for component in components:
         rows = list(csv.DictReader(open(lmlp.dataset_csv(ddir, component))))
         samples, dropped = assemble(component, rows)
@@ -571,11 +695,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if (s.params, s.node, s.clock_ns, s.mode) not in bad]
             report["leakage_quarantine"][component] = qstats
         report["dropped_rows"].extend(dropped)
-        print(f"[{component}] rows={len(rows)}  samples: "
-              + ", ".join(f"{m}={len(samples[m])}" for m in lmlp.METRICS)
-              + f", dropped={len(dropped)}")
+        if component in lmlp.DELTA_COMPONENTS and "energy_delta" in metrics:
+            samples["energy_delta"], dstats = assemble_delta(component, rows)
+            report["delta_targets"][component] = dstats
+            info(8183, component=component, pairs=dstats["pairs"],
+                 zero=sum(dstats["zero_raw"].values()),
+                 negative=sum(dstats["negative_raw"].values()),
+                 samples=dstats["samples"]).emit()
+        info(8182, component=component, rows=len(rows),
+             samples=", ".join(f"{m}={len(samples[m])}" for m in lmlp.METRICS),
+             dropped=len(dropped)).emit()
 
         for metric in metrics:
+            if metric not in samples:
+                continue                # energy_delta of a datapath primitive
             t0 = time.time()
             arch = lmlp.DEFAULT_ARCH[metric]
             tr, va, te = split_by_group(samples[metric], args.seed)
@@ -613,6 +746,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "date": datetime.now().isoformat(timespec="seconds"),
                 "torch": torch.__version__,
             }
+            if metric == "energy_delta":
+                meta["target_definition"] = (
+                    "dyn_energy_pJ(mode row) - dyn_energy_pJ(idle row) of the "
+                    "same flow_run_id; zero and negative deltas removed "
+                    "(eval_report.json delta_targets)")
             lmlp.save_quartet(out_dir, component, metric, res.net,
                               res.scalers, res.loss_spec, meta)
 
@@ -631,7 +769,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report["gates"][key] = {"pass_10pct": not over10,
                                     "modes_over_5pct": over5,
                                     "modes_over_10pct": over10}
-            print(f"  [{key}] arch={arch} test MAPE={ev['mape']:.3%} "
+            print(f"  [{key}] arch={arch} test MAPE={ev['mape']:.3%} "  # nw-lint: text
                   f"ρ={ev['spearman']:.3f} epochs={res.epochs_run} "
                   f"({time.time() - t0:.0f}s)  over5%={over5 or '-'}")
 
@@ -639,7 +777,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 report["ab_none"][component] = ab_none(
                     component, samples["energy"], arch, args.epochs,
                     args.seed, args.patience, res, te)
-                print(f"  [{component}] none-A/B: "
+                print(f"  [{component}] none-A/B: "  # nw-lint: text
                       f"{report['ab_none'][component]}")
 
             if args.audits:
@@ -651,10 +789,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
 
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=1))
-    print(f"wrote {out_dir / 'eval_report.json'}")
+    info(8003, path=out_dir / "eval_report.json").emit()
     # The range checks of the provider use the SAME data as the training.
     env = lmlp.write_envelope(ddir, out_dir, lmlp.COMPONENTS)
-    print(f"wrote {env}")
+    info(8003, path=env).emit()
     return 0
 
 

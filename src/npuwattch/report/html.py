@@ -24,6 +24,13 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from npuwattch.diagnostics import (
+    INFO,
+    WARNING,
+    NPUWattchError,
+    group as group_messages,
+    is_suppressed,
+)
 from .svg import (
     donut,
     dyn_leak_bar,
@@ -33,7 +40,11 @@ from .svg import (
     windows_chart,
 )
 
-__all__ = ["build_context", "render_html", "write_report"]
+__all__ = ["ReportError", "build_context", "render_html", "write_report"]
+
+
+class ReportError(NPUWattchError, ValueError):
+    """The report cannot be made from the results of the run."""
 
 _TOP_N = 8                     # the donut and the bar list show this many items
 
@@ -226,7 +237,7 @@ def build_context(
     provider = getattr(chain, "provider", None)
 
     if not run.windows:
-        raise ValueError("report: RunEnergy has no windows to report")
+        raise ReportError.nw(4001)
     comp0 = run.windows[0].components
     total_pJ = run.total_energy_pJ or 1.0
 
@@ -405,8 +416,6 @@ def build_context(
             "dtype": dtype,
             "fp32_equivalent": fp32_eq,
         }
-    power_density = ((run.avg_power_mW * 1e-3) / (area_um2 / 1e6)
-                     if area_um2 > 0 else None)
     f_max = run.f_max_MHz if timing else None
     if not timing:
         check_text, check_color, banner = "not shown (no --fmax)", "muted", None
@@ -517,13 +526,6 @@ def build_context(
             "leak_pct": round(100.0 * run.leak_energy_pJ / total_pJ, 1),
             "avg_power_mW": run.avg_power_mW,
             "avg_power_str": fmt_si(run.avg_power_mW, "mW"),
-            # The power divided by the MODELED area only. The denominator
-            # does not include the IO, the PHY, the controllers, the scalar
-            # core, or the empty area, because NPUWattch has no model for
-            # them. Thus this value is higher than a TDP density of a full die.
-            "power_density_W_per_mm2": power_density,
-            "power_density_str": (f"{power_density:.3g} W/mm²"
-                                  if power_density else None),
             "area_um2": area_um2, "area_mm2": round(area_um2 / 1e6, 3),
             "cycles": total_cycles,
             "exec_time_s": run.exec_time_s,
@@ -558,8 +560,17 @@ def build_context(
                            "table constants; a user component uses the "
                            "values of the user component library."),
             "inputs": input_entries,
-            "warnings": list(warnings),
-            "notes": list(notes),
+            # The text of each message ("(NW-6101): ..."), and the same
+            # messages grouped with their code, level and count. A message
+            # that --suppress hides is in neither.
+            "warnings": [str(w) for w in warnings
+                         if not is_suppressed(getattr(w, "code", None))],
+            "notes": [str(n) for n in notes
+                      if not is_suppressed(getattr(n, "code", None))],
+            "diagnostics": {
+                "warnings": group_messages(warnings, WARNING),
+                "notes": group_messages(notes, INFO),
+            },
             # The provenance of each kernel of a harness run: the kind, the
             # source of the dtype, and the primary activity counters. The
             # JSON always has these records, at each console verbosity.

@@ -28,6 +28,13 @@ import ast
 import importlib.util
 import runpy
 
+from npuwattch import diagnostics as diag
+from npuwattch.diagnostics import NPUWattchError
+
+
+class EstimatorRootError(NPUWattchError, FileNotFoundError):
+    """The directory of the estimator plugins cannot be found."""
+
 
 @dataclass(frozen=True)
 class EstimatorModuleInfo:
@@ -60,9 +67,7 @@ def _resolve_estimator_root() -> Path:
     if spec and spec.submodule_search_locations:
         return Path(list(spec.submodule_search_locations)[0])
 
-    raise FileNotFoundError(
-        "[ERROR] Could not locate estimator root. Tried ./src/npuwattch_estimators and installed 'npuwattch_estimators' package."
-    )
+    raise EstimatorRootError.nw(1201)
 
 
 def _extract_estimator_spec(py_file: Path) -> Optional[dict]:
@@ -139,18 +144,18 @@ class EstimatorHost:
 
     def report_to_console(self) -> None:
         """Print the plugins and the Python files in the estimator root."""
-        print(f"[INFO] Estimator root: {self.estimator_root}")
+        diag.info(1202, path=self.estimator_root).emit()
 
         if not self._modules:
-            print("[WARNING] No estimator modules found.")
+            diag.warning(1203).emit()
             return
 
-        print("[INFO] Modules found:")
-        print("=" * 100)
+        diag.info(1204).emit()
+        print("=" * 100)  # nw-lint: text
         for name in self.list_modules():
             info = self._modules[name]
             rel_entry = info.entry_file.relative_to(self.estimator_root)
-            print(f"  - {name} (entry: {rel_entry})")
+            print(f"  - {name} (entry: {rel_entry})")  # nw-lint: text
 
             # Print the required parameters, if the spec gives them.
             required = []
@@ -158,13 +163,13 @@ class EstimatorHost:
                 required = info.spec.get("parameters", {}).get("required", []) or []
             if required:
                 req_names = [p.get("name", "?") for p in required]
-                print(f"      required_params: {req_names}")
+                print(f"      required_params: {req_names}")  # nw-lint: text
 
             if self.verbose >= 2:
                 for src in info.python_sources:
                     rel = src.relative_to(self.estimator_root)
-                    print(f"      * {rel}")
-        print("=" * 100)
+                    print(f"      * {rel}")  # nw-lint: text
+        print("=" * 100)  # nw-lint: text
 
     def has_module(self, name: str) -> bool:
         """Return True if the estimator plugin exists."""
@@ -185,49 +190,53 @@ class EstimatorHost:
         try:
             return runpy.run_path(str(info.entry_file))
         except Exception as e:
-            print(f"[ERROR] Failed to load module '{module_name}': {e}")
+            diag.error(1205, module=module_name, error=e).emit()
             return None
 
     def execute(
         self, module_name: str, function_name: str, *args: Any, **kwargs: Any
-    ) -> Tuple[Any, Optional[str]]:
+    ) -> Tuple[Any, Optional[diag.Diagnostic]]:
         """
         Run a function of a scanned estimator plugin.
 
         Returns:
             (result, error_message). On success, error_message is None.
-            On failure, result is None and error_message describes the error.
+            On failure, result is None and error_message is the catalog
+            message (a ``str``) that describes the error. The host prints
+            the message.
         """
         if module_name not in self._modules:
-            error = f"[ERROR] Estimator module '{module_name}' not found. Available: {self.list_modules()}"
-            print(error)
+            error = diag.error(1206, module=module_name,
+                               available=self.list_modules())
+            error.emit()
             return None, error
 
         ns = self._load_namespace(module_name)
         if ns is None:
-            error = f"[ERROR] Failed to load namespace for module '{module_name}'"
-            print(error)
+            error = diag.error(1207, module=module_name)
+            error.emit()
             return None, error
 
         fn = ns.get(function_name)
         if not callable(fn):
             available = sorted([k for k, v in ns.items() if callable(v) and not k.startswith('_')])
-            error = (f"[ERROR] Function '{function_name}' not found/callable in '{module_name}'. "
-                     f"Available: {available}")
-            print(error)
+            error = diag.error(1208, function=function_name,
+                               module=module_name, available=available)
+            error.emit()
             return None, error
 
         try:
             result = fn(*args, **kwargs)
             return result, None
         except Exception as e:
-            error = f"[ERROR] Exception in {module_name}.{function_name}: {e}"
-            print(error)
+            error = diag.error(1209, module=module_name,
+                               function=function_name, error=e)
+            error.emit()
             return None, error
 
     def execute_entrypoint(
         self, module_name: str, entrypoint_key: str, *args: Any, **kwargs: Any
-    ) -> Tuple[Any, Optional[str]]:
+    ) -> Tuple[Any, Optional[diag.Diagnostic]]:
         """
         Run an entrypoint that ESTIMATOR_SPEC['entrypoints'] declares.
 
@@ -236,14 +245,15 @@ class EstimatorHost:
         """
         spec = self.get_spec(module_name)
         if not spec:
-            error = f"[ERROR] No ESTIMATOR_SPEC found for module '{module_name}'"
-            print(error)
+            error = diag.error(1210, module=module_name)
+            error.emit()
             return None, error
 
         ep = (spec.get("entrypoints", {}) or {}).get(entrypoint_key)
         if not ep:
-            error = f"[ERROR] Entrypoint '{entrypoint_key}' not declared for '{module_name}'"
-            print(error)
+            error = diag.error(1211, entrypoint=entrypoint_key,
+                               module=module_name)
+            error.emit()
             return None, error
 
         return self.execute(module_name, ep, *args, **kwargs)
@@ -266,7 +276,7 @@ class EstimatorHost:
             The energy, or None if the estimation failed
         """
         if not self.has_module(module_name):
-            print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for energy.")
+            diag.error(1212, module=module_name, metric="energy").emit()
             return None
 
         result, error = self.execute_entrypoint(module_name, "energy", features, **kwargs)
@@ -288,7 +298,7 @@ class EstimatorHost:
             The area, or None if the estimation failed
         """
         if not self.has_module(module_name):
-            print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for area.")
+            diag.error(1212, module=module_name, metric="area").emit()
             return None
 
         result, error = self.execute_entrypoint(module_name, "area", features, **kwargs)
@@ -310,7 +320,7 @@ class EstimatorHost:
             The timing, or None if the estimation failed
         """
         if not self.has_module(module_name):
-            print(f"[ERROR] Estimator '{module_name}' does not exist. Returning None for timing.")
+            diag.error(1212, module=module_name, metric="timing").emit()
             return None
 
         result, error = self.execute_entrypoint(module_name, "timing", features, **kwargs)
@@ -346,7 +356,7 @@ class EstimatorHost:
         epochs: int = 500,
         batch_size: int = 10,
         lr: float = 1e-3,
-    ) -> Tuple[Any, Optional[str]]:
+    ) -> Tuple[Any, Optional[diag.Diagnostic]]:
         """
         Train a model of the given estimator.
 
@@ -363,8 +373,8 @@ class EstimatorHost:
             (trained_model, error_message)
         """
         if not self.has_module(module_name):
-            error = f"[ERROR] Estimator '{module_name}' does not exist. Cannot train."
-            print(error)
+            error = diag.error(1213, module=module_name)
+            error.emit()
             return None, error
 
         # Find the training entrypoint.
@@ -408,7 +418,7 @@ class EstimatorHost:
             A dictionary of model type -> availability, or None if the check failed
         """
         if not self.has_module(module_name):
-            print(f"[ERROR] Estimator '{module_name}' does not exist.")
+            diag.error(1214, module=module_name).emit()
             return None
 
         result, error = self.execute(module_name, "check_models_available")

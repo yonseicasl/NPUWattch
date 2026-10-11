@@ -1,0 +1,63 @@
+{
+ "component": "fifo",
+ "model": "energy_delta",
+ "version": "v2",
+ "arch": [
+  128,
+  128,
+  128
+ ],
+ "n_in": 13,
+ "features": [
+  "log10_node_nm",
+  "log10_clock_ns",
+  "log2_width",
+  "log2_depth",
+  "node_is_5nm",
+  "node_is_7nm",
+  "node_is_10nm",
+  "node_is_16nm",
+  "node_is_20nm",
+  "mode_none",
+  "mode_random",
+  "mode_stream",
+  "mode_idle"
+ ],
+ "stim_modes": [
+  "none",
+  "random",
+  "stream",
+  "idle"
+ ],
+ "target": "log10_pJ",
+ "target_column": "dyn_energy_pJ",
+ "dataset_sha256": "24112db82112d9ed94a0dad83438a5e46ea1e0067db2cfca3c0ad6b2bbd53f78",
+ "seed": 42,
+ "split": {
+  "train": 768,
+  "val": 96,
+  "test": 96
+ },
+ "epochs_run": 775,
+ "val_mape": 0.0580567866563797,
+ "test_mape": 0.054043017490158766,
+ "test_spearman": 0.9982637004883345,
+ "per_mode_test_mape": {
+  "none": 0.036649490135023,
+  "random": 0.06883253892924643,
+  "stream": 0.05664702340620689
+ },
+ "per_node_test_mape": {
+  "10nm": 0.05403982564220099,
+  "16nm": 0.059532531904973825,
+  "20nm": 0.07489783660743422,
+  "5nm": 0.038215509405049794,
+  "7nm": 0.035585824552466
+ },
+ "excluded_nodes": [],
+ "pvt": "TT/25C/nominal only (the dataset has no PVT axes)",
+ "loss_max_min_ratio": 12.404534339904785,
+ "date": "2026-10-11T12:47:06",
+ "torch": "2.13.0+cpu",
+ "target_definition": "dyn_energy_pJ(mode row) - dyn_energy_pJ(idle row) of the same flow_run_id; zero and negative deltas removed (eval_report.json delta_targets)"
+}

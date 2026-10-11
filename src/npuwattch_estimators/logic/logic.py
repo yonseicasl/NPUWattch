@@ -12,6 +12,40 @@ has four models:
 Each model is a ``logic_mlp`` MLP. Its inputs are the log-transformed design
 parameters and the one-hot codes of the node and of the mode.
 
+Charged energy and clock gating (user ruling 2026-10-11)
+--------------------------------------------------------
+The RTL of the sweep has no clock gating. Thus each characterized mode
+includes the energy of the full clock tree, and the ``idle`` mode (clock on,
+inputs held) is only that clock tree. NPUWattch assumes that each block is
+clock-gated. ``energy_per_cycle`` thus gives these values:
+
+- ``idle`` mode: 0 pJ. An idle cycle costs leakage only. The §6 term
+  E_leak = P_leak x T_exec includes it.
+- Access primitives (``ACCESS_PRIMITIVES``: regfile, fifo): one event is one
+  access. Its energy is the prediction of the ``energy_delta`` model, which
+  is trained on E_mode - E_idle of the same implementation (train_logic.py).
+  A gated register file clocks no flop on a read and only one row on a
+  write, thus the clock tree of the full array is not part of an access.
+  One structural rule applies: the read of a one-entry register file
+  (``mem_depth_per_bank`` <= 1) costs 0 pJ. In all 40 depth-1 designs of the
+  sweep, the read row is equal to the idle row, because the register output
+  is the read port and there is no read path to switch.
+- Datapath primitives (all other primitives): one event is one active
+  cycle, which has a real clock. Its energy is E_mode.
+
+The component attribute ``clock_gating: false`` models a block without
+clock gating. Then ``energy_per_cycle`` gives E_mode for each mode (also
+``idle``), and ``idle_terms`` gives ``(E_idle, E_idle)``. The §6 aggregator
+then charges E_idle for each instance cycle that has no event
+(``aggregate._book_idle_per_cycle``). A primitive without a characterized
+``idle`` mode has no idle terms. Its idle cycles cost leakage only.
+
+The per-access energy is small (a register-file read is approximately 2 to
+4 percent of E_idle). Thus it has its own model: the difference of two
+energy predictions has an error of the same order as the value (median 24
+percent for a read). The test MAPE of the ``energy_delta`` model is in
+eval_report.json.
+
 The estimator also serves the NoC fabric blocks (``crossbar``, ``fattree``,
 ``foldedclos``). The fabric models have one limit:
 
@@ -76,6 +110,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from npuwattch.diagnostics import warning
+from npuwattch_estimators.errors import (
+    EstimatorInternalError, EstimatorQueryError, LogicCheckpointError,
+    LogicModelError, LogicQueryError)
+
 MODULE_DIR = Path(__file__).resolve().parent
 
 # --------------------------------------------------------------------------
@@ -93,7 +132,7 @@ ESTIMATOR_SPEC = {
     # energy.node_scaling interpolates the continuous node axis of the CLI
     # between these nodes.
     "nodes": ["5nm", "7nm", "10nm", "16nm", "20nm"],
-    "version": "2.2",
+    "version": "2.4",
     "description": (
         "Calibrated logic-primitive estimator: post-layout-trained v2 MLP "
         "quartets (energy/leakage/timing/area) for every characterized logic "
@@ -118,6 +157,27 @@ _PIPELINE_DEFAULTS = {
     "fpsfu": 10, "mxfpmac": 1,
 }
 
+#: The access primitives. One event of such a primitive is one access, and
+#: its energy is E_mode - E_idle, from the energy_delta model (refer to the
+#: module docstring). One event of all other primitives is one active cycle.
+ACCESS_PRIMITIVES = ("regfile", "fifo")
+
+#: The text values of ``clock_gating`` that turn clock gating off. The values
+#: are the same as in ``npuwattch.naming.clock_gating_of``. This module does
+#: not import npuwattch.naming, because runpy loads it.
+_FALSE_TEXT = ("false", "no", "off", "0")
+
+
+def _clock_gated(features: Mapping[str, Any]) -> bool:
+    """Return False only if the features set ``clock_gating`` to false."""
+    value = features.get("clock_gating")
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSE_TEXT
+    return bool(value)
+
+
 _MLP_MOD_CACHE: Dict[str, Any] = {"mod": None, "err": None}
 
 
@@ -135,18 +195,14 @@ def _mlp():
             sys.modules.pop("_npuwattch_logic_mlp", None)
             _MLP_MOD_CACHE.update(mod=None, err=f"{type(e).__name__}: {e}")
     if _MLP_MOD_CACHE["mod"] is None:
-        raise RuntimeError(
-            f"logic MLP layer unavailable ({_MLP_MOD_CACHE['err']}) — "
-            f"torch and the v2 checkpoints are required")
+        raise LogicModelError.nw(8101, error=_MLP_MOD_CACHE["err"])
     return _MLP_MOD_CACHE["mod"]
 
 
 def _need(features: Mapping[str, Any], key: str, component: str) -> float:
     v = features.get(key)
     if not isinstance(v, (int, float)) or isinstance(v, bool):
-        raise ValueError(
-            f"logic/{component}: required attribute {key!r} is missing or "
-            f"non-numeric (got {v!r})")
+        raise LogicQueryError.nw(8102, component=component, key=key, value=v)
     return float(v)
 
 
@@ -171,9 +227,7 @@ def _oversubscription(f: Mapping[str, Any], component: str) -> float:
     """
     v = _opt(f, "net_oversubscription", 1.0)
     if not 0.0 < v <= 1.0:
-        raise ValueError(
-            f"logic/{component}: net_oversubscription must be in (0, 1] "
-            f"(got {v!r})")
+        raise LogicQueryError.nw(8103, component=component, value=v)
     return v
 
 
@@ -272,7 +326,7 @@ def _params_for(component: str, f: Mapping[str, Any]) -> Dict[str, Any]:
             "num_spines": _need(f, "net_spines", component),
             "oversubscription": _oversubscription(f, component),
         }
-    raise ValueError(f"logic: unmapped component {component!r}")
+    raise EstimatorInternalError.nw(8104, component=component)
 
 
 class _LogicUnitCostProvider:
@@ -283,7 +337,8 @@ class _LogicUnitCostProvider:
     component) goes to ``fallback``.
 
     The class has the structure of the ``UnitCostProvider`` protocol: the
-    ``calibrated`` flag and four methods. It does not import npuwattch, thus
+    ``calibrated`` flag and four methods. From npuwattch, it imports only the
+    message catalog (``npuwattch.diagnostics``, standard library only), thus
     runpy can load this file. The provider keeps each prediction and uses it
     again for an equal query.
     """
@@ -313,10 +368,9 @@ class _LogicUnitCostProvider:
             expect = mlp.feature_names(component, metric)
             got = list(m.meta.get("features", []))
             if got and got != expect:
-                raise RuntimeError(
-                    f"logic/{component}.{metric}: checkpoint feature order "
-                    f"{got} != code {expect} — version drift, retrain or "
-                    f"pin logic_mlp.VERSION")
+                raise LogicCheckpointError.nw(
+                    8105, component=component, metric=metric, got=got,
+                    expected=expect)
             self._models[key] = m
         return m
 
@@ -340,10 +394,8 @@ class _LogicUnitCostProvider:
         node = str(merged.get("node", ""))
         nm = mlp.node_nm(node)
         if nm not in mlp.NODE_LIST:
-            raise ValueError(
-                f"logic/{component}: node {node!r} is outside the "
-                f"characterized set {sorted(mlp.NODE_LIST)} (nm) — no "
-                f"extrapolation across the node one-hot")
+            raise LogicQueryError.nw(8106, component=component, node=node,
+                                     nodes=sorted(mlp.NODE_LIST))
         clock_mhz = merged.get("clock_mhz")
         clock_ns = (1000.0 / float(clock_mhz)
                     if isinstance(clock_mhz, (int, float)) and clock_mhz
@@ -365,9 +417,8 @@ class _LogicUnitCostProvider:
         mlp = _mlp()
         nm, clock_ns, params, _ = self._resolve(component, features)
         if mode is not None and mode not in mlp.STIM_MODES[component]:
-            raise ValueError(
-                f"logic/{component}: stim_mode {mode!r} was never "
-                f"characterized (known: {mlp.STIM_MODES[component]})")
+            raise LogicQueryError.nw(8107, component=component, mode=mode,
+                                     modes=mlp.STIM_MODES[component])
         key = (component, metric, nm, round(clock_ns, 6),
                tuple(sorted(params.items())), mode)
         hit = self._memo.get(key)
@@ -392,16 +443,33 @@ class _LogicUnitCostProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self._fallback is None:
-            raise ValueError(
-                f"logic provider got primitive '{primitive}' and has no fallback")
+            raise EstimatorQueryError.nw(8001, provider="logic",
+                                         primitive=primitive)
         return getattr(self._fallback, method)(primitive, features)
 
     # -- the UnitCostProvider protocol -------------------------------------
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
+        """Return the charged energy of one event [pJ].
+
+        The value follows the clock gating of the component (refer to the
+        module docstring). With clock gating (the default), an ``idle``
+        event costs 0, and an access event of an access primitive costs the
+        prediction of its ``energy_delta`` model (E_mode - E_idle). Without
+        clock gating, each event costs E_mode.
+        """
         if primitive not in self.SERVED:
             return self._delegate("energy_per_cycle", primitive, features)
         mode = str(features.get("stim_mode") or "random")
+        if not _clock_gated(features):
+            return self._predict(primitive, "energy", features, mode)
+        if mode == "idle":
+            return 0.0
+        if primitive in ACCESS_PRIMITIVES:
+            if (primitive == "regfile" and mode == "read"
+                    and _opt(features, "mem_depth_per_bank", 2.0) <= 1.0):
+                return 0.0                  # no read path (module docstring)
+            return self._predict(primitive, "energy_delta", features, mode)
         return self._predict(primitive, "energy", features, mode)
 
     def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:
@@ -423,10 +491,19 @@ class _LogicUnitCostProvider:
     def idle_terms(self, primitive: str, features: Mapping[str, Any]):
         """Return the idle terms of a primitive (optional protocol method).
 
-        Logic primitives have no idle terms. A query for a different
-        primitive goes to the fallback.
+        A clock-gated primitive (the default) has no idle terms: an idle
+        cycle costs leakage only. A primitive with ``clock_gating: false``
+        and a characterized ``idle`` mode returns ``(E_idle, E_idle)``. Each
+        event then takes the place of one idle cycle, and the aggregator
+        charges E_idle for each instance cycle without an event. A query for
+        a different primitive goes to the fallback.
         """
-        if primitive in self.SERVED or self._fallback is None:
+        if primitive in self.SERVED:
+            if _clock_gated(features) or "idle" not in _mlp().STIM_MODES[primitive]:
+                return None
+            e_idle = self._predict(primitive, "energy", features, "idle")
+            return (e_idle, e_idle)
+        if self._fallback is None:
             return None
         fb = getattr(self._fallback, "idle_terms", None)
         return fb(primitive, features) if fb is not None else None
@@ -452,19 +529,16 @@ class _LogicUnitCostProvider:
         out: List[str] = []
         depths = env.get("pipeline_stages") or []
         if requested is not None:
-            out.append(
-                f"pipeline_stages={requested} is outside the characterized "
-                f"{min(depths)}-{max(depths)} for {primitive} (depth = "
-                f"registered latency incl. input/output registers) — "
-                f"evaluated at pipeline_stages={params['pipeline_stages']}")
+            out.append(warning(
+                8110, requested=requested, lo=min(depths), hi=max(depths),
+                primitive=primitive, used=params["pipeline_stages"]))
         for col, (lo, hi) in sorted(env.get("params", {}).items()):
             if col == "pipeline_stages" or col not in params:
                 continue
             v = float(params[col])
             if not lo <= v <= hi:
-                out.append(
-                    f"{col}={v:g} is outside the characterized {lo:g}-{hi:g} "
-                    f"for {primitive} — extrapolated")
+                out.append(warning(8111, param=col, value=v, lo=lo, hi=hi,
+                                   primitive=primitive))
         if features.get("clock_check") is False:
             return out
         fastest = (env.get("config_min_clock_ns", {}).get(str(nm), {})
@@ -475,19 +549,16 @@ class _LogicUnitCostProvider:
         # the characterized point, not an extrapolation.
         tol = 0.005
         if fastest is not None and clock_ns < fastest * (1 - tol):
-            out.append(
-                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is faster than the "
-                f"fastest characterized implementation of this {primitive} "
-                f"configuration at {nm} nm ({fastest:g} ns, "
-                f"{1000.0 / fastest:.0f} MHz) — extrapolated along the clock "
-                f"axis; a deeper pipeline or slower clock is characterized")
+            out.append(warning(
+                8112, clock_ns=clock_ns, clock_mhz=mhz, primitive=primitive,
+                node_nm=nm, fastest_ns=fastest, fastest_mhz=1000.0 / fastest))
         elif (lo_hi is not None
               and not lo_hi[0] * (1 - tol) <= clock_ns <= lo_hi[1] * (1 + tol)):
             side = "faster" if clock_ns < lo_hi[0] else "slower"
-            out.append(
-                f"clock {clock_ns:g} ns ({mhz:.0f} MHz) is {side} than any "
-                f"characterized {primitive} at {nm} nm ({lo_hi[0]:g}-"
-                f"{lo_hi[1]:g} ns) — extrapolated along the clock axis")
+            out.append(warning(
+                8113, clock_ns=clock_ns, clock_mhz=mhz, side=side,
+                primitive=primitive, node_nm=nm, lo_ns=lo_hi[0],
+                hi_ns=lo_hi[1]))
         return out
 
 

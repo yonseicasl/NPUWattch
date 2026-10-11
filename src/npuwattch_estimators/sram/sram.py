@@ -64,8 +64,10 @@ Vocabulary (it agrees with CACTI 5+/6 and with memory compilers):
 
 Units are those of the repo: pJ / mW / um2 / ns. ``depth`` is words PER BANK.
 Total bits = n_banks * depth * bw, as in the vocabulary of the class mapper.
-This module uses only the standard library and no other module of the repo.
-Thus ``EstimatorHost`` can execute it with ``runpy`` in all environments.
+This module uses only the standard library and the message catalog
+(``npuwattch.diagnostics`` and ``npuwattch_estimators.errors``, which also use
+only the standard library). Thus ``EstimatorHost`` can execute it with
+``runpy`` in all environments.
 
 The ``TilePointSource`` interface gives the cost of one tile. The ``source``
 feature selects one of two implementations:
@@ -91,6 +93,10 @@ import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from npuwattch.diagnostics import NPUWattchError, emit, error, warning
+from npuwattch_estimators.errors import (
+    EstimatorQueryError, SramDatasetError, SramQueryError)
 
 # --------------------------------------------------------------------------
 # ESTIMATOR_SPEC. Keep it a pure literal: EstimatorHost reads it with
@@ -243,24 +249,21 @@ def _resolve_dataset_dir(features: Optional[Mapping[str, Any]] = None) -> Path:
     if explicit:
         cand = Path(explicit)
         if not (cand / _ARRAY_CSV).is_file() or not (cand / _DECODER_CSV).is_file():
-            raise ValueError(f"dataset dir {cand} lacks {_ARRAY_CSV}/{_DECODER_CSV}")
+            raise SramQueryError.nw(8201, path=cand)
         return cand
     here = Path(__file__).resolve()
     for parent in here.parents:
         cand = parent / "dataset_gen" / "sram" / "datasets"
         if (cand / _ARRAY_CSV).is_file() and (cand / _DECODER_CSV).is_file():
             return cand
-    raise ValueError(
-        f"cannot locate {_ARRAY_CSV}/{_DECODER_CSV}; set ${_DATASET_ENV} or pass "
-        "features['dataset_dir']"
-    )
+    raise SramQueryError.nw(8202, env_var=_DATASET_ENV)
 
 
 def _fnum(row: Mapping[str, str], key: str, ctx: str) -> float:
     try:
         return float(row[key])
     except (KeyError, TypeError, ValueError):
-        raise ValueError(f"bad/missing '{key}' in {ctx}") from None
+        raise SramDatasetError.nw(8203, key=key, context=ctx) from None
 
 
 def _fnum_or(row: Mapping[str, str], key: str, default: float) -> float:
@@ -279,10 +282,7 @@ def _dyn(raw_pJ: float, leak_mW: float, window_ns: float, ctx: str) -> float:
     """Return the dynamic energy: the raw window integral minus the leakage of the window."""
     dyn = raw_pJ - leak_mW * window_ns          # mW * ns == pJ
     if dyn < -_DYN_EPS_PJ:
-        raise ValueError(
-            f"negative dynamic energy ({dyn:.3e} pJ) after leakage subtraction "
-            f"in {ctx} — dataset inconsistent"
-        )
+        raise SramDatasetError.nw(8204, energy_pJ=dyn, context=ctx)
     return max(0.0, dyn)
 
 
@@ -316,7 +316,7 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
             if dv == 0.0:
                 vdd = _fnum(row, "vdd_V", ctx)
                 if node in vdd_map and abs(vdd_map[node] - vdd) > 1e-9:
-                    raise ValueError(f"inconsistent nominal vdd for {node} at {ctx}")
+                    raise SramDatasetError.nw(8205, node=node, context=ctx)
                 vdd_map[node] = vdd
             if tr != 1.0:
                 tr05.append(dict(row))
@@ -347,12 +347,14 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
             if dv == 0.0 and temp == 25.0:
                 key = (node, r, c)
                 if key in nominal_array:
-                    raise ValueError(f"duplicate nominal array row {key} at {ctx}")
+                    raise SramDatasetError.nw(8206, sheet="nominal array",
+                                              key=key, context=ctx)
                 nominal_array[key] = pt
             else:
                 pkey = (node, r, c, dv, temp)
                 if pkey in pvt_array:
-                    raise ValueError(f"duplicate PVT array row {pkey} at {ctx}")
+                    raise SramDatasetError.nw(8206, sheet="PVT array",
+                                              key=pkey, context=ctx)
                 pvt_array[pkey] = pt
 
     with open(ddir / _DECODER_CSV, newline="") as fh:
@@ -368,10 +370,7 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
             temp = _fnum(row, "temperature_C", ctx)
             clk_ns = _fnum(row, "clk_ns", ctx)
             if clk_ns != _MEAS_WINDOW_NS:
-                raise ValueError(
-                    f"decoder TB cadence changed (clk_ns={clk_ns}) at {ctx}; "
-                    "leakage-subtraction window must be revisited"
-                )
+                raise SramDatasetError.nw(8207, clk_ns=clk_ns, context=ctx)
             leak = _fnum(row, "dec_leak_power_mW", ctx)
             pt = DecoderPoint(
                 rows=r, cols=c,
@@ -386,16 +385,18 @@ def load_dataset(dataset_dir: Optional[Path] = None) -> SramDataset:
             if dv == 0.0 and temp == 25.0:
                 key = (node, r, c)
                 if key in nominal_dec:
-                    raise ValueError(f"duplicate nominal decoder row {key} at {ctx}")
+                    raise SramDatasetError.nw(8206, sheet="nominal decoder",
+                                              key=key, context=ctx)
                 nominal_dec[key] = pt
             else:
                 pkey = (node, r, c, dv, temp)
                 if pkey in pvt_dec:
-                    raise ValueError(f"duplicate PVT decoder row {pkey} at {ctx}")
+                    raise SramDatasetError.nw(8206, sheet="PVT decoder",
+                                              key=pkey, context=ctx)
                 pvt_dec[pkey] = pt
 
     if not nominal_array or not nominal_dec:
-        raise ValueError(f"no nominal rows loaded from {ddir}")
+        raise SramDatasetError.nw(8208, path=ddir)
 
     shapes: Dict[str, Tuple[Tuple[int, int], ...]] = {}
     for node in sorted({k[0] for k in nominal_array}):
@@ -468,20 +469,20 @@ def _norm_node(value: Any) -> str:
         m = re.search(r"(\d+)", value)
         if m:
             return f"{int(m.group(1))}nm"
-    raise ValueError(f"cannot parse technology node from {value!r}")
+    raise EstimatorQueryError.nw(8002, node=value)
 
 
 def _pos_int(value: Any, name: str) -> int:
     iv = int(value)
     if iv < 1:
-        raise ValueError(f"{name} must be >= 1 (got {value!r})")
+        raise SramQueryError.nw(8209, name=name, value=value)
     return iv
 
 
 def _fraction(features: Mapping[str, Any], name: str, default: float) -> float:
     v = float(features.get(name, default))
     if not 0.0 <= v <= 1.0:
-        raise ValueError(f"{name} must be in [0, 1] (got {v})")
+        raise SramQueryError.nw(8210, name=name, value=v)
     return v
 
 
@@ -563,7 +564,7 @@ def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str
     template depth), and `mem_banks`.
     """
     if capacity_bits <= 0:
-        raise ValueError(f"capacity must be positive, got {capacity_bits} bits")
+        raise SramQueryError.nw(8211, capacity_bits=capacity_bits)
     small, large = SRAM_TEMPLATES[_TEMPLATE_SMALL], SRAM_TEMPLATES[_TEMPLATE_LARGE]
 
     n_large = capacity_bits // large["bits"]
@@ -581,19 +582,13 @@ def resolve_capacity(capacity_bits: int) -> Tuple[List[Dict[str, Any]], List[str
 
     total = n_large * large["bits"] + n_small * small["bits"]
     util = capacity_bits / total
-    warnings = [
-        f"capacity-only SRAM spec ({capacity_bits} bits): auto-applied macro "
-        f"template(s) "
-        + " + ".join(f"{c}x {n}" for n, c in
-                     ((_TEMPLATE_LARGE, n_large), (_TEMPLATE_SMALL, n_small)) if c)
-        + f" grouped into banks of <= {MAX_MACROS_PER_BANK} macros; "
-        + f"utilization {util:.1%}"
-    ]
+    templates = " + ".join(
+        f"{c}x {n}" for n, c in
+        ((_TEMPLATE_LARGE, n_large), (_TEMPLATE_SMALL, n_small)) if c)
+    warnings = [warning(8212, capacity_bits=capacity_bits, templates=templates,
+                        max_macros=MAX_MACROS_PER_BANK, utilization=util)]
     if util < 0.5:
-        warnings.append(
-            f"template utilization {util:.1%} < 50% — capacity is far below one "
-            f"{_TEMPLATE_SMALL} macro; energy/area reflect the full macro"
-        )
+        warnings.append(warning(8213, utilization=util, template=_TEMPLATE_SMALL))
     return parts, warnings
 
 
@@ -615,10 +610,8 @@ def _apply_template(features: Mapping[str, Any],
         return features
     t = SRAM_TEMPLATES.get(str(name))
     if t is None:
-        raise ValueError(
-            f"unknown mem_template '{name}'; available: "
-            f"{', '.join(sorted(SRAM_TEMPLATES))}"
-        )
+        raise SramQueryError.nw(8214, template=name,
+                                available=", ".join(sorted(SRAM_TEMPLATES)))
     merged = dict(features)
     for feat, key in (("data_width", "io_bits"),
                       ("tile_rows", "tile_rows"), ("tile_cols", "tile_cols")):
@@ -626,10 +619,8 @@ def _apply_template(features: Mapping[str, Any],
         if given is None:
             merged[feat] = t[key]
         elif int(given) != t[key]:
-            raise ValueError(
-                f"mem_template '{name}' fixes {feat}={t[key]} but got {given} — "
-                f"drop the explicit value or drop the template"
-            )
+            raise SramQueryError.nw(8215, template=name, feature=feat,
+                                    fixed=t[key], given=given)
 
     depth = merged.get("mem_depth_per_bank")
     if depth is None:
@@ -638,19 +629,13 @@ def _apply_template(features: Mapping[str, Any],
         depth = int(depth)
         s, rem = divmod(depth, t["depth_words"])
         if rem or not (1 <= s <= MAX_MACROS_PER_BANK):
-            raise ValueError(
-                f"mem_template '{name}': mem_depth_per_bank={depth} must be "
-                f"S x {t['depth_words']} words with 1 <= S <= "
-                f"{MAX_MACROS_PER_BANK} macros per bank (got S={s}"
-                f"{f'+{rem}w' if rem else ''})"
-            )
+            raise SramQueryError.nw(
+                8216, template=name, depth=depth, macro_depth=t["depth_words"],
+                max_macros=MAX_MACROS_PER_BANK,
+                macros=f"{s}+{rem}w" if rem else s)
 
-    warnings.append(
-        f"mem_template '{name}' (256 WL x {t['col_mux']}:1 col-mux x "
-        f"{t['io_bits']}b): mux approximated by 256x32 tile groups — unselected "
-        f"groups' bitcell leakage + idle decoders are charged; shared-WL/BL "
-        f"dynamic, the mux itself, and inter-bank select/routing are not modeled"
-    )
+    warnings.append(warning(8217, template=name, col_mux=t["col_mux"],
+                            io_bits=t["io_bits"]))
     return merged
 
 
@@ -663,28 +648,27 @@ def normalize_config(
 
     node_raw = features.get("node")
     if node_raw is None:
-        raise ValueError("missing required feature 'node'")
+        raise SramQueryError.nw(8218, name="node", meaning="technology node")
     node = _norm_node(node_raw)
     if node not in ds.shapes_by_node:
-        raise ValueError(
-            f"node '{node}' not in the SRAM dataset "
-            f"(available: {', '.join(sorted(ds.shapes_by_node))})"
-        )
+        raise SramQueryError.nw(8219, node=node,
+                                available=", ".join(sorted(ds.shapes_by_node)))
 
     corner = str(features.get("corner", "TT"))
     if corner != "TT":
-        raise ValueError(f"corner '{corner}' not characterized (dataset is TT-only)")
+        raise SramQueryError.nw(8220, corner=corner)
     transistor = str(features.get("transistor", "hp"))
     if transistor != "hp":
-        raise ValueError(f"transistor '{transistor}' not characterized (hp only)")
+        raise SramQueryError.nw(8221, transistor=transistor)
 
     depth_raw = features.get("mem_depth_per_bank")
     if depth_raw is None:
-        raise ValueError(
-            "missing required feature 'mem_depth_per_bank' (words per bank)")
+        raise SramQueryError.nw(8218, name="mem_depth_per_bank",
+                                meaning="words per bank")
     width_raw = features.get("data_width")
     if width_raw is None:
-        raise ValueError("missing required feature 'data_width' (word width in bits)")
+        raise SramQueryError.nw(8218, name="data_width",
+                                meaning="word width in bits")
     depth = _pos_int(depth_raw, "mem_depth_per_bank")
     width = _pos_int(width_raw, "data_width")
     banks_raw = features.get("mem_banks")
@@ -697,17 +681,10 @@ def normalize_config(
     rw_p = int(features.get("mem_rw_ports") or 0)
     ports = (r_p + w_p + rw_p) or 1
     if ports > 2:
-        warnings.append(
-            f"mem_r_ports+mem_w_ports+mem_rw_ports={ports} not characterized; "
-            f"clamped to dual-port (2)"
-        )
+        warnings.append(warning(8222, ports=ports))
         ports = 2
     if ports == 2:
-        warnings.append(
-            "dual-port: per-access energy taken equal to single-port (measured), "
-            "decoder count/area/leakage/idle doubled; array area assumed "
-            "port-independent"
-        )
+        warnings.append(warning(8223))
 
     vdd = features.get("vdd_V")
     if vdd is not None:
@@ -719,11 +696,11 @@ def normalize_config(
 
     optimize = str(features.get("optimize", "energy"))
     if optimize not in _OBJECTIVES:
-        raise ValueError(f"optimize must be one of {_OBJECTIVES} (got '{optimize}')")
+        raise SramQueryError.nw(8224, choices=_OBJECTIVES, optimize=optimize)
 
     source = str(features.get("source", "auto"))
     if source not in ("auto", "table", "mlp"):
-        raise ValueError(f"source must be auto|table|mlp (got '{source}')")
+        raise SramQueryError.nw(8225, source=source)
     model_dir = features.get("model_dir")
 
     tile_rows = features.get("tile_rows")
@@ -847,7 +824,7 @@ def pvt_domain(ds: SramDataset, node: str):
         if n == node and (r, c) in _REF_SHAPES:
             dvs_by_temp.setdefault(at, set()).add(adv)
     if not dvs_by_temp:
-        raise ValueError(f"no PVT reference data for node '{node}'")
+        raise SramDatasetError.nw(8226, node=node)
     all_dvs = sorted(set().union(*dvs_by_temp.values()) | {0.0})
     return dvs_by_temp, all_dvs, 25.0, max(dvs_by_temp)
 
@@ -860,16 +837,12 @@ def clamp_pvt(ds: SramDataset, node: str, dv: float,
     q_dv, q_temp = dv, temp
     if q_dv < all_dvs[0] or q_dv > all_dvs[-1]:
         q_dv = min(max(q_dv, all_dvs[0]), all_dvs[-1])
-        warnings.append(
-            f"voltage_offset_V={dv:+.3f} outside measured range "
-            f"[{all_dvs[0]:+.2f}, {all_dvs[-1]:+.2f}]; clamped to {q_dv:+.2f}"
-        )
+        warnings.append(warning(8227, value=dv, lo=all_dvs[0],
+                                hi=all_dvs[-1], clamped=q_dv))
     if q_temp < t_lo or q_temp > t_hi:
         q_temp = min(max(q_temp, t_lo), t_hi)
-        warnings.append(
-            f"temperature_C={temp:g} outside measured range [{t_lo:g}, {t_hi:g}]; "
-            f"clamped to {q_temp:g}"
-        )
+        warnings.append(warning(8228, value=temp, lo=t_lo, hi=t_hi,
+                                clamped=q_temp))
     return q_dv, q_temp, warnings
 
 
@@ -896,10 +869,8 @@ def pvt_scale(ds: SramDataset, node: str, dv: float, temp: float) -> PvtScale:
                     anchors[adv] = k
                     worst_spread = max(worst_spread, spread)
             if not anchors:
-                raise ValueError(
-                    f"no usable PVT reference rows for node '{node}' "
-                    f"metric '{metric}' at {at:g}C"
-                )
+                raise SramDatasetError.nw(8229, node=node, metric=metric,
+                                          temperature_C=at)
             per_temp[at] = _interp_dv(anchors, q_dv)
         k_lo, k_hi = per_temp[t_lo], per_temp[t_hi]
         frac = 0.0 if t_hi == t_lo else (q_temp - t_lo) / (t_hi - t_lo)
@@ -910,11 +881,7 @@ def pvt_scale(ds: SramDataset, node: str, dv: float, temp: float) -> PvtScale:
         ks[metric] = k
         spreads.append((metric, worst_spread))
         if worst_spread > _PVT_SPREAD_WARN:
-            warnings.append(
-                f"PVT scaling for '{metric}' disagrees across reference shapes "
-                f"(max/min = {worst_spread:.2f}); shape-dependent PVT behaviour "
-                "is averaged"
-            )
+            warnings.append(warning(8230, metric=metric, spread=worst_spread))
 
     return PvtScale(
         k_rd_dyn=ks["rd_dyn"],
@@ -1030,9 +997,9 @@ def _resolve_source(cfg: "SramConfig", ds: SramDataset):
         reason = f"model checkpoint quartets incomplete in {model_dir}"
     if reason:
         if cfg.source == "mlp":
-            raise ValueError(f"source='mlp' requested but {reason}")
+            raise SramQueryError.nw(8231, reason=reason)
         return (TableTilePointSource(ds), "table", None,
-                [f"source=auto fell back to table: {reason}"])
+                [warning(8232, reason=reason)])
     q_dv, q_temp, _ = clamp_pvt(ds, cfg.node, cfg.voltage_offset_v,
                                 cfg.temperature_c)
     bundle, bwarns = mod.load_bundle(model_dir, ds.dataset_dir)
@@ -1302,10 +1269,9 @@ def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
              and (cfg.tile_cols is None or c == cfg.tile_cols)]
     if not cands:
         avail = ", ".join(f"{r}x{c}" for r, c in shapes)
-        raise ValueError(
-            f"no measured tile shape matches tile_rows={cfg.tile_rows} "
-            f"tile_cols={cfg.tile_cols} at {cfg.node} (available: {avail})"
-        )
+        raise SramQueryError.nw(8233, tile_rows=cfg.tile_rows,
+                                tile_cols=cfg.tile_cols, node=cfg.node,
+                                available=avail)
 
     best: Optional[SramUnitCosts] = None
     best_key: Optional[Tuple] = None
@@ -1323,27 +1289,21 @@ def _unit_costs_for_cfg(cfg: SramConfig, ds: SramDataset,
         if best_key is None or key < best_key:
             best, best_key = costs, key
     if best is None:
-        raise ValueError(f"no feasible tiling for {cfg}")
+        raise SramQueryError.nw(8234, config=cfg)
 
     warnings = list(extra_warnings) + list(k.warnings) + list(src_warns)
     s = best.structure
     if s.utilization < _UTIL_WARN:
-        warnings.append(
-            f"physical-bit utilization {s.utilization:.2f} "
-            f"({s.logical_bits}/{s.physical_bits} bits); the padding still "
-            "burns read energy and leakage"
-        )
+        warnings.append(warning(8235, utilization=s.utilization,
+                                logical_bits=s.logical_bits,
+                                physical_bits=s.physical_bits))
     if s.tiles_per_bank > _TILE_GLUE_WARN:
-        warnings.append(
-            f"{s.tiles_per_bank} tiles/bank: inter-tile glue (address/enable "
-            "fanout, dout muxing, bank select) is not in the datasets — "
-            "energy/delay are underestimated at high tile counts"
-        )
+        warnings.append(warning(8236, tiles=s.tiles_per_bank))
     if cfg.clock_mhz and cfg.clock_mhz > best.f_max_MHz:
-        warnings.append(
-            f"clock_mhz={cfg.clock_mhz:g} exceeds f_max={best.f_max_MHz:.1f} MHz "
-            f"(t_read={best.t_read_ns:.3f} ns, t_write={best.t_write_ns:.3f} ns)"
-        )
+        warnings.append(warning(8237, clock_mhz=cfg.clock_mhz,
+                                f_max_MHz=best.f_max_MHz,
+                                t_read_ns=best.t_read_ns,
+                                t_write_ns=best.t_write_ns))
     return replace(best, warnings=tuple(warnings), source=source_used,
                    model_meta=model_meta)
 
@@ -1365,16 +1325,24 @@ def energy_for_stim_mode(costs: SramUnitCosts, stim_mode: str) -> float:
         return costs.e_idle_pJ
     if stim_mode == "random":
         return 0.5 * (costs.e_read_pJ + costs.e_write_pJ)
-    raise ValueError(f"unknown sram stim_mode '{stim_mode}' (use {_STIM_MODES})")
+    raise SramQueryError.nw(8238, mode=stim_mode, modes=_STIM_MODES)
 
 
 # --------------------------------------------------------------------------
 # EstimatorHost entrypoints. The host contract: return None if there is an error.
 # --------------------------------------------------------------------------
 
+def _host_error(exc: Exception) -> None:
+    """Print the error of an entrypoint. The host contract: do not raise."""
+    if isinstance(exc, NPUWattchError) and exc.code is not None:
+        emit(exc)
+    else:
+        error(8240, error=exc).emit()
+
+
 def _entry(features: Optional[Mapping[str, Any]]):
     if not isinstance(features, Mapping):
-        raise ValueError("features dict required")
+        raise SramQueryError.nw(8239)
     return unit_costs(features)
 
 
@@ -1385,7 +1353,7 @@ def get_energy(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> O
         mode = (features.get("stim_mode") or features.get("op") or "read")
         return energy_for_stim_mode(costs, str(mode))
     except Exception as e:  # host contract: do not raise
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1394,7 +1362,7 @@ def get_area(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Opt
     try:
         return _entry(features).area_um2
     except Exception as e:
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1403,7 +1371,7 @@ def get_timing(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> O
     try:
         return _entry(features).t_read_ns
     except Exception as e:
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1412,7 +1380,7 @@ def get_leakage(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> 
     try:
         return _entry(features).leak_power_mW
     except Exception as e:
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1421,7 +1389,7 @@ def get_unit_costs(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) 
     try:
         return asdict(_entry(features))
     except Exception as e:
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1465,7 +1433,7 @@ def get_report(features: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> O
             "dataset_dir": str(ds.dataset_dir),
         }
     except Exception as e:
-        print(f"[ERROR] sram: {e}")
+        _host_error(e)
         return None
 
 
@@ -1478,8 +1446,8 @@ class _SramUnitCostProvider:
 
     It sends queries for all other primitives to a fallback provider. It has
     the structure of the ``UnitCostProvider`` protocol: the calibrated flag
-    and four methods. It does not import npuwattch, thus runpy can execute
-    this file. It caches the costs for each normalized query (SramConfig is
+    and four methods. From npuwattch, it imports only the message catalog,
+    thus runpy can execute this file. It caches the costs for each normalized query (SramConfig is
     frozen and hashable).
     """
 
@@ -1506,9 +1474,8 @@ class _SramUnitCostProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self._fallback is None:
-            raise ValueError(
-                f"sram provider got primitive '{primitive}' and has no fallback"
-            )
+            raise EstimatorQueryError.nw(8001, provider="sram",
+                                         primitive=primitive)
         return getattr(self._fallback, method)(primitive, features)
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:

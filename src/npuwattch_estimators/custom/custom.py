@@ -15,6 +15,8 @@ import importlib.util
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
+from npuwattch_estimators.errors import EstimatorQueryError, CustomQueryError
+
 # ESTIMATOR_SPEC must be a pure literal. The EstimatorHost reads it and does
 # not import this module.
 ESTIMATOR_SPEC = {
@@ -72,9 +74,8 @@ class _UserComponentProvider:
     def _delegate(self, method: str, primitive: str,
                   features: Mapping[str, Any]) -> float:
         if self.fallback is None:
-            raise ValueError(
-                f"user component provider got primitive {primitive!r} and has "
-                f"no fallback")
+            raise EstimatorQueryError.nw(8001, provider="user component",
+                                         primitive=primitive)
         return getattr(self.fallback, method)(primitive, features)
 
     def energy_per_cycle(self, primitive: str, features: Mapping[str, Any]) -> float:
@@ -83,9 +84,9 @@ class _UserComponentProvider:
         component = self._scaled(primitive, features)
         action = features.get("stim_mode")
         if action not in component.actions:
-            raise ValueError(
-                f"user component {primitive!r} has no action {action!r}; its "
-                f"actions are {', '.join(sorted(component.actions))}")
+            raise CustomQueryError.nw(
+                8301, component=primitive, action=action,
+                actions=", ".join(sorted(component.actions)))
         return component.actions[action]
 
     def leak_power(self, primitive: str, features: Mapping[str, Any]) -> float:

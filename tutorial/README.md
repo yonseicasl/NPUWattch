@@ -7,24 +7,30 @@ or GPUs. All you need is NPUWattch.
 ```
 tutorial/
 ├── npuwattch_basic/   Start here — what NPUWattch is, how it is built, what it reads
+├── hands_on/          Jupyter notebooks that run the examples below, step by step
 ├── timeloop/      Example 1 — Timeloop / Accelergy input
 │   ├── eyeriss_like/alexnet/      AlexNet, 8 layers (the basic example)
 │   ├── gemmini_like/{resnet50,llama3_8b}/
 │   └── nvdla_like/{resnet50,llama3_8b}/
-└── pytorchsim/    Example 2 — PyTorchSim input (one 1024³ matmul)
-    ├── tpu_like_fp32/             fp32 PEs, as the simulator ran the kernel
-    └── tpu_like_bf16/             the same run, PEs fixed to bf16 MACs
+└── pytorchsim/    Example 2 — PyTorchSim input
+    ├── tpu_like_fp32/             the hardware model (three definition files)
+    │   ├── matmul_1024/           one 1024³ matmul (the basic example)
+    │   ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
+    │   └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
+    └── tpu_like_bf16/             the same model, PEs fixed to bf16 MACs
+        └── matmul_1024/           the matmul again, priced with bf16 PEs
 ```
 
-`npuwattch_basic/` is a three-part introduction (motivation and method, the
+`npuwattch_basic/` is a four-part introduction (motivation, method, the
 structure of a run and the files each harness reads, and how to bring your
-own data). Its exercises use the two examples below.
+own data). `hands_on/` has the same exercises as Jupyter notebooks, with
+their output already in place.
 
 To run an example:
 
 ```bash
 cd tutorial/timeloop/eyeriss_like/alexnet && ./run
-cd tutorial/pytorchsim/tpu_like_fp32 && ./run
+cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024 && ./run
 ```
 
 Each script writes `out/report.html` (open it in a browser) and
@@ -95,7 +101,7 @@ it and let you know if it's missing.
 
 ## 3. The examples
 
-|  | `timeloop/eyeriss_like/` | `pytorchsim/tpu_like_fp32/` |
+|  | `timeloop/eyeriss_like/alexnet/` | `pytorchsim/tpu_like_fp32/matmul_1024/` |
 | --- | --- | --- |
 | Design | Eyeriss-like, 14×12 int8 PE array | TPUv3-like, 2× 128×128 fp32 systolic arrays |
 | Workload | AlexNet, all 8 layers | one 1024×1024×1024 `torch.matmul` |
@@ -110,7 +116,9 @@ For a file-by-file walkthrough of each example, including how the sample data
 was produced, see `timeloop/eyeriss_like/README.md` and
 `pytorchsim/README.md`. `timeloop/README.md` covers two more
 Timeloop designs, Gemmini-like and NVDLA-like, each with ResNet-50 and
-Llama-3-8B.
+Llama-3-8B. `pytorchsim/README.md` covers the other PyTorchSim workloads on
+the TPU-like NPU: a training step, a 2-core run, kernels without a MAC,
+ResNet-50, and three LLM decoder blocks.
 
 ---
 
@@ -145,38 +153,42 @@ Here is the per-layer table from the console:
 ┏━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
 ┃ # ┃ window   ┃  cycles ┃  dyn (pJ) ┃ leak (pJ) ┃ total (pJ) ┃ avg power (mW) ┃
 ┡━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
-│ 0 │ 01_conv1 │  638880 │ 6.627e+08 │ 1.873e+06 │  6.646e+08 │           1040 │
-│ 1 │ 02_conv2 │ 2332800 │ 2.688e+09 │  6.84e+06 │  2.695e+09 │           1155 │
-│ 2 │ 03_conv3 │  718848 │ 1.134e+09 │ 2.108e+06 │  1.136e+09 │           1581 │
-│ 3 │ 04_conv4 │ 1437696 │ 1.472e+09 │ 4.215e+06 │  1.476e+09 │           1027 │
-│ 4 │ 05_conv5 │  638976 │ 9.741e+08 │ 1.873e+06 │  9.759e+08 │           1527 │
-│ 5 │ 06_fc6   │  393216 │ 2.968e+09 │ 1.153e+06 │  2.969e+09 │           7550 │
-│ 6 │ 07_fc7   │  262144 │ 1.318e+09 │ 7.686e+05 │  1.318e+09 │           5029 │
-│ 7 │ 08_fc8   │   40960 │ 3.219e+08 │ 1.201e+05 │   3.22e+08 │           7862 │
+│ 0 │ 01_conv1 │  638880 │ 9.419e+07 │ 1.873e+06 │  9.606e+07 │          150.4 │
+│ 1 │ 02_conv2 │ 2332800 │ 8.403e+08 │  6.84e+06 │  8.472e+08 │          363.2 │
+│ 2 │ 03_conv3 │  718848 │  1.85e+08 │ 2.108e+06 │  1.871e+08 │          260.3 │
+│ 3 │ 04_conv4 │ 1437696 │ 2.056e+08 │ 4.215e+06 │  2.098e+08 │          145.9 │
+│ 4 │ 05_conv5 │  638976 │ 1.374e+08 │ 1.873e+06 │  1.393e+08 │            218 │
+│ 5 │ 06_fc6   │ 2359872 │ 2.461e+09 │ 6.919e+06 │  2.467e+09 │           1046 │
+│ 6 │ 07_fc7   │ 1048832 │ 1.094e+09 │ 3.075e+06 │  1.097e+09 │           1046 │
+│ 7 │ 08_fc8   │  256256 │ 2.672e+08 │ 7.513e+05 │   2.68e+08 │           1046 │
 └───┴──────────┴─────────┴───────────┴───────────┴────────────┴────────────────┘
 ```
 
-Total: **11.6 mJ**, 1.79 W average power, 0.459 mm² area, and 16.2 pJ per MAC.
+Total: **5.31 mJ**, 0.56 W average power, 0.459 mm² area, and 7.4 pJ per MAC.
+
+The average power of a window is its energy divided by its cycles. The fully
+connected layers are limited by the DRAM bandwidth in `arch.yaml` (16 B per
+cycle), so all three show about 1 W.
 
 The per-component table below it shows *where* the energy goes. The component
 names are shown relative to the hierarchy prefix they all share, which is
 printed above the table:
 
 ```
-[INFO] Per-window component energy (dynamic, pJ)
+INFO (NW-1037): Per-window component energy (dynamic, pJ):
        component names relative to 'system_top_level'
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ component                         ┃  01_conv1 ┃  02_conv2 ┃    06_fc6 ┃    08_fc8 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
 │ DRAM                              │ 2.956e+07 │  6.33e+08 │ 2.417e+09 │ 2.625e+08 │
-│ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 4.925e+04 │      1550 │
-│ eyeriss.PE_column.PE.weights_spad │ 4.042e+08 │ 1.312e+09 │ 4.273e+08 │ 4.637e+07 │
+│ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 2.478e+04 │      1550 │
+│ eyeriss.PE_column.PE.weights_spad │ 6.652e+06 │ 2.232e+07 │ 1.339e+07 │ 1.453e+06 │
 │ eyeriss.PE_column.PE.mac          │ 4.609e+07 │ 1.469e+08 │ 2.475e+07 │ 2.686e+06 │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┘
 ```
 
 (Only four of the eight columns and four of the six rows are shown here.) In
-the conv layers, the weight scratchpads use the most energy. In the fully
+the conv layers, the MAC is the largest on-chip consumer. In the fully
 connected layers, DRAM traffic takes over. The fc6 layer alone spends
 2.42e+09 pJ in DRAM, because each weight is used only once. This kind of
 breakdown is exactly what NPUWattch is designed to show.
@@ -187,7 +199,7 @@ gets cut off or misaligned. To force a specific width, set `COLUMNS`.
 ## 5. Example 2 — PyTorchSim
 
 ```bash
-cd tutorial/pytorchsim/tpu_like_fp32
+cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024
 ./run
 ```
 
@@ -199,15 +211,20 @@ npuwattch --harness pytorchsim \
           --gem5-dir    outputs/ \
           --config-yml  config.yml \
           --booksim-dir booksim2_config/ \
+          --compound-components ../compound_components.yaml \
+          --projection          ../projection.yaml \
+          --user-components     ../user_components.yaml \
           --node 7nm --tree --report out/
 ```
 
 PyTorchSim stores its results in several folders, so each one has its own
-flag. If they are all under one root folder, the repository's `run.sh` finds
-them for you:
+flag. The three definition files are the hardware model; they live in the
+design folder `tpu_like_fp32/` and every workload folder points at them. If
+a run root holds everything, the repository's `run.sh` finds the folders for
+you:
 
 ```bash
-../../../run.sh . --node 7nm --report out/  # same thing, one argument
+../../../../run.sh . --node 7nm --report out/  # same thing, one argument
 ```
 
 This example has **no** architecture file. NPUWattch rebuilds the hardware
@@ -232,31 +249,45 @@ chip
     └── dram_chan [×16]  (class: hbm)
 ```
 
-Result: **6.13 mJ** over 52 022 cycles, 111 W average power, 88.75 mm²,
-2.86 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
-dynamic energy and DRAM for 8%, which is what you'd expect from a matmul.
+Result: **5.96 mJ** over 52 022 cycles, 108 W average power, 88.75 mm²,
+2.78 pJ/FLOP, and 38.8 TFLOP/s. The two systolic arrays account for 91% of the
+energy and DRAM for 8%, which is what you'd expect from a matmul.
 
-The long `[INFO]` block in this run is worth a look. It lists the parts that
-are *not* included in the totals (the scalar core and its caches, the VCIX
+The long INFO block in this run (`NW-6008` and `NW-2209`) is worth a look.
+It lists the parts that are *not* included in the totals (the scalar core and its caches, the VCIX
 serializer, and DRAM standby power), so you always know what the numbers
 cover.
 
 ### The bf16 variant
 
 ```bash
-cd tutorial/pytorchsim/tpu_like_bf16
+cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024
 ./run
 ```
 
 <!-- Internal note: PyTorchSim cannot simulate bf16 kernels, so this example
 reuses the float32 run and fixes the PE type in the hardware model. DRAM and
 NoC energy keep the float32 byte counts, so they are high for a bf16 kernel. -->
-A real TPU multiplies in bf16. This example uses the same simulator files as
-`tpu_like_fp32` and changes only `compound_components.yaml`: the `pe` element
+A real TPU multiplies in bf16. This design reads the simulator files of
+`tpu_like_fp32/matmul_1024` and changes only `compound_components.yaml`: the `pe` element
 uses a fixed bf16 `fpmac` instead of the `{mac_primitive}` / `{mac_config}`
 templates. The PE energy drops from 5.05 to 1.56 pJ per MAC, and the total is
-**2.29 mJ, 1.07 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
+**2.21 mJ, 1.03 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
 float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
+
+### More workloads
+
+The other folders under `pytorchsim/tpu_like_fp32/` run other workloads on
+the same NPU. Each is a PyTorchSim run root with its own `run` script, and each
+`kernels.yaml` names the kernels, so the report shows names instead of
+hashes:
+
+```bash
+cd tutorial/pytorchsim/tpu_like_fp32/resnet50 && ./run
+cd tutorial/pytorchsim/tpu_like_fp32/llama3_8b/prefill && ./run
+```
+
+`pytorchsim/README.md` lists them with their results.
 
 ---
 
@@ -267,9 +298,9 @@ float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
 1. `--tree`: the hardware as NPUWattch read it from your input. Check this
    first. If a component is missing or has the wrong size, all the numbers
    after it will be off.
-2. `[WARNING]` / `[INFO]`: every assumption NPUWattch made for you, such as
-   default values, ignored attributes, and activity counters that are left out
-   on purpose.
+2. `WARNING` / `INFO` lines: every assumption NPUWattch made for you, such
+   as default values, ignored attributes, and activity counters that are left
+   out on purpose. See "Messages" below.
 3. **Per-window energy**: one row per layer (Timeloop) or per kernel
    (PyTorchSim).
 4. **Per-window component energy**: where the energy went in each window.
@@ -278,6 +309,7 @@ float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
    `const` for a table constant (DRAM devices, die-to-die links), and `user`
    for a block priced from your `user_components.yaml`.
 6. The run totals, and the list of available primitives.
+7. The message summary.
 
 **`out/report.html`** shows the same information as a self-contained page (no
 internet connection or extra files needed). It includes charts for the energy
@@ -286,6 +318,48 @@ windows, the component table, the instance tree, and a provenance section that
 lists every input file, warning, and note.
 
 **`out/report.json`** has the same numbers in plain JSON, for use in scripts.
+
+### Messages
+
+Each message has a level and a code. The format is `LEVEL (NW-nnnn): text`:
+
+```
+WARNING (NW-8111): core0.vrf: width=256 is outside the characterized range 8-128 of regfile.
+```
+
+The level tells you what to do:
+
+| Level | Meaning |
+| --- | --- |
+| `INFO` | A fact about the run. No action is necessary. |
+| `WARNING` | The run continues, but the result can be approximate. Read the message. |
+| `ERROR` | A problem in the input. The run stops. Correct the input. |
+| `CRITICAL` | A problem in NPUWattch. The run stops. Please report it. |
+
+The code does not change from release to release. Use it to get more
+information:
+
+```bash
+npuwattch --explain NW-8111         # the full explanation of one message
+npuwattch --list-messages NW-6      # all messages that start with NW-6 (PyTorchSim harness)
+./run --suppress NW-8212            # do not print this INFO or WARNING message
+```
+
+You cannot suppress an `ERROR` or a `CRITICAL` message. The run ends with a
+message summary. It gives the number of messages at each level, and one row
+for each WARNING code:
+
+```
+INFO (NW-1902): Message summary: 0 CRITICAL, 0 ERROR, 5 WARNING, 18 INFO.
+    NW-6607   WARNING  x1
+    NW-8111   WARNING  x1
+    NW-8212   WARNING  x3
+```
+
+Suppressed messages are counted in the summary, but the report does not show
+them. In `report.html`, the message table shows the code, the level, the text,
+and the count. Click a message to see its explanation. `MESSAGES.md` in the
+repository root lists all messages.
 
 ---
 

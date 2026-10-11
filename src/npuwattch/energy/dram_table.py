@@ -35,6 +35,7 @@ table, and the harness writes a note.
 
 from __future__ import annotations
 
+from npuwattch.diagnostics import NPUWattchError
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -50,7 +51,7 @@ __all__ = ["EnergyTable", "EnergyTableError", "TABLE_DIR", "default_table",
 TABLE_DIR = Path(__file__).resolve().parent / "dram_tables"
 
 
-class EnergyTableError(ValueError):
+class EnergyTableError(NPUWattchError, ValueError):
     """The energy table file has an incorrect format or no necessary key."""
 
 
@@ -97,9 +98,9 @@ class EnergyTable:
         return " + ".join(f"{k} {v:g}" for k, v in self.transfer_terms.items())
 
 
-def _positive_number(value: object, where: str) -> float:
+def _positive_number(value: object, path: Path, key: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-        raise EnergyTableError(f"{where} must be a positive number, got {value!r}")
+        raise EnergyTableError.nw(3401, path=path, key=key, value=value)
     return float(value)
 
 
@@ -114,39 +115,31 @@ def load_energy_table(path: Path, *, require_activation: bool = True) -> EnergyT
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError as e:
-        raise EnergyTableError(f"energy table not found: {path}") from e
+        raise EnergyTableError.nw(3402, path=path) from e
     except yaml.YAMLError as e:
-        raise EnergyTableError(f"energy table {path}: not valid YAML — {e}") from e
+        raise EnergyTableError.nw(3403, path=path, error=e) from e
     if not isinstance(data, dict):
-        raise EnergyTableError(f"energy table {path}: top level must be a mapping")
+        raise EnergyTableError.nw(3404, path=path)
 
     name = data.get("name")
     if not isinstance(name, str) or not name:
-        raise EnergyTableError(
-            f"energy table {path}: missing 'name' (the table name the log's "
-            f"[Config/Energy] echo declares, e.g. HBM2)"
-        )
+        raise EnergyTableError.nw(3405, path=path)
     dram = data.get("offchip_dram")
     if not isinstance(dram, dict):
-        raise EnergyTableError(f"energy table {path}: missing 'offchip_dram' mapping")
+        raise EnergyTableError.nw(3406, path=path)
 
     act_raw = dram.get("row_activation_pj")
     act = (None if act_raw is None and not require_activation else
-           _positive_number(act_raw,
-                            f"energy table {path}: offchip_dram.row_activation_pj"))
+           _positive_number(act_raw, path, "offchip_dram.row_activation_pj"))
     terms_raw = dram.get("transfer_pj_per_bit")
     if not isinstance(terms_raw, dict) or not terms_raw:
-        raise EnergyTableError(
-            f"energy table {path}: offchip_dram.transfer_pj_per_bit must be a "
-            f"non-empty mapping of per-bit terms"
-        )
-    terms = {str(k): _positive_number(
-                 v, f"energy table {path}: transfer_pj_per_bit.{k}")
+        raise EnergyTableError.nw(3407, path=path)
+    terms = {str(k): _positive_number(v, path, f"transfer_pj_per_bit.{k}")
              for k, v in terms_raw.items()}
 
     ref = dram.get("refresh_pj_per_refab")
     ref_pj = (None if ref is None else _positive_number(
-        ref, f"energy table {path}: offchip_dram.refresh_pj_per_refab"))
+        ref, path, "offchip_dram.refresh_pj_per_refab"))
 
     return EnergyTable(name=name, path=path, act_pj=act,
                        transfer_terms=terms, ref_pj=ref_pj)

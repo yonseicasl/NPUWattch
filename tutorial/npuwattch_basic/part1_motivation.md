@@ -1,105 +1,127 @@
-# Part 1 — Why NPUWattch, and how it works
+# Part 1 — Why NPUWattch: three pitfalls in accelerator modeling
 
-This part is a short read. It explains the problem NPUWattch solves and the
-method behind it. The details are in the HPCA 2026 paper, listed at the end.
+This part covers the motivation. It follows the first half of our HPCA
+2026 talk: why we need pre-silicon models of neural accelerators, how
+design costs are usually scaled across technology nodes today, and the
+three pitfalls in that practice that NPUWattch was built to avoid. Part 2
+explains the method.
 
-## 1. The problem
+## 1. Introduction: modeling neural accelerators
 
-When you evaluate a new accelerator design, you need its power, area, and
-timing (PAT) long before the RTL exists. The usual tools (Aladdin, Accelergy
-with CACTI, McPAT, and their relatives) answer this question with analytical
-equations and lookup tables. These tools were calibrated on a small set of
-reference circuits at an older technology node, usually 40 or 45 nm. To give a
-number for a newer node, they multiply by a **technology scaling factor**. To
-give a number for a larger or differently shaped design, they interpolate the
-table.
+Neural accelerators have become one of the main topics in architecture
+research. Before any proposal can be compared with another, it has to
+answer the same question: what does the design cost in power, area, and
+timing (PAT)? A full tape-out flow gives an exact answer, but it is far
+too expensive for early design space exploration, where hundreds of
+variants are compared and most of them are thrown away.
 
-This approach has served architecture research well, but it has three limits
-that get worse as designs grow and nodes shrink:
+So designers rely on PAT models such as CACTI, Aladdin, and Accelergy.
+These tools trade accuracy for speed by design. A few equations and
+lookup tables give a number in milliseconds. That trade made sense when
+designs were small and the reference node was close to the target node.
+Today, with FinFET and gate-all-around transistors below 10 nm, and with
+accelerators that are mostly large arrays and large buffers, rule-based
+models no longer have enough detail, and the pre-silicon analysis built
+on them becomes inaccurate.
 
-1. **One scaling factor doesn't fit all designs.** We built the same set of
-   benchmark circuits at 45, 32, 20, 16, 10, 7, and 5 nm and measured how much
-   energy each one really saved. The measured factors spread widely from
-   design to design, and the single published factor sits below almost all of
-   them. Wire load, clock-tree size, and cell mix don't scale the same way for
-   a register file as for a multiplier.
-2. **Design scaling is nonlinear.** A floating-point multiplier's energy and
-   area don't grow linearly with its bit width, and two formats with the same
-   width (for example, E2M3 and E3M2) have different costs. A table built from
-   one FP32 design can't express this.
-3. **Mixed models don't add up.** Most frameworks price logic with one model
-   and SRAM with another, each calibrated under different conditions. When
-   you put them together, the relative shares in the breakdown are wrong even
-   when each total looks reasonable. On a published accelerator module with a
-   128 KB buffer, this combination underestimated the SRAM energy by more than
-   40% and its area by about a third.
+## 2. Background: the common practice for scaling design costs
 
-An accelerator breakdown that places the energy in the wrong component sends
-a design study in the wrong direction. This is the problem NPUWattch targets.
+Advanced nodes are hard to get to in academia. Access to a FinFET or
+GAAFET process design kit is limited, so an academic design is usually
+built at an older planar node, such as 45 nm, where an open cell library
+and PDK exist. To compare the design with a commercial baseline, its
+measured cost is then multiplied by a **technology scaling factor** for
+the target node, say 10 nm.
 
-## 2. The method
+The common practice has four steps:
 
-NPUWattch replaces the equation-and-table layer with **neural network
-regressors trained on post-layout measurements**. The method has three steps.
-The first two happen once, offline, in our lab. You only use the third.
+1. Measure the design cost at the old node.
+2. Multiply it by a published CMOS scaling factor.
+3. Treat the result as the cost at the new node.
+4. Compare it with the actual cost at the new node.
 
-### Step 1: one set of technology libraries, 65 nm to 2 nm
+Step 4 is where it goes wrong: the two numbers don't match. The scaling
+factor came from a planar CMOS circuit, but the new node is a FinFET or
+GAAFET process with different transistor geometry, wire resistance, and
+parasitics. Scaling a planar design cost to such a node does not work.
+The three pitfalls below show why, with measurements.
 
-We developed our own technology libraries for every node NPUWattch supports:
-planar CMOS above 20 nm, FinFET from 20 nm to 5 nm, nanosheet at 3 nm, and
-forksheet at 2 nm. Each library has transistor models, design rules, a
-standard-cell library, and an SRAM compiler. All of them come from the same
-transistor model and the same design rules, so a logic block and an SRAM
-macro at 7 nm are characterized under the same conditions. That consistency
-is what makes a breakdown trustworthy.
+## 3. Pitfall A: technology scaling factors, one size never fits all
 
-### Step 2: datasets from full physical implementation
+A single scaling factor derived from a small reference circuit does not
+give accurate estimates for complex designs at a new node.
 
-For each component type, we wrote a parameterized RTL design (bit widths,
-depths, port counts, pipeline stages, and so on) and swept the parameters
-across all nodes. Every point in the sweep goes through the complete
-back-end flow: synthesis, place and route, parasitic extraction, and power
-sign-off on the extracted netlist. SRAM instances go through the memory
-compiler, LVS, parasitic extraction, and transient SPICE simulation. The
-result for every point is a row of measured values: dynamic energy per
-operation, leakage, area, and critical-path delay.
+To test this, we built a set of benchmark circuits, from small adders
+and FIFOs to open-source accelerator blocks, at 45 and 32 nm, and again
+at 20, 16, 10, 7, and 5 nm with our own libraries. Dividing the measured
+energy at each new node by the measured energy at the old node gives the
+**actual** scaling factor of each design. When these factors are plotted
+as one box per node pair, they spread widely from design to design, and
+the single published factor sits below almost all of them.
 
-Two features are recorded alongside the design parameters: the **sequential
-cell count ratio (SCR)** and the **sequential cell area ratio (SAR)**. They
-describe the mix of flip-flops and combinational gates in the design. These
-two numbers are available right after synthesis, and they explain a large
-part of how a design's cost moves across nodes.
+The picture has two parts. Scaling from one planar node to another (45
+to 32 nm) is not too bad: the spread is narrow and the published factor
+is close. Scaling from planar to FinFET is where it breaks down: the
+spread widens and the gap to the published factor becomes large. Wire
+load, clock-tree size, and the mix of cells don't scale the same way for
+a register file as for a multiplier, and no single number can capture
+that.
 
-### Step 3: one small model per component and metric
+**Takeaway.** A single scaling factor cannot represent design variation,
+nor technology scaling to newly emerging process nodes.
 
-Each component type (MAC, multiplier, adder, register file, FIFO, crossbar,
-SRAM, and others) gets its own small multilayer perceptron for each metric
-(energy, area, timing). The models are small on purpose: training takes
-minutes on a desktop CPU, and inference is instant. The design datasets are
-long-tailed, so the training uses an **adaptive loss** that reweights rare
-design points by their SCR/SAR histogram bins. Without this, the models
-would fit the common small designs and drift on the large ones.
+## 4. Pitfall B: nonlinearity in design scaling
 
-At runtime, NPUWattch reads your architecture description, maps each
-component to its model, asks the model for the per-operation energy, leakage,
-area, and delay at your node and operating point, and multiplies by the
-activity your simulator recorded. Part 2 walks through that path.
+Traditional analytical and rule-based models fail to capture the
+nonlinearity in design scaling. Even identical designs don't scale the
+same way at different nodes.
 
-## 3. What you get, and what you don't
+SRAM shows this most clearly. Take an SRAM array and grow its capacity
+from a few hundred bytes to a few kilobytes. At 45 nm, the access energy
+grows along one curve. At 7 nm, the same series of arrays follows a
+different, steeper curve. A rule-based model such as CACTI, calibrated
+around the old node, follows the 45 nm curve reasonably well, but it
+drifts away from the measured 7 nm curve as the array grows. The gap
+between the model and the post-layout result is much larger at the
+advanced node.
 
-- **Accuracy.** Against the post-layout results of five open-source
-  accelerators (FEATHER, Flex-DPE, Gemmini, MAERI, NVDLA), NPUWattch's
-  average estimation error is 2.7%, and the component breakdowns keep the
-  right ordering.
-- **Scope.** NPUWattch models the datapath and memory of an accelerator: MAC
-  arrays, vector units, register files, buffers, NoC, and DRAM. Control
-  processors, host interfaces, and I/O are outside the trained set. You can
-  price them yourself with a user component (Part 3).
-- **Nodes.** The released models are characterized at 5, 7, 10, 16, and
-  20 nm. Nodes between them are interpolated. Nodes outside that range are
-  extrapolated, and NPUWattch tells you when it does so.
-- **No EDA tools at your end.** The flow in Step 2 is ours. You never run
-  synthesis, SPICE, or a memory compiler to use NPUWattch.
+Logic has the same problem in a different form. A floating-point
+multiplier's energy and area don't grow linearly with its bit width, and
+two formats with the same width but a different split between exponent
+and mantissa have different costs. A table built from one FP32 design
+can't express either effect.
+
+**Takeaway.** Traditional rule-based models cannot capture the nonlinearity
+in design scaling and in technology scaling.
+
+## 5. Pitfall C: inconsistency in heterogeneous modeling
+
+On a monolithic die, logic and SRAM sit on the same wafer and are built
+from the same transistor. A model of that die needs a common calibration
+point for both, and in practice that point is the transistor model. Most
+frameworks don't have one. They estimate logic with one model and SRAM
+with another, each calibrated under different assumptions, and the
+combination introduces bias.
+
+We compared the design cost of the open-source accelerator Flex-DPE at
+45 nm, as estimated by Accelergy with its Aladdin logic tables and its
+CACTI SRAM plug-in, against the post-layout result. The totals look
+reasonable, but the breakdowns don't match. The SRAM share is badly
+underestimated in both energy and area, and that error distorts the
+whole picture. A designer reading the estimate would optimize the wrong
+component.
+
+**Takeaway.** Neural accelerators must be modeled with a coherent design
+methodology for both logic and SRAM.
+
+## 6. What a better model needs
+
+The three pitfalls lead to three requirements. The model has to learn how
+each design scales instead of applying one factor to all of them. It has
+to capture nonlinear scaling in both the design parameters and the
+technology node. And it has to estimate logic and SRAM from the same
+calibration point. Part 2 describes how NPUWattch meets these
+requirements.
 
 ## Reference
 

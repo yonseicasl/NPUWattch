@@ -22,9 +22,14 @@ are:
 
 * The primitive has ``valid25``: the full cycle in ``valid25``.
 * The primitive has ``idle``: the fraction ``activity`` of a cycle in
-  ``random``, and the remaining fraction in ``idle``. The clocked-idle energy
-  is a real cost.
+  ``random``, and the remaining fraction in ``idle``. With clock gating (the
+  default, user ruling 2026-10-11), an ``idle`` row costs no dynamic energy.
+  With ``clock_gating: false``, it costs the clocked idle energy.
 * All other primitives: the fraction ``activity`` of a cycle in ``random``.
+
+The provider gives the charged energy of each row. Thus the ``random`` row
+of a register file or a FIFO is one access without the clock tree
+(E_random - E_idle), the same as in a harness run.
 
 A capacity ``.tail`` part (§3.8) gets leakage and area only, the same as in a
 harness run. The ``random`` unit cost of a memory instance is for one access,
@@ -39,13 +44,19 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Tuple
 
+from npuwattch.diagnostics import Diagnostic, NPUWattchError, info
 from ..naming import primitive_of
 from ..user_components import user_components_of
 
-__all__ = ["DEFAULT_VECTORLESS_ACTIVITY", "vectorless_activity_rows"]
+__all__ = ["DEFAULT_VECTORLESS_ACTIVITY", "VectorlessError",
+           "vectorless_activity_rows"]
 
 #: The fraction of full random switching for a run that has no activity log.
 DEFAULT_VECTORLESS_ACTIVITY = 0.25
+
+
+class VectorlessError(NPUWattchError, ValueError):
+    """The vectorless activity fraction is not in (0, 1]."""
 
 
 def _primitive_modes() -> Mapping[str, List[str]]:
@@ -61,7 +72,7 @@ def vectorless_activity_rows(
     description: Mapping[str, Any],
     *,
     activity: float = DEFAULT_VECTORLESS_ACTIVITY,
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+) -> Tuple[List[Dict[str, Any]], List[Diagnostic]]:
     """Make the activity rows (manual §3.3) for a description that has no activity log.
 
     Return ``(rows, notes)``. The rows are one window of one cycle, and they
@@ -69,17 +80,12 @@ def vectorless_activity_rows(
     module made the rows.
     """
     if not (0.0 < activity <= 1.0):
-        raise ValueError(f"vectorless activity must be in (0, 1], got {activity}")
+        raise VectorlessError.nw(3301, activity=activity)
     modes_by_prim = _primitive_modes()
     user = user_components_of(description)
     user_skipped: List[str] = []
     rows: List[Dict[str, Any]] = []
-    notes: List[str] = [
-        f"VECTORLESS estimate: no activity log — every component charged at "
-        f"{activity:.0%} of random switching (crossbar-family uses the "
-        f"measured valid25 mode); dynamic values are per-cycle energies and "
-        f"avg power is the steady-state figure",
-    ]
+    notes: List[Diagnostic] = [info(3302, activity=activity)]
     tails = 0
 
     def _row(component: str, mode: str, count: float) -> Dict[str, Any]:
@@ -111,13 +117,7 @@ def vectorless_activity_rows(
             if "idle" in modes and activity < 1.0:
                 rows.append(_row(name, "idle", (1.0 - activity) * instances))
     if user_skipped:
-        notes.append(
-            f"user component(s) {', '.join(user_skipped)}: no `random` action "
-            f"in the library — charged area and leakage only in this "
-            f"VECTORLESS run")
+        notes.append(info(3303, components=", ".join(user_skipped)))
     if tails:
-        notes.append(
-            f"{tails} capacity '.tail' part(s) charged leakage/area only "
-            f"(their access energy is already in the primary part's unit cost)"
-        )
+        notes.append(info(3304, count=tails))
     return rows, notes

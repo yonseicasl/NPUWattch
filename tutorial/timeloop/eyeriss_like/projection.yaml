@@ -17,6 +17,14 @@
 # idle. `count_from.scale` multiplies the event count. `count_from.stat` is
 # the name of the Timeloop counter. It is information only.
 #
+# Clock gating: NPUWattch assumes that each block is clock-gated. An idle
+# element costs leakage only, so `gated` and `idle` give the same energy. A
+# register-file read or write is one access: E_mode - E_idle, without the
+# clock tree of the full array. A MAC compute is one active cycle: E_mode.
+# To model a block without clock gating, give its Accelergy component the
+# attribute `clock_gating: false` (arch.yaml). Its idle cycles then cost the
+# clocked idle energy, and the run gives INFO (NW-3105).
+#
 # A component gets these events if a stats level has its name, or if
 # --stats-map connects a level to it.
 

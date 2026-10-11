@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from npuwattch.diagnostics import info, warning
 from npuwattch.energy.dram_table import (
     EnergyTable,
     EnergyTableError,
@@ -61,34 +62,28 @@ def set_constants(description: Mapping[str, Any],
                  if c.get("class") == "hbm"]
     if not hbm_comps:
         if table is not None:
-            warnings.append(
-                f"--energy-table {table.path.name} supplied but the run "
-                f"emitted no DRAM component (no dram_channels / DRAM stats in "
-                f"the log) — the table is unused"
-            )
+            warnings.append(warning(6501, file=table.path.name))
         return
     try:
         constants = dict(default_table().attributes())
     except EnergyTableError as e:
-        raise HarnessError(
-            f"the default DRAM energy table is not available ({e}) — pass "
-            f"--energy-table") from e
+        raise HarnessError.nw(6502, error=e) from e
     if table is not None:
         constants.update(table.attributes())
     for c in hbm_comps:
         c.setdefault("attributes", {}).update(constants)
     if table is None:
         return
-    ref_note = (f"refresh {table.ref_pj:g} pJ/REFab from the table"
-                if table.ref_pj is not None else
-                "refresh comes from the default table hbm2.yml (the table "
-                "has no refresh term)")
-    notes.append(
-        f"DRAM constants from the run's energy table {table.name!r} "
-        f"({table.path.name}): activation {table.act_pj:g} pJ, transfer "
-        f"{table.transfer_pj_per_bit:g} pJ/bit "
-        f"({table.transfer_split_str()}); {ref_note}"
-    )
+    if table.ref_pj is not None:
+        notes.append(info(
+            6503, name=table.name, file=table.path.name, act_pj=table.act_pj,
+            transfer_pj_per_bit=table.transfer_pj_per_bit,
+            transfer_split=table.transfer_split_str(), ref_pj=table.ref_pj))
+    else:
+        notes.append(info(
+            6504, name=table.name, file=table.path.name, act_pj=table.act_pj,
+            transfer_pj_per_bit=table.transfer_pj_per_bit,
+            transfer_split=table.transfer_split_str()))
 
 
 def dram_stats(act: TogsimActivity, expected_dram_table: Optional[str],
@@ -118,10 +113,7 @@ def dram_stats(act: TogsimActivity, expected_dram_table: Optional[str],
         req_size = act.config.get("dram_req_size_byte")
         if not isinstance(req_size, int):
             req_size = 32
-            warnings.append(
-                f"{khash}: config has no dram_req_size_byte; assuming "
-                f"{req_size} B per DRAM request for byte traffic"
-            )
+            warnings.append(warning(6505, kernel=khash, size=req_size))
         stats["dram_read_bytes"] = act.dram_reads * req_size
         stats["dram_write_bytes"] = act.dram_writes * req_size
         # Events of the DMA engine. Each DRAM request moves one entry through
@@ -133,11 +125,8 @@ def dram_stats(act: TogsimActivity, expected_dram_table: Optional[str],
         dma_total = sum(int(pc.get("dma_responses", 0) or 0)
                         for pc in act.per_core.values())
         if dma_total and dma_total != stats["dram_requests"]:
-            warnings.append(
-                f"{khash}: per-core DMA responses total {dma_total} != "
-                f"[DRAM] request total {stats['dram_requests']}; using the "
-                f"[DRAM] total (per-core split still uses the DMA shares)"
-            )
+            warnings.append(warning(6506, kernel=khash, dma_total=dma_total,
+                                    dram_total=stats["dram_requests"]))
 
     # Command counts of the DRAM device, for the HBM energy model of the dram
     # compound. The primary source is the "=== DRAM statistics ===" block of
@@ -157,21 +146,14 @@ def dram_stats(act: TogsimActivity, expected_dram_table: Optional[str],
         if (act.dram_reads is not None
                 and (ctrl["num_read_reqs"], ctrl["num_write_reqs"])
                 != (act.dram_reads, act.dram_writes)):
-            warnings.append(
-                f"{khash}: DRAM statistics block reports "
-                f"{ctrl['num_read_reqs']} reads / {ctrl['num_write_reqs']} "
-                f"writes but the [DRAM] interval totals sum to "
-                f"{act.dram_reads} / {act.dram_writes}; device energy uses "
-                f"the statistics block (VMEM/NoC traffic keeps the totals)"
-            )
+            warnings.append(warning(
+                6507, kernel=khash, reads=ctrl["num_read_reqs"],
+                writes=ctrl["num_write_reqs"], log_reads=act.dram_reads,
+                log_writes=act.dram_writes))
     elif act.dram_reads is not None:
         stats["dram_read_cmds"] = act.dram_reads
         stats["dram_write_cmds"] = act.dram_writes
-        warnings.append(
-            f"{khash}: log has no '=== DRAM statistics ===' block; DRAM "
-            f"read/write energy is charged from the [DRAM] request totals, "
-            f"but row-activation and refresh energy are NOT charged"
-        )
+        warnings.append(warning(6508, kernel=khash))
 
     # Compare the energy table that the run declares in [Config/Energy] with
     # the table that NPUWattch charges (`select_table`). If the two tables
@@ -180,17 +162,11 @@ def dram_stats(act: TogsimActivity, expected_dram_table: Optional[str],
     if (act.energy_table_name is not None
             and act.energy_table_name != charged):
         if expected_dram_table is not None:
-            warnings.append(
-                f"{khash}: run declares DRAM energy table "
-                f"{act.energy_table_name!r} ({act.energy_table_path}), but "
-                f"--energy-table supplied {charged!r} — its constants are "
-                f"charged; pass the run's own table file instead"
-            )
+            warnings.append(warning(
+                6509, kernel=khash, declared=act.energy_table_name,
+                path=act.energy_table_path, charged=charged))
         else:
-            warnings.append(
-                f"{khash}: run declares DRAM energy table "
-                f"{act.energy_table_name!r} ({act.energy_table_path}), but "
-                f"NPUWattch charges the default {default_table().name} "
-                f"table — pass the run's table via --energy-table"
-            )
+            warnings.append(warning(
+                6510, kernel=khash, declared=act.energy_table_name,
+                path=act.energy_table_path, charged=charged))
     return stats

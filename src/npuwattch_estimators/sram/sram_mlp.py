@@ -34,6 +34,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import torch
 from torch import nn
 
+from npuwattch.diagnostics import warning
+from npuwattch_estimators.errors import EstimatorQueryError, SramCheckpointError
+
 VERSION = "v1"
 MODEL_NAMES = ("energy", "leakage", "timing", "area")
 ENERGY_OPS = ("rd_1to1", "rd_1to0", "wr_same", "wr_toggle",
@@ -65,7 +68,7 @@ DEFAULT_ARCH: Dict[str, List[int]] = {
 def node_nm(node: str) -> int:
     m = re.search(r"(\d+)", node)
     if not m:
-        raise ValueError(f"cannot parse node '{node}'")
+        raise EstimatorQueryError.nw(8002, node=node)
     return int(m.group(1))
 
 
@@ -250,8 +253,7 @@ def load_bundle(model_dir: Path,
         models = {m: _load_one(model_dir, m) for m in MODEL_NAMES}
         hashes = {lm.meta.get("dataset_sha256") for lm in models.values()}
         if len(hashes) != 1:
-            raise ValueError(f"checkpoint quartets in {model_dir} were trained "
-                             "on different dataset versions")
+            raise SramCheckpointError.nw(8250, path=model_dir)
         bundle = MlpBundle(model_dir=model_dir, models=models,
                            dataset_sha256=hashes.pop())
         _BUNDLE_CACHE[key] = bundle
@@ -259,11 +261,9 @@ def load_bundle(model_dir: Path,
     if dataset_dir is not None:
         live = dataset_hash(Path(dataset_dir))
         if live != bundle.dataset_sha256:
-            warnings.append(
-                "sram MLP checkpoints were trained on a different dataset "
-                f"version (trained {bundle.dataset_sha256[:12]}…, live "
-                f"{live[:12]}…) — consider retraining (train_sram.py)"
-            )
+            warnings.append(warning(8251,
+                                    trained_sha=bundle.dataset_sha256[:12],
+                                    live_sha=live[:12]))
     return bundle, warnings
 
 

@@ -13,13 +13,14 @@ pip install -e .
 ```
 
 ## Tutorial
-[`tutorial/`](tutorial/) holds two ready-to-run examples with real simulator data —
-AlexNet on an Eyeriss-like array (Timeloop input) and a 1024³ matmul on a TPUv3-like
-NPU (PyTorchSim input). Each is one command:
+[`tutorial/`](tutorial/) holds ready-to-run examples with real simulator data —
+AlexNet, ResNet-50, and Llama-3-8B on Eyeriss-, Gemmini-, and NVDLA-like arrays (Timeloop
+input), and a matmul, ResNet-50, and three LLM decoder blocks on a TPUv3-like NPU
+(PyTorchSim input). Each is one command:
 
 ```bash
 cd tutorial/timeloop/eyeriss_like/alexnet && ./run
-cd tutorial/pytorchsim/tpu_like_fp32 && ./run
+cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024 && ./run
 ```
 
 ## Run
@@ -67,9 +68,13 @@ Useful flags:
   HBM2, HMC — the same per-bit numbers Accelergy uses); `--energy-table` (PyTorchSim or
   Timeloop) supplies your own table instead.
 - PyTorchSim extras: `--config-yml`, `--booksim-dir` (anynet NoC runs), `--energy-table`
-  (DRAM cost table, e.g. `hbm2.yml`).
+  (DRAM cost table, e.g. `hbm2.yml`), `--kernel-names` (a `kernels.yaml` that names the
+  kernels; a file of that name in the run root is read on its own).
 - Any run without activity data falls back to a vectorless estimate (25% of random switching,
   tunable with `--vectorless-activity`) and is labeled accordingly.
+- Messages: each line has a code, `WARNING (NW-7221): ...`, and the run ends with a
+  message summary. `--list-messages [PREFIX]` lists the catalog
+  ([MESSAGES.md](MESSAGES.md)); `--suppress NW-7221[,...]` hides INFO/WARNING codes.
 
 ## Citation
 NPUWattch :

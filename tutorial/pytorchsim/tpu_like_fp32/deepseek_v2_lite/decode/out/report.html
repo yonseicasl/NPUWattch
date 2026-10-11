@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<!-- NPUWattch PPA report — single self-contained file (manual §8).
+     Rendered by report/html.py; every number is computed upstream in energy/ —
+     this template only formats. report.json is written from the same context,
+     so the two can never disagree. No CDN, no external assets; the report is
+     fully readable with JS disabled (there is no JS at all). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NPUWattch PPA Report — decode</title>
+<style>
+  :root{
+    --bg:#f7f7f5; --card:#ffffff; --ink:#1c1c1c; --muted:#6b6b6b;
+    --line:#e3e1dc; --accent:#3b6ea5; --warn-bg:#fff4e0; --warn-ink:#8a5a00;
+    --err-bg:#fdecec; --err-ink:#9c1c1c; --ok:#2e7d32;
+    --cal-bg:#e2f0ec; --cal-ink:#0c6e63; --const-bg:#ece6f6; --const-ink:#5d4a9e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+  main{max-width:1080px;margin:0 auto;padding:24px}
+  h1{font-size:22px;margin:0 0 2px} h2{font-size:16px;margin:0 0 12px}
+  h2 .sub{font-weight:400}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px;margin-bottom:16px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);
+         gap:12px;margin-bottom:16px}
+  .cards .card{margin-bottom:0}
+  .kpi .v{font-size:22px;font-weight:600} .kpi .l{color:var(--muted);font-size:12px}
+  .banner{border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px}
+  .banner.warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .banner.err{background:var(--err-bg);color:var(--err-ink)}
+  .tblwrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600}
+  tfoot td{font-weight:600;border-bottom:0}
+  .badge{display:inline-block;border-radius:4px;padding:0 6px;font-size:11px;
+         margin-left:6px;background:var(--warn-bg);color:var(--warn-ink)}
+  .badge.user{background:#e8eef7;color:var(--accent)}
+  .chip{display:inline-block;border-radius:8px;padding:0 7px;font-size:10.5px;
+        font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .chip.cal{background:var(--cal-bg);color:var(--cal-ink)}
+  .chip.const{background:var(--const-bg);color:var(--const-ink)}
+  .chip.user,.chip.uncal{background:var(--warn-bg);color:var(--warn-ink)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}
+                          .cards{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.cards{grid-template-columns:1fr}}
+  .chart svg{width:100%;height:auto;display:block}
+  .chart.donut svg{max-width:220px;margin:0 auto 10px}
+  .chart-spacer{width:100%;aspect-ratio:560/38}  /* one share-bar of air */
+  .tree{font:12.5px/1.6 ui-monospace,Consolas,monospace;overflow-x:auto}
+  .tree details{padding-left:18px}
+  .tree>details{padding-left:0}
+  .tree summary{cursor:pointer;list-style:none}
+  .tree summary::before{content:"\25B8  ";color:var(--accent)}
+  .tree details[open]>summary::before{content:"\25BE  "}
+  .tree .leaf{padding-left:18px}
+  .tree .leaf::before{content:"\00B7  ";color:var(--muted)}
+  .tree .cnt{color:var(--accent);font-weight:600}
+  .tree .lbl{color:var(--muted)}
+  table.msgs th,table.msgs td{text-align:left;vertical-align:top;font-size:12.5px}
+  table.msgs td:nth-child(3){white-space:normal}
+  details.why summary{cursor:pointer}
+  details.why{color:var(--muted)} details.why summary{color:var(--ink)}
+  table.msgs th:last-child,table.msgs td:last-child{text-align:right}
+  table.msgs tr.lvl-warning td:nth-child(2){color:var(--warn-ink);font-weight:600}
+  table.msgs tr.lvl-error td:nth-child(2),table.msgs tr.lvl-critical td:nth-child(2){color:var(--err-ink);font-weight:600}
+  ul.warnings{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted)}
+  footer{color:var(--muted);font-size:11px;margin:24px 0}
+  code{background:#f0efec;border-radius:4px;padding:0 4px;font-size:12px}
+</style>
+</head>
+<body>
+<main>
+
+  <!-- 1. Header -->
+  <h1>NPUWattch PPA Report — decode</h1>
+  <div class="sub">
+    Generated 2026-10-11 16:36:08 · NPUWattch 0.9 (n/a) ·
+    node 7nm / hp / TT /
+    Vdd+0.00 V / 25.0 °C ·
+    clock 940.0 MHz ·
+    activity source: <strong>pytorchsim harness (simulator logs)</strong> ·
+    model: <strong>PARTIAL calibration</strong>
+  </div>
+
+
+  <!-- 2. Summary cards — row 0: efficiency · energy · power,
+       row 1: area · f_max · cycles (user layout, 2026-08-12) -->
+  <div class="cards">
+    <div class="card kpi"><div class="v">82.8 pJ/FLOP</div>
+      <div class="l">Efficiency — 0.148 TFLOP/s over
+        this run · MAC = 2 FLOP · includes DRAM ·
+        fp32 datapath</div></div>
+    <div class="card kpi"><div class="v">1.43e+04 µJ</div>
+      <div class="l">Total energy — dyn 1.41e+04 µJ + leak 206 µJ</div></div>
+    <div class="card kpi"><div class="v">12.3 W</div>
+      <div class="l">Average power</div></div>
+    <div class="card kpi"><div class="v">53.197 mm²</div>
+      <div class="l">Total area — modeled components only (no IO/PHY,
+        controllers, scalar core or whitespace)</div></div>
+    <div class="card kpi"><div class="v">1095282</div>
+      <div class="l">Cycles (1.17 ms)</div></div>
+  </div>
+
+  <!-- 3 & 4. Energy / area breakdowns -->
+  <div class="two">
+    <div class="card">
+      <h2>Energy breakdown <span class="sub">dynamic 98.6% ·
+        leakage 1.4%</span></h2>
+      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 0 1 171.34 136.21" fill="none" stroke="#C1793A" stroke-width="32.0"><title>icnt_buf: 481 µJ (32.5%)</title></path><path class="slice" d="M 171.34 136.21 A 80.00 80.00 0 0 1 88.38 179.15" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.vpu_spad: 294 µJ (19.8%)</title></path><path class="slice" d="M 88.38 179.15 A 80.00 80.00 0 0 1 23.76 124.25" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.array1.pe: 263 µJ (17.8%)</title></path><path class="slice" d="M 23.76 124.25 A 80.00 80.00 0 0 1 44.18 42.69" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>core0.array0.pe: 261 µJ (17.6%)</title></path><path class="slice" d="M 44.18 42.69 A 80.00 80.00 0 0 1 65.94 27.61" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>icnt_xbar: 78.3 µJ (5.3%)</title></path><path class="slice" d="M 65.94 27.61 A 80.00 80.00 0 0 1 87.79 20.94" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.dma_q: 67.5 µJ (4.6%)</title></path><path class="slice" d="M 87.79 20.94 A 80.00 80.00 0 0 1 92.50 20.35" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.dma_addr: 14 µJ (0.9%)</title></path><path class="slice" d="M 92.50 20.35 A 80.00 80.00 0 0 1 94.70 20.18" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.vrf: 6.52 µJ (0.4%)</title></path><path class="slice" d="M 94.70 20.18 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A97A0" stroke-width="32.0"><title>other: 15.6 µJ (1.1%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">1.48e+03 µJ</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 198" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#C1793A"/><text x="16" y="14" font-size="11" fill="#1c1c1c">icnt_buf</text><rect x="190" y="4" width="250.0" height="12" fill="#C1793A" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">481 µJ · 32.5%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#3A9A8F"/><text x="16" y="36" font-size="11" fill="#1c1c1c">core0.vpu_spad</text><rect x="190" y="26" width="152.8" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">294 µJ · 19.8%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#A5518E"/><text x="16" y="58" font-size="11" fill="#1c1c1c">core0.array1.pe</text><rect x="190" y="48" width="136.9" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">263 µJ · 17.8%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#6E59B5"/><text x="16" y="80" font-size="11" fill="#1c1c1c">core0.array0.pe</text><rect x="190" y="70" width="135.6" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">261 µJ · 17.6%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#6E59B5"/><text x="16" y="102" font-size="11" fill="#1c1c1c">icnt_xbar</text><rect x="190" y="92" width="40.7" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">78.3 µJ · 5.3%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#3A9A8F"/><text x="16" y="124" font-size="11" fill="#1c1c1c">core0.dma_q</text><rect x="190" y="114" width="35.1" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">67.5 µJ · 4.6%</text></g><g class="bar-row"><rect x="0" y="137" width="10" height="10" fill="#A5518E"/><text x="16" y="146" font-size="11" fill="#1c1c1c">core0.dma_addr</text><rect x="190" y="136" width="7.3" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="146" font-size="11" fill="#6b6b6b" text-anchor="end">14 µJ · 0.9%</text></g><g class="bar-row"><rect x="0" y="159" width="10" height="10" fill="#7A8B2F"/><text x="16" y="168" font-size="11" fill="#1c1c1c">core0.vrf</text><rect x="190" y="158" width="3.4" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="168" font-size="11" fill="#6b6b6b" text-anchor="end">6.52 µJ · 0.4%</text></g><g class="bar-row"><rect x="0" y="181" width="10" height="10" fill="#8A97A0"/><text x="16" y="190" font-size="11" fill="#1c1c1c">other</text><rect x="190" y="180" width="8.1" height="12" fill="#8A97A0" opacity="0.85"/><text x="560" y="190" font-size="11" fill="#6b6b6b" text-anchor="end">15.6 µJ · 1.1%</text></g></svg></div>
+      <div class="chart-spacer"></div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="NPU vs DRAM energy share"><rect class="seg-a" x="0" y="0" width="58.0" height="20" fill="#3b6ea5"><title>NPU (on-chip) 1.48e+03 µJ (10.4%)</title></rect><rect class="seg-b" x="58.0" y="0" width="502.0" height="20" fill="#948C22"><title>DRAM 1.28e+04 µJ (89.6%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">NPU (on-chip) 1.48e+03 µJ · 10.4%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">DRAM 1.28e+04 µJ · 89.6%</text></svg></div>
+      <div class="sub">DRAM device energy sits on its own bar (details in the
+        DRAM section below); the donut and list cover the on-chip (NPU)
+        components only.</div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="dynamic vs leakage energy split"><rect class="seg-dyn" x="0" y="0" width="551.9" height="20" fill="#3b6ea5"><title>dynamic 1.41e+04 µJ (98.6%)</title></rect><rect class="seg-leak" x="551.9" y="0" width="8.1" height="20" fill="#8A97A0"><title>leakage 206 µJ (1.4%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">dynamic 98.6%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">leakage 1.4%</text></svg></div>
+    </div>
+    <div class="card">
+      <h2>Area breakdown</h2>
+      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 1 1 30.30 139.27" fill="none" stroke="#3A9A8F" stroke-width="32.0"><title>core0.vpu_spad: 3.56e+07 µm² (66.8%)</title></path><path class="slice" d="M 30.30 139.27 A 80.00 80.00 0 0 1 27.03 67.21" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>core0.array0.pe: 7.92e+06 µm² (14.9%)</title></path><path class="slice" d="M 27.03 67.21 A 80.00 80.00 0 0 1 83.09 21.81" fill="none" stroke="#A5518E" stroke-width="32.0"><title>core0.array1.pe: 7.92e+06 µm² (14.9%)</title></path><path class="slice" d="M 83.09 21.81 A 80.00 80.00 0 0 1 88.25 20.87" fill="none" stroke="#C1793A" stroke-width="32.0"><title>icnt_buf: 5.56e+05 µm² (1.0%)</title></path><path class="slice" d="M 88.25 20.87 A 80.00 80.00 0 0 1 93.24 20.29" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.vrf: 5.32e+05 µm² (1.0%)</title></path><path class="slice" d="M 93.24 20.29 A 80.00 80.00 0 0 1 95.63 20.12" fill="none" stroke="#948C22" stroke-width="32.0"><title>core0.array0.w_reg: 2.53e+05 µm² (0.5%)</title></path><path class="slice" d="M 95.63 20.12 A 80.00 80.00 0 0 1 98.01 20.02" fill="none" stroke="#7A8B2F" stroke-width="32.0"><title>core0.array1.w_reg: 2.53e+05 µm² (0.5%)</title></path><path class="slice" d="M 98.01 20.02 A 80.00 80.00 0 0 1 99.22 20.00" fill="none" stroke="#C1793A" stroke-width="32.0"><title>core0.sfu_pipe: 1.28e+05 µm² (0.2%)</title></path><path class="slice" d="M 99.22 20.00 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A97A0" stroke-width="32.0"><title>other: 8.27e+04 µm² (0.2%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">5.32e+07 µm²</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 198" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#3A9A8F"/><text x="16" y="14" font-size="11" fill="#1c1c1c">core0.vpu_spad</text><rect x="190" y="4" width="250.0" height="12" fill="#3A9A8F" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">3.56e+07 µm² · 66.8%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#6E59B5"/><text x="16" y="36" font-size="11" fill="#1c1c1c">core0.array0.pe</text><rect x="190" y="26" width="55.7" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">7.92e+06 µm² · 14.9%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#A5518E"/><text x="16" y="58" font-size="11" fill="#1c1c1c">core0.array1.pe</text><rect x="190" y="48" width="55.7" height="12" fill="#A5518E" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">7.92e+06 µm² · 14.9%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#C1793A"/><text x="16" y="80" font-size="11" fill="#1c1c1c">icnt_buf</text><rect x="190" y="70" width="3.9" height="12" fill="#C1793A" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">5.56e+05 µm² · 1.0%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#7A8B2F"/><text x="16" y="102" font-size="11" fill="#1c1c1c">core0.vrf</text><rect x="190" y="92" width="3.7" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">5.32e+05 µm² · 1.0%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#948C22"/><text x="16" y="124" font-size="11" fill="#1c1c1c">core0.array0.w_reg</text><rect x="190" y="114" width="1.8" height="12" fill="#948C22" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">2.53e+05 µm² · 0.5%</text></g><g class="bar-row"><rect x="0" y="137" width="10" height="10" fill="#7A8B2F"/><text x="16" y="146" font-size="11" fill="#1c1c1c">core0.array1.w_reg</text><rect x="190" y="136" width="1.8" height="12" fill="#7A8B2F" opacity="0.85"/><text x="560" y="146" font-size="11" fill="#6b6b6b" text-anchor="end">2.53e+05 µm² · 0.5%</text></g><g class="bar-row"><rect x="0" y="159" width="10" height="10" fill="#C1793A"/><text x="16" y="168" font-size="11" fill="#1c1c1c">core0.sfu_pipe</text><rect x="190" y="158" width="1.5" height="12" fill="#C1793A" opacity="0.85"/><text x="560" y="168" font-size="11" fill="#6b6b6b" text-anchor="end">1.28e+05 µm² · 0.2%</text></g><g class="bar-row"><rect x="0" y="181" width="10" height="10" fill="#8A97A0"/><text x="16" y="190" font-size="11" fill="#1c1c1c">other</text><rect x="190" y="180" width="1.5" height="12" fill="#8A97A0" opacity="0.85"/><text x="560" y="190" font-size="11" fill="#6b6b6b" text-anchor="end">8.27e+04 µm² · 0.2%</text></g></svg></div>
+    </div>
+  </div>
+
+  <!-- 4b. DRAM device energy (per-command split of the hbm components) -->
+  <div class="card">
+    <h2>DRAM device energy <span class="sub">dram_chan
+      · 1.28e+04 µJ (89.6% of run total)</span></h2>
+    <div class="tblwrap"><table>
+      <thead><tr><th>Command</th><th>Energy</th><th>Share</th></tr></thead>
+      <tbody>
+        <tr><td>Row activation (ACT+PRE)</td><td>2.54e+03 µJ</td><td>19.8%</td></tr>
+        <tr><td>Transfer — read</td><td>9.67e+03 µJ</td><td>75.5%</td></tr>
+        <tr><td>Transfer — write</td><td>52.1 µJ</td><td>0.4%</td></tr>
+        <tr><td>Refresh</td><td>544 µJ</td><td>4.2%</td></tr>
+      </tbody>
+      <tfoot><tr><td>Total</td><td>1.28e+04 µJ</td><td>100%</td></tr></tfoot>
+    </table></div>
+    <div class="sub">Charged per-command constants:
+      activation 909.0 pJ,
+      access 3.48 pJ/bit
+      × 256 bits/request,
+      refresh 58176.0 pJ/REFab.
+      Counts are Ramulator2 controller measurements (row misses + conflicts =
+      activations); background/standby power is out of scope.</div>
+  </div>
+
+  <!-- 5. Cycle-level energy -->
+  <div class="card">
+    <h2>Cycle-level energy</h2>
+      <div class="chart"><svg viewBox="0 0 960 410" role="img" aria-label="energy and power per kernel window over cycles"><line x1="72" x2="884" y1="236.0" y2="236.0" stroke="#e3e1dc"/><text x="64" y="240.0" text-anchor="end" font-size="10" fill="#3b6ea5">0 pJ</text><text x="892" y="240.0" font-size="10" fill="#C27200">0 mW</text><line x1="72" x2="884" y1="180.5" y2="180.5" stroke="#e3e1dc"/><text x="64" y="184.5" text-anchor="end" font-size="10" fill="#3b6ea5">1.56e+03 µJ</text><text x="892" y="184.5" font-size="10" fill="#C27200">3.99 W</text><line x1="72" x2="884" y1="125.0" y2="125.0" stroke="#e3e1dc"/><text x="64" y="129.0" text-anchor="end" font-size="10" fill="#3b6ea5">3.12e+03 µJ</text><text x="892" y="129.0" font-size="10" fill="#C27200">7.99 W</text><line x1="72" x2="884" y1="69.5" y2="69.5" stroke="#e3e1dc"/><text x="64" y="73.5" text-anchor="end" font-size="10" fill="#3b6ea5">4.68e+03 µJ</text><text x="892" y="73.5" font-size="10" fill="#C27200">12 W</text><line x1="72" x2="884" y1="14.0" y2="14.0" stroke="#e3e1dc"/><text x="64" y="18.0" text-anchor="end" font-size="10" fill="#3b6ea5">6.24e+03 µJ</text><text x="892" y="18.0" font-size="10" fill="#C27200">16 W</text><rect class="w-dyn" x="72.0" y="200.4" width="52.8" height="35.6" fill="#3b6ea5"><title>1_q_proj: dynamic 1e+03 µJ</title></rect><rect class="w-leak" x="72.0" y="199.9" width="52.8" height="0.5" fill="#8A97A0" opacity="0.6"><title>1_q_proj: leakage 14.5 µJ</title></rect><rect class="w-dyn" x="127.8" y="228.7" width="11.5" height="7.3" fill="#3b6ea5"><title>2_kv_a_proj: dynamic 204 µJ</title></rect><rect class="w-leak" x="127.8" y="228.6" width="11.5" height="0.1" fill="#8A97A0" opacity="0.6"><title>2_kv_a_proj: leakage 3.15 µJ</title></rect><rect class="w-dyn" x="142.3" y="223.4" width="18.2" height="12.6" fill="#3b6ea5"><title>3_kv_b_proj: dynamic 355 µJ</title></rect><rect class="w-leak" x="142.3" y="223.2" width="18.2" height="0.2" fill="#8A97A0" opacity="0.6"><title>3_kv_b_proj: leakage 4.98 µJ</title></rect><rect class="w-dyn" x="163.5" y="224.0" width="18.7" height="12.0" fill="#3b6ea5"><title>4_attn_qk: dynamic 337 µJ</title></rect><rect class="w-leak" x="163.5" y="223.8" width="18.7" height="0.2" fill="#8A97A0" opacity="0.6"><title>4_attn_qk: leakage 5.14 µJ</title></rect><rect class="w-dyn" x="185.2" y="230.4" width="10.3" height="5.6" fill="#3b6ea5"><title>5_attn_av: dynamic 157 µJ</title></rect><rect class="w-leak" x="185.2" y="230.3" width="10.3" height="0.1" fill="#8A97A0" opacity="0.6"><title>5_attn_av: leakage 2.83 µJ</title></rect><rect class="w-dyn" x="198.5" y="212.2" width="35.6" height="23.8" fill="#3b6ea5"><title>6_o_proj: dynamic 668 µJ</title></rect><rect class="w-leak" x="198.5" y="211.9" width="35.6" height="0.3" fill="#8A97A0" opacity="0.6"><title>6_o_proj: leakage 9.77 µJ</title></rect><rect class="w-dyn" x="237.2" y="235.3" width="2.0" height="0.7" fill="#3b6ea5"><title>7_router: dynamic 20.8 µJ</title></rect><rect class="w-leak" x="237.2" y="235.2" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>7_router: leakage 446 nJ</title></rect><rect class="w-dyn" x="242.2" y="37.0" width="288.4" height="199.0" fill="#3b6ea5"><title>8_experts_up_gate: dynamic 5.59e+03 µJ</title></rect><rect class="w-leak" x="242.2" y="34.2" width="288.4" height="2.8" fill="#8A97A0" opacity="0.6"><title>8_experts_up_gate: leakage 79.1 µJ</title></rect><rect class="w-dyn" x="533.5" y="135.6" width="145.1" height="100.4" fill="#3b6ea5"><title>9_experts_down: dynamic 2.82e+03 µJ</title></rect><rect class="w-leak" x="533.5" y="134.2" width="145.1" height="1.4" fill="#8A97A0" opacity="0.6"><title>9_experts_down: leakage 39.8 µJ</title></rect><rect class="w-dyn" x="681.6" y="170.2" width="96.4" height="65.8" fill="#3b6ea5"><title>10_shared_up_gate: dynamic 1.85e+03 µJ</title></rect><rect class="w-leak" x="681.6" y="169.2" width="96.4" height="0.9" fill="#8A97A0" opacity="0.6"><title>10_shared_up_gate: leakage 26.4 µJ</title></rect><rect class="w-dyn" x="781.0" y="198.4" width="70.0" height="37.6" fill="#3b6ea5"><title>11_shared_down: dynamic 1.06e+03 µJ</title></rect><rect class="w-leak" x="781.0" y="197.7" width="70.0" height="0.7" fill="#8A97A0" opacity="0.6"><title>11_shared_down: leakage 19.2 µJ</title></rect><rect class="w-dyn" x="854.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>12_softmax_p0: dynamic 1.93 µJ</title></rect><rect class="w-leak" x="854.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>12_softmax_p0: leakage 168 nJ</title></rect><rect class="w-dyn" x="859.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>12_softmax_p1: dynamic 3.43 µJ</title></rect><rect class="w-leak" x="859.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>12_softmax_p1: leakage 244 nJ</title></rect><rect class="w-dyn" x="864.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>12_softmax_p2: dynamic 2.48 µJ</title></rect><rect class="w-leak" x="864.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>12_softmax_p2: leakage 73.2 nJ</title></rect><rect class="w-dyn" x="869.0" y="235.9" width="2.0" height="0.1" fill="#3b6ea5"><title>13_rmsnorm_p0: dynamic 1.67 µJ</title></rect><rect class="w-leak" x="869.0" y="235.9" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>13_rmsnorm_p0: leakage 239 nJ</title></rect><rect class="w-dyn" x="874.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>13_rmsnorm_p1: dynamic 964 nJ</title></rect><rect class="w-leak" x="874.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>13_rmsnorm_p1: leakage 55.3 nJ</title></rect><rect class="w-dyn" x="879.0" y="236.0" width="2.0" height="0.0" fill="#3b6ea5"><title>14_silu_mul: dynamic 802 nJ</title></rect><rect class="w-leak" x="879.0" y="236.0" width="2.0" height="0.0" fill="#8A97A0" opacity="0.6"><title>14_silu_mul: leakage 51 nJ</title></rect><line class="w-leader" x1="133.5" x2="133.5" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="151.4" x2="151.4" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="190.4" x2="190.4" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="216.3" x2="216.3" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="855.0" x2="855.0" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="860.0" x2="860.0" y1="236" y2="294" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="865.0" x2="865.0" y1="236" y2="320" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="870.0" x2="870.0" y1="236" y2="346" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="880.0" x2="880.0" y1="236" y2="372" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><rect x="72.1" y="242" width="52.6" height="24" fill="#fff"/><text x="98.4" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">1_q_proj</text><text x="98.4" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">76946 cyc</text><rect x="107.2" y="268" width="52.6" height="24" fill="#fff"/><text x="133.5" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">2_kv_a_p</text><text x="133.5" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">16736 cyc</text><rect x="125.1" y="294" width="52.6" height="24" fill="#fff"/><text x="151.4" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">3_kv_b_p</text><text x="151.4" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">26466 cyc</text><rect x="146.5" y="242" width="52.6" height="24" fill="#fff"/><text x="172.8" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">4_attn_q</text><text x="172.8" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">27305 cyc</text><rect x="164.1" y="268" width="52.6" height="24" fill="#fff"/><text x="190.4" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">5_attn_a</text><text x="190.4" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">15057 cyc</text><rect x="190.0" y="294" width="52.6" height="24" fill="#fff"/><text x="216.3" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">6_o_proj</text><text x="216.3" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">51924 cyc</text><rect x="212.2" y="242" width="52.0" height="24" fill="#fff"/><text x="238.2" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">7_router</text><text x="238.2" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">2371 cyc</text><rect x="357.3" y="242" width="58.0" height="24" fill="#fff"/><text x="386.3" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">8_expert</text><text x="386.3" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">420210 cyc</text><rect x="577.1" y="242" width="58.0" height="24" fill="#fff"/><text x="606.1" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">9_expert</text><text x="606.1" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">211418 cyc</text><rect x="700.8" y="242" width="58.0" height="24" fill="#fff"/><text x="729.8" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">10_share</text><text x="729.8" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">140446 cyc</text><rect x="787.0" y="242" width="58.0" height="24" fill="#fff"/><text x="816.0" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">11_share</text><text x="816.0" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">101989 cyc</text><rect x="829.0" y="268" width="52.0" height="24" fill="#fff"/><text x="855.0" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">12_softm</text><text x="855.0" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">895 cyc</text><rect x="834.0" y="294" width="52.0" height="24" fill="#fff"/><text x="860.0" y="303" text-anchor="middle" font-size="10" fill="#6b6b6b">12_softm</text><text x="860.0" y="316" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1296 cyc</text><rect x="839.0" y="320" width="52.0" height="24" fill="#fff"/><text x="865.0" y="329" text-anchor="middle" font-size="10" fill="#6b6b6b">12_softm</text><text x="865.0" y="342" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">389 cyc</text><rect x="844.0" y="346" width="52.0" height="24" fill="#fff"/><text x="870.0" y="355" text-anchor="middle" font-size="10" fill="#6b6b6b">13_rmsno</text><text x="870.0" y="368" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">1269 cyc</text><rect x="849.0" y="242" width="52.0" height="24" fill="#fff"/><text x="875.0" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">13_rmsno</text><text x="875.0" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">294 cyc</text><rect x="854.0" y="372" width="52.0" height="24" fill="#fff"/><text x="880.0" y="381" text-anchor="middle" font-size="10" fill="#6b6b6b">14_silu_</text><text x="880.0" y="394" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">271 cyc</text><polyline class="p-line" points="98.4,63.7 133.5,74.3 151.4,58.4 172.8,72.4 190.4,97.3 216.3,65.5 238.2,119.2 386.3,59.7 606.1,59.3 729.8,61.5 816.0,98.2 855.0,205.4 860.0,199.0 865.0,150.1 870.0,216.4 875.0,190.7 880.0,194.9" fill="none" stroke="#C27200" stroke-width="2"/><circle cx="98.4" cy="63.7" r="3" fill="#C27200"/><circle cx="133.5" cy="74.3" r="3" fill="#C27200"/><circle cx="151.4" cy="58.4" r="3" fill="#C27200"/><circle cx="172.8" cy="72.4" r="3" fill="#C27200"/><circle cx="190.4" cy="97.3" r="3" fill="#C27200"/><circle cx="216.3" cy="65.5" r="3" fill="#C27200"/><circle cx="238.2" cy="119.2" r="3" fill="#C27200"/><circle cx="386.3" cy="59.7" r="3" fill="#C27200"/><circle cx="606.1" cy="59.3" r="3" fill="#C27200"/><circle cx="729.8" cy="61.5" r="3" fill="#C27200"/><circle cx="816.0" cy="98.2" r="3" fill="#C27200"/><circle cx="855.0" cy="205.4" r="3" fill="#C27200"/><circle cx="860.0" cy="199.0" r="3" fill="#C27200"/><circle cx="865.0" cy="150.1" r="3" fill="#C27200"/><circle cx="870.0" cy="216.4" r="3" fill="#C27200"/><circle cx="875.0" cy="190.7" r="3" fill="#C27200"/><circle cx="880.0" cy="194.9" r="3" fill="#C27200"/><line x1="72" x2="884" y1="236" y2="236" stroke="#6b6b6b"/><text x="72" y="408" font-size="10" fill="#6b6b6b"><tspan fill="#3b6ea5">bars: window energy (dyn + leak)</tspan>&#160;·&#160;<tspan fill="#C27200">line: average power</tspan>&#160;·&#160;bar width ∝ cycles</text></svg></div>
+      <div class="tblwrap"><table>
+        <thead><tr><th>#</th><th>Kernel</th><th>Kind</th><th>Cycles</th>
+          <th>Dynamic</th><th>Leakage</th><th>Total</th><th>Avg power</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td><code>1_q_proj</code></td>
+<td>fused</td>            <td>76946</td><td>1e+03 µJ</td><td>14.5 µJ</td>
+            <td>1.02e+03 µJ</td><td>12.4 W</td></tr>
+          <tr><td>1</td><td><code>2_kv_a_proj</code></td>
+<td>fused</td>            <td>16736</td><td>204 µJ</td><td>3.15 µJ</td>
+            <td>207 µJ</td><td>11.6 W</td></tr>
+          <tr><td>2</td><td><code>3_kv_b_proj</code></td>
+<td>fused</td>            <td>26466</td><td>355 µJ</td><td>4.98 µJ</td>
+            <td>360 µJ</td><td>12.8 W</td></tr>
+          <tr><td>3</td><td><code>4_attn_qk</code></td>
+<td>fused</td>            <td>27305</td><td>337 µJ</td><td>5.14 µJ</td>
+            <td>342 µJ</td><td>11.8 W</td></tr>
+          <tr><td>4</td><td><code>5_attn_av</code></td>
+<td>fused</td>            <td>15057</td><td>157 µJ</td><td>2.83 µJ</td>
+            <td>160 µJ</td><td>9.99 W</td></tr>
+          <tr><td>5</td><td><code>6_o_proj</code></td>
+<td>fused</td>            <td>51924</td><td>668 µJ</td><td>9.77 µJ</td>
+            <td>678 µJ</td><td>12.3 W</td></tr>
+          <tr><td>6</td><td><code>7_router</code></td>
+<td>fused</td>            <td>2371</td><td>20.8 µJ</td><td>446 nJ</td>
+            <td>21.2 µJ</td><td>8.41 W</td></tr>
+          <tr><td>7</td><td><code>8_experts_up_gate</code></td>
+<td>fused</td>            <td>420210</td><td>5.59e+03 µJ</td><td>79.1 µJ</td>
+            <td>5.67e+03 µJ</td><td>12.7 W</td></tr>
+          <tr><td>8</td><td><code>9_experts_down</code></td>
+<td>fused</td>            <td>211418</td><td>2.82e+03 µJ</td><td>39.8 µJ</td>
+            <td>2.86e+03 µJ</td><td>12.7 W</td></tr>
+          <tr><td>9</td><td><code>10_shared_up_gate</code></td>
+<td>fused</td>            <td>140446</td><td>1.85e+03 µJ</td><td>26.4 µJ</td>
+            <td>1.88e+03 µJ</td><td>12.6 W</td></tr>
+          <tr><td>10</td><td><code>11_shared_down</code></td>
+<td>fused</td>            <td>101989</td><td>1.06e+03 µJ</td><td>19.2 µJ</td>
+            <td>1.08e+03 µJ</td><td>9.92 W</td></tr>
+          <tr><td>11</td><td><code>12_softmax_p0</code></td>
+<td>non_mac</td>            <td>895</td><td>1.93 µJ</td><td>168 nJ</td>
+            <td>2.1 µJ</td><td>2.2 W</td></tr>
+          <tr><td>12</td><td><code>12_softmax_p1</code></td>
+<td>non_mac</td>            <td>1296</td><td>3.43 µJ</td><td>244 nJ</td>
+            <td>3.67 µJ</td><td>2.66 W</td></tr>
+          <tr><td>13</td><td><code>12_softmax_p2</code></td>
+<td>non_mac</td>            <td>389</td><td>2.48 µJ</td><td>73.2 nJ</td>
+            <td>2.56 µJ</td><td>6.18 W</td></tr>
+          <tr><td>14</td><td><code>13_rmsnorm_p0</code></td>
+<td>non_mac</td>            <td>1269</td><td>1.67 µJ</td><td>239 nJ</td>
+            <td>1.91 µJ</td><td>1.41 W</td></tr>
+          <tr><td>15</td><td><code>13_rmsnorm_p1</code></td>
+<td>non_mac</td>            <td>294</td><td>964 nJ</td><td>55.3 nJ</td>
+            <td>1.02 µJ</td><td>3.26 W</td></tr>
+          <tr><td>16</td><td><code>14_silu_mul</code></td>
+<td>non_mac</td>            <td>271</td><td>802 nJ</td><td>51 nJ</td>
+            <td>853 nJ</td><td>2.96 W</td></tr>
+        </tbody>
+        <tfoot><tr><td colspan="3">Run total</td><td>1095282</td>
+          <td>1.41e+04 µJ</td><td>206 µJ</td>
+          <td>1.43e+04 µJ</td><td>12.3 W</td></tr></tfoot>
+      </table></div>
+      <p class="sub">GEMM kernels: 1.43e+04 µJ &nbsp;·&nbsp;
+        non-GEMM kernels: 12.1 µJ
+        (6 kernel(s),
+        0.1% of total)</p>
+      <h2 style="margin-top:18px">Per-kernel component energy
+        <span class="sub">dynamic energy per kernel; leakage-only components omitted</span></h2>
+      <div class="tblwrap"><table>
+        <thead><tr><th>Component</th>
+<th><code>1_q_proj</code></th><th><code>2_kv_a_proj</code></th><th><code>3_kv_b_proj</code></th><th><code>4_attn_qk</code></th><th><code>5_attn_av</code></th><th><code>6_o_proj</code></th><th><code>7_router</code></th><th><code>8_experts_up_gate</code></th><th><code>9_experts_down</code></th><th><code>10_shared_up_gate</code></th><th><code>11_shared_down</code></th><th><code>12_softmax_p0</code></th><th><code>12_softmax_p1</code></th><th><code>12_softmax_p2</code></th><th><code>13_rmsnorm_p0</code></th><th><code>13_rmsnorm_p1</code></th><th><code>14_silu_mul</code></th>        </tr></thead>
+        <tbody>
+          <tr><td><code>core0.array0.pe</code></td>
+<td>15.9 µJ</td><td>2.98 µJ</td><td>5.3 µJ</td><td>2.65 µJ</td><td>2.67 µJ</td><td>10.6 µJ</td><td>331 nJ</td><td>87.4 µJ</td><td>43.8 µJ</td><td>29.1 µJ</td><td>14.6 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>core0.array0.w_reg</code></td>
+<td>185 nJ</td><td>38.6 nJ</td><td>61.8 nJ</td><td>41.2 nJ</td><td>31.2 nJ</td><td>124 nJ</td><td>7.72 nJ</td><td>1.02 µJ</td><td>510 nJ</td><td>340 nJ</td><td>170 nJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>core0.array1.pe</code></td>
+<td>15.9 µJ</td><td>2.98 µJ</td><td>5.3 µJ</td><td>5.3 µJ</td><td>2.63 µJ</td><td>10.6 µJ</td><td>331 nJ</td><td>87.4 µJ</td><td>43.6 µJ</td><td>29.1 µJ</td><td>14.6 µJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>core0.array1.w_reg</code></td>
+<td>185 nJ</td><td>38.6 nJ</td><td>61.8 nJ</td><td>82.4 nJ</td><td>30.6 nJ</td><td>124 nJ</td><td>7.72 nJ</td><td>1.02 µJ</td><td>509 nJ</td><td>340 nJ</td><td>170 nJ</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>core0.vpu_spad</code></td>
+<td>13.9 µJ</td><td>2.91 µJ</td><td>4.67 µJ</td><td>4.77 µJ</td><td>2.45 µJ</td><td>9.24 µJ</td><td>350 nJ</td><td>76.2 µJ</td><td>38.2 µJ</td><td>25.4 µJ</td><td>12.7 µJ</td><td>16.1 nJ</td><td>16.1 nJ</td><td>30.4 nJ</td><td>4.03 nJ</td><td>11.6 nJ</td><td>8.69 nJ</td></tr>
+          <tr><td><code>core0.vrf</code></td>
+<td>12.8 nJ</td><td>5.19 nJ</td><td>19.1 nJ</td><td>83 nJ</td><td>44.7 nJ</td><td>9.57 nJ</td><td>2.79 nJ</td><td>117 nJ</td><td>57.4 nJ</td><td>23.5 nJ</td><td>12.8 nJ</td><td>268 nJ</td><td>428 nJ</td><td>62.2 nJ</td><td>458 nJ</td><td>44.7 nJ</td><td>49.1 nJ</td></tr>
+          <tr><td><code>core0.vfu</code></td>
+<td>25.6 nJ</td><td>10.4 nJ</td><td>38.4 nJ</td><td>166 nJ</td><td>89.5 nJ</td><td>19.2 nJ</td><td>5.6 nJ</td><td>235 nJ</td><td>115 nJ</td><td>47.2 nJ</td><td>25.6 nJ</td><td>536 nJ</td><td>857 nJ</td><td>125 nJ</td><td>918 nJ</td><td>89.5 nJ</td><td>98.3 nJ</td></tr>
+          <tr><td><code>core0.dma_q</code></td>
+<td>4.9 µJ</td><td>1.03 µJ</td><td>1.65 µJ</td><td>1.7 µJ</td><td>874 nJ</td><td>3.27 µJ</td><td>114 nJ</td><td>26.9 µJ</td><td>13.5 µJ</td><td>8.97 µJ</td><td>4.51 µJ</td><td>6.35 nJ</td><td>6.36 nJ</td><td>12.7 nJ</td><td>1.59 nJ</td><td>4.76 nJ</td><td>3.56 nJ</td></tr>
+          <tr><td><code>core0.dma_addr</code></td>
+<td>1.01 µJ</td><td>213 nJ</td><td>342 nJ</td><td>351 nJ</td><td>181 nJ</td><td>676 nJ</td><td>23.7 nJ</td><td>5.57 µJ</td><td>2.79 µJ</td><td>1.85 µJ</td><td>932 nJ</td><td>1.31 nJ</td><td>1.32 nJ</td><td>2.63 nJ</td><td>329 pJ</td><td>985 pJ</td><td>737 pJ</td></tr>
+          <tr><td><code>core0.sfu_pipe</code></td>
+<td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>1.02 µJ</td><td>63.6 nJ</td><td>—</td><td>—</td><td>11.9 nJ</td></tr>
+          <tr><td><code>icnt_xbar</code></td>
+<td>5.68 µJ</td><td>1.19 µJ</td><td>1.92 µJ</td><td>1.97 µJ</td><td>1.01 µJ</td><td>3.79 µJ</td><td>133 nJ</td><td>31.2 µJ</td><td>15.7 µJ</td><td>10.4 µJ</td><td>5.23 µJ</td><td>7.37 nJ</td><td>7.37 nJ</td><td>14.7 nJ</td><td>1.86 nJ</td><td>5.54 nJ</td><td>4.13 nJ</td></tr>
+          <tr><td><code>icnt_buf</code></td>
+<td>34.8 µJ</td><td>7.31 µJ</td><td>11.7 µJ</td><td>12.1 µJ</td><td>6.21 µJ</td><td>23.2 µJ</td><td>812 nJ</td><td>191 µJ</td><td>95.9 µJ</td><td>63.7 µJ</td><td>32 µJ</td><td>45.1 nJ</td><td>45.1 nJ</td><td>90.3 nJ</td><td>11.3 nJ</td><td>33.8 nJ</td><td>25.3 nJ</td></tr>
+          <tr><td><code>dram_chan</code></td>
+<td>908 µJ</td><td>185 µJ</td><td>324 µJ</td><td>308 µJ</td><td>141 µJ</td><td>606 µJ</td><td>18.6 µJ</td><td>5.08e+03 µJ</td><td>2.57e+03 µJ</td><td>1.68e+03 µJ</td><td>972 µJ</td><td>1.05 µJ</td><td>1.05 µJ</td><td>2.08 µJ</td><td>273 nJ</td><td>773 nJ</td><td>600 nJ</td></tr>
+        </tbody>
+      </table></div>
+  </div>
+
+  <!-- Instance hierarchy (the --tree view; optional by contract) -->
+  <div class="card">
+    <h2>Instance hierarchy <span class="sub">as interpreted from the run;
+      every leaf names one row of the component table</span></h2>
+      <div class="tree">          <details open><summary>chip</summary>
+          <details open><summary>core0</summary>
+          <details><summary>array0</summary>
+          <div class="leaf">pe <span class="cnt">×16384</span> <span class="lbl">(class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4)</span></div>
+          <div class="leaf">w_reg <span class="cnt">×16384</span> <span class="lbl">(class: register_file, data_width=32, mem_depth_per_bank=1 = 4 B)</span></div>
+          </details>
+          <details><summary>array1</summary>
+          <div class="leaf">pe <span class="cnt">×16384</span> <span class="lbl">(class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4)</span></div>
+          <div class="leaf">w_reg <span class="cnt">×16384</span> <span class="lbl">(class: register_file, data_width=32, mem_depth_per_bank=1 = 4 B)</span></div>
+          </details>
+          <div class="leaf">vpu_spad <span class="cnt">×128</span> <span class="lbl">(class: sram, mem_template=sram_256k, mem_banks=1, mem_depth_per_bank=8192, data_width=128 = 128 KB)</span></div>
+          <div class="leaf">vrf <span class="cnt">×128</span> <span class="lbl">(class: register_file, data_width=256, mem_depth_per_bank=32 = 1 KB)</span></div>
+          <div class="leaf">vfu <span class="cnt">×128</span> <span class="lbl">(class: fpmac, exponent_bits=8, mantissa_bits=23, pipeline_stages=4)</span></div>
+          <div class="leaf">dma_q <span class="lbl">(class: fifo)</span></div>
+          <div class="leaf">dma_addr <span class="lbl">(class: intadd)</span></div>
+          <div class="leaf">sfu_pipe <span class="cnt">×128</span> <span class="lbl">(class: fpsfu)</span></div>
+          </details>
+          <details open><summary>noc</summary>
+          <div class="leaf">icnt_xbar <span class="lbl">(class: crossbar, net_inputs=32, net_outputs=32, data_width=256)</span></div>
+          <div class="leaf">icnt_buf <span class="cnt">×32</span> <span class="lbl">(class: sram, mem_template=sram_64k, mem_banks=1, mem_depth_per_bank=1024, data_width=64 = 8 KB)</span></div>
+          </details>
+          <details open><summary>dram</summary>
+          <div class="leaf">dram_chan <span class="cnt">×16</span> <span class="lbl">(class: hbm)</span></div>
+          </details>
+          </details>
+</div>
+  </div>
+
+  <!-- 6. Per-component detail -->
+  <div class="card">
+    <h2>Components <span class="sub">one row per physical instance —
+      instances are never lumped</span></h2>
+    <div class="tblwrap"><table>
+      <thead><tr>
+        <th>Component</th><th>Class</th><th>Model</th><th>Count</th>
+        <th>E/op [pJ]</th><th>P_leak/inst [mW]</th>
+        <th>Area/inst [µm²]</th>
+        <th>Activity [events]</th>
+        <th>E_dyn</th><th>E_leak</th><th>E_total</th><th>Share</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td><code>core0.array0.pe</code>
+</td>
+          <td>fpmac</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>16384</td>
+          <td>5.05</td><td>0.00237</td>
+          <td>483</td>
+          <td>9.58e+07</td>
+          <td>215 µJ</td><td>45.3 µJ</td>
+          <td>261 µJ</td><td>1.8%</td>
+        </tr>
+        <tr>
+          <td><code>core0.array0.w_reg</code>
+</td>
+          <td>regfile</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>16384</td>
+          <td>0.0589</td><td>0.000132</td>
+          <td>15.4</td>
+          <td>9.58e+07</td>
+          <td>2.53 µJ</td><td>2.53 µJ</td>
+          <td>5.05 µJ</td><td>0.0%</td>
+        </tr>
+        <tr>
+          <td><code>core0.array1.pe</code>
+</td>
+          <td>fpmac</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>16384</td>
+          <td>5.05</td><td>0.00237</td>
+          <td>483</td>
+          <td>9.74e+07</td>
+          <td>218 µJ</td><td>45.3 µJ</td>
+          <td>263 µJ</td><td>1.8%</td>
+        </tr>
+        <tr>
+          <td><code>core0.array1.w_reg</code>
+</td>
+          <td>regfile</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>16384</td>
+          <td>0.0589</td><td>0.000132</td>
+          <td>15.4</td>
+          <td>9.74e+07</td>
+          <td>2.57 µJ</td><td>2.53 µJ</td>
+          <td>5.09 µJ</td><td>0.0%</td>
+        </tr>
+        <tr>
+          <td><code>core0.vpu_spad</code>
+</td>
+          <td>sram</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>128</td>
+          <td>6.95 / 7.83</td><td>0.69</td>
+          <td>2.78e+05</td>
+          <td>2.45e+07</td>
+          <td>191 µJ</td><td>103 µJ</td>
+          <td>294 µJ</td><td>2.1%</td>
+        </tr>
+        <tr>
+          <td><code>core0.vrf</code>
+</td>
+          <td>regfile</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>128</td>
+          <td>0.852 / 1.41</td><td>0.0323</td>
+          <td>4.16e+03</td>
+          <td>1.63e+06</td>
+          <td>1.7 µJ</td><td>4.82 µJ</td>
+          <td>6.52 µJ</td><td>0.0%</td>
+        </tr>
+        <tr>
+          <td><code>core0.vfu</code>
+</td>
+          <td>fpmac</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>128</td>
+          <td>6.25</td><td>0.00237</td>
+          <td>483</td>
+          <td>5.45e+05</td>
+          <td>3.4 µJ</td><td>354 nJ</td>
+          <td>3.76 µJ</td><td>0.0%</td>
+        </tr>
+        <tr>
+          <td><code>core0.dma_q</code>
+</td>
+          <td>fifo</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>1</td>
+          <td>6.19</td><td>0.0166</td>
+          <td>2.38e+03</td>
+          <td>1.09e+07</td>
+          <td>67.5 µJ</td><td>19.3 nJ</td>
+          <td>67.5 µJ</td><td>0.5%</td>
+        </tr>
+        <tr>
+          <td><code>core0.dma_addr</code>
+</td>
+          <td>intadd</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>1</td>
+          <td>1.28</td><td>0.000694</td>
+          <td>98.3</td>
+          <td>1.09e+07</td>
+          <td>14 µJ</td><td>808 pJ</td>
+          <td>14 µJ</td><td>0.1%</td>
+        </tr>
+        <tr>
+          <td><code>core0.sfu_pipe</code>
+</td>
+          <td>fpsfu</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>128</td>
+          <td>7.76</td><td>0.00413</td>
+          <td>997</td>
+          <td>1.41e+05</td>
+          <td>1.09 µJ</td><td>616 nJ</td>
+          <td>1.71 µJ</td><td>0.0%</td>
+        </tr>
+        <tr>
+          <td><code>icnt_xbar</code>
+</td>
+          <td>crossbar</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>1</td>
+          <td>28.7</td><td>0.0795</td>
+          <td>1.84e+04</td>
+          <td>2.73e+06</td>
+          <td>78.2 µJ</td><td>92.6 nJ</td>
+          <td>78.3 µJ</td><td>0.5%</td>
+        </tr>
+        <tr>
+          <td><code>icnt_buf</code>
+</td>
+          <td>sram</td>
+          <td><span class="chip cal">cal</span></td>
+          <td>32</td>
+          <td>2.52 / 2.96</td><td>0.0431</td>
+          <td>1.74e+04</td>
+          <td>1.75e+08</td>
+          <td>479 µJ</td><td>1.61 µJ</td>
+          <td>481 µJ</td><td>3.4%</td>
+        </tr>
+        <tr>
+          <td><code>dram_chan</code>
+</td>
+          <td>hbm</td>
+          <td><span class="chip const">const</span></td>
+          <td>16</td>
+          <td>909 / 891</td><td>n/a</td>
+          <td>n/a</td>
+          <td>1.37e+07</td>
+          <td>1.28e+04 µJ</td><td>0 pJ</td>
+          <td>1.28e+04 µJ</td><td>89.6%</td>
+        </tr>
+      </tbody>
+    </table></div>
+    <div class="sub" style="margin:8px 0 0">Unit-cost columns are per single
+      instance and time-independent (<code>P_leak</code> is a static power
+      rating in mW). <code>E/op</code> is priced at the stim modes this run
+      actually charged the component with (up to two, alphabetical — memories
+      show read&nbsp;/&nbsp;write; an unexercised component falls back to
+      <code>random</code>); the energy columns integrate over this run —
+      <code>E_leak = count × P_leak × exec&nbsp;time</code>, which is exactly
+      the leakage series in the Cycle-level section above.</div>
+  </div>
+
+  <!-- 7. Provenance -->
+  <div class="card">
+    <h2>Provenance</h2>
+    <div class="sub">Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.</div>
+    <div class="sub">
+      inputs: togsim: togsim_results, gem5: outputs, booksim: booksim2_config, config.yml <code>d980d3f1c382</code>, compound_components.yaml <code>830542e46943</code>, projection.yaml <code>48b4b34813c8</code>, user_components.yaml <code>f3121db86801</code>    </div>
+    <details><summary style="cursor:pointer;font-size:13px">
+      45 warnings recorded during this run
+      (45 distinct)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>mouppepddmz: the gem5 counts are scaled by the tile graph (3 compute nodes, 769 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>mouppepddmz: 6291456 useful MACs of 6291456 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>ihd5idr4osw: the gem5 counts are scaled by the tile graph (3 compute nodes, 161 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>ihd5idr4osw: 1179648 useful MACs of 1310720 active PE cycles (90.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>rp7pyxcfn7y: the gem5 counts are scaled by the tile graph (3 compute nodes, 258 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>rp7pyxcfn7y: 2097152 useful MACs of 2097152 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>p7zky3c5322: the gem5 counts are scaled by the tile graph (3 compute nodes, 272 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>p7zky3c5322: 1572864 useful MACs of 3194880 active PE cycles (49.2%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>joi5sug2p3f: the gem5 counts are scaled by the tile graph (3 compute nodes, 144 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>joi5sug2p3f: 1048576 useful MACs of 3833856 active PE cycles (27.4%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>x4gbocnvdq6: the gem5 counts are scaled by the tile graph (3 compute nodes, 513 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>x4gbocnvdq6: 4194304 useful MACs of 4194304 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>ovmjmkmnzu5: the gem5 counts are scaled by the tile graph (3 compute nodes, 33 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>ovmjmkmnzu5: 131072 useful MACs of 262144 active PE cycles (50.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>yd7br2k3a74: the gem5 counts are scaled by the tile graph (3 compute nodes, 4230 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>yd7br2k3a74: 34603008 useful MACs of 34603008 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>irn7r2gdy7q: the gem5 counts are scaled by the tile graph (3 compute nodes, 2118 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>irn7r2gdy7q: 17301504 useful MACs of 33570816 active PE cycles (51.5%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>vrgyqc523fp: the gem5 counts are scaled by the tile graph (3 compute nodes, 1409 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>vrgyqc523fp: 11534336 useful MACs of 11534336 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>sf5tgfpnj7t: the gem5 counts are scaled by the tile graph (3 compute nodes, 706 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6222</code></td>
+          <td>INFO</td><td><details class="why"><summary>sf5tgfpnj7t: 5767168 useful MACs of 5767168 active PE cycles (100.0%), the other PE cycles are charged as idle.</summary>TOGSim reports the active cycles of the systolic array, not how many PEs hold a real weight. NPUWattch computes the useful MAC count from the operator and the tensor shapes. It charges this count in the compute mode of the PE. It charges the other active PE cycles in the idle mode, in which a clock-gated PE costs leakage only. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>xef3d6mdsn3: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>xef3d6mdsn3: the gem5 counts are scaled by the tile graph (2 compute nodes, 2 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>iwflep7gzuf: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>iwflep7gzuf: the gem5 counts are scaled by the tile graph (2 compute nodes, 2 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6208</code></td>
+          <td>WARNING</td><td><details class="why"><summary>iwflep7gzuf: the kernel has SFU operations and an unknown operand dtype, so NPUWattch charges the SFU at fp32.</summary>The SFU model takes its format from the float operand dtype of the kernel. This kernel has no MAC configuration, thus the dtype is unknown. NPUWattch uses fp32 (e8m23). The SFU energy is correct only if the SFU operates at fp32.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6225</code></td>
+          <td>INFO</td><td><details class="why"><summary>iwflep7gzuf: one SFU instruction processes 16 elements in each of 128 lanes (2048 in total).</summary>A CustomV* instruction works on one vector register group in every lane. The kernel MLIR gives the width of the group (for example vector&lt;16xf32&gt;). NPUWattch charges elems x lanes SFU operations for each instruction. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>6mtuccoae3f: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>6mtuccoae3f: the gem5 counts are scaled by the tile graph (1 compute nodes, 2 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6208</code></td>
+          <td>WARNING</td><td><details class="why"><summary>6mtuccoae3f: the kernel has SFU operations and an unknown operand dtype, so NPUWattch charges the SFU at fp32.</summary>The SFU model takes its format from the float operand dtype of the kernel. This kernel has no MAC configuration, thus the dtype is unknown. NPUWattch uses fp32 (e8m23). The SFU energy is correct only if the SFU operates at fp32.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6225</code></td>
+          <td>INFO</td><td><details class="why"><summary>6mtuccoae3f: one SFU instruction processes 16 elements in each of 128 lanes (2048 in total).</summary>A CustomV* instruction works on one vector register group in every lane. The kernel MLIR gives the width of the group (for example vector&lt;16xf32&gt;). NPUWattch charges elems x lanes SFU operations for each instruction. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>eiz6zzjaxru: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>eiz6zzjaxru: the gem5 counts are scaled by the tile graph (2 compute nodes, 2 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>yuurxh453b3: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>yuurxh453b3: the gem5 counts are scaled by the tile graph (1 compute nodes, 2 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6201</code></td>
+          <td>WARNING</td><td><details class="why"><summary>sjhoun2vri5: the kernel has no linalg.matmul, so it has no MAC configuration.</summary>NPUWattch treats the kernel as a non-MAC kernel. This is correct for softmax, layernorm, and elementwise kernels. No action is necessary if the kernel has no matmul.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6217</code></td>
+          <td>INFO</td><td><details class="why"><summary>sjhoun2vri5: the gem5 counts are scaled by the tile graph (1 compute nodes, 3 executions).</summary>gem5 simulates the sample program of the kernel: each compute node of the tile graph one time. NPUWattch multiplies the counts of each node by its executions in the kernel. The tile graph file (*_tog.py in the kernel directory) gives the executions. The totals agree with the COMP counts of the TOGSim log. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6208</code></td>
+          <td>WARNING</td><td><details class="why"><summary>sjhoun2vri5: the kernel has SFU operations and an unknown operand dtype, so NPUWattch charges the SFU at fp32.</summary>The SFU model takes its format from the float operand dtype of the kernel. This kernel has no MAC configuration, thus the dtype is unknown. NPUWattch uses fp32 (e8m23). The SFU energy is correct only if the SFU operates at fp32.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6225</code></td>
+          <td>INFO</td><td><details class="why"><summary>sjhoun2vri5: one SFU instruction processes 4 elements in each of 128 lanes (512 in total).</summary>A CustomV* instruction works on one vector register group in every lane. The kernel MLIR gives the width of the group (for example vector&lt;16xf32&gt;). NPUWattch charges elems x lanes SFU operations for each instruction. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8212</code></td>
+          <td>WARNING</td><td><details class="why"><summary>vpu_spad: The SRAM of 1048576 bits uses the macro templates 4x sram_256k in banks of at most 16 macros (utilization 100.0%).</summary>The description gives only the capacity of this SRAM. NPUWattch selected the macro templates for this capacity. Give the SRAM shape in the description to use a different structure.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8212</code></td>
+          <td>WARNING</td><td><details class="why"><summary>icnt_buf: The SRAM of 65536 bits uses the macro templates 1x sram_64k in banks of at most 16 macros (utilization 100.0%).</summary>The description gives only the capacity of this SRAM. NPUWattch selected the macro templates for this capacity. Give the SRAM shape in the description to use a different structure.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-6607</code></td>
+          <td>WARNING</td><td><details class="why"><summary>CustomMatMulwVpush: NPUWattch divides the kernel total between the arrays by their active cycles.</summary>The log gives this stat as one total for the kernel. NPUWattch divides it between the arrays in proportion to the active cycles of each array. The per-array energy is approximate. The total energy does not change.</details></td><td>1</td></tr>
+<tr class="lvl-warning"><td><code>NW-8111</code></td>
+          <td>WARNING</td><td><details class="why"><summary>core0.vrf: width=256 is outside the characterized range 8-128 of regfile.</summary>The model of this primitive has training data only in this range. NPUWattch extrapolates the value. The result of this component is less accurate.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-3107</code></td>
+          <td>INFO</td><td><details class="why"><summary>Clock gating is assumed: idle cycles of 8 logic component(s) cost leakage only.</summary>NPUWattch assumes that each block is clock-gated, thus an idle cycle costs no dynamic energy. A register-file or FIFO access costs its mode energy minus the idle energy, because a gated array clocks only the accessed row. A datapath event is one active cycle and costs its full energy. To model a block without clock gating, set clock_gating: false on its component.</details></td><td>1</td></tr>
+      </table></div></details>
+    <details><summary style="cursor:pointer;font-size:13px">
+      12 declared exclusions and notes (INFO —
+      deliberate, not modeling gaps)</summary>
+      <div class="tblwrap"><table class="msgs">
+        <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: scalar core (with its L1 I-cache / D-cache, branch predictor and TLBs) is excluded from the energy model; gem5 stats are read only for numCycles and the instruction counts matching CustomMatMul(wVpush|iVpush|vpop)? and CustomV(exp|exp2|erf|tanh|sin|cos)</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: CustomVlaneIdx instruction counts are deliberately not collected: it is lane-index generation, not an SFU op, and its energy is negligible</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: BAR / MEMORY_BAR (barrier) instruction counters are not collected: synchronization is control-side work (scalar-core scope) and the stall time it causes is already inside total_exec_cycles, so it is charged as leakage over the window</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: VCIX serializer/deserializer (the vector &lt;-&gt; systolic-array interface) is not modeled as a separate component: its push/pop events are already charged at both endpoints (w_reg writes, vpu_spad reads/writes), and PyTorchSim exposes no serdes size parameters — the remaining mux/wire datapath is second-order</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6008</code></td>
+          <td>INFO</td><td><details class="why"><summary>Out of scope: DRAM background/standby power and the NPU-side memory controller / HBM PHY are not charged: vendor IDD/standby currents for HBM are not public (no open HBM power tool exists), so the dram compound charges command energies only (activate / read / write / refresh, constants cited from O&#39;Connor &amp; Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic (scratchpad fills/drains, DMA engine, NoC flits) are charged by their own compounds</summary>The projection of this harness declares this item outside the energy scope. The results do not include it. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6001</code></td>
+          <td>INFO</td><td><details class="why"><summary>6 non-MAC kernel(s) use the f32 datapath of MAC kernel mouppepddmz.</summary>A non-MAC kernel has no systolic activity. NPUWattch charges it only on the compounds other than the systolic array. The vfu and spads elements take their datapath dtype from the first MAC kernel. The physical array is the same for all kernels of a run. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;CustomMatMul&#39; (total 5280 in 11 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: compute is charged as useful MACs (useful_macs action) plus idle PE cycles (array_idle_slots action); this instruction count is a redundant counter of the same work</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_gemm_ops&#39; (total 10560 in 11 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP GEMM op counter: the same GEMM work is charged as useful MACs (CustomMatMul action) plus idle PE cycles (CustomMatMulIdle action); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;comp_vector_ops&#39; (total 66 in 17 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: COMP vector op counter: the same vector work is charged per vector-unit active cycle (vpu compound actions); charging both would double-count</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2209</code></td>
+          <td>INFO</td><td><details class="why"><summary>Activity stat &#39;systolic_active_cycles&#39; (total 6510 in 11 window(s)) is not charged, because projection &#39;pytorchsim&#39; waives it: the active cycles of the arrays are split into useful_macs and array_idle_slots, which the systolic_mac actions charge; the raw cycle count also gives the share of each array</summary>The waivers of the projection list the stats that have no energy in NPUWattch. The reason comes from the projection. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-6014</code></td>
+          <td>INFO</td><td><details class="why"><summary>The window names come from kernels.yaml.</summary>The run directory has a kernels.yaml file, or --kernel-names gives one. Each entry of the file names one kernel: {name, hash, log}. NPUWattch uses the name as the window label instead of the kernel hash. The messages about a kernel still give its hash. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-2116</code></td>
+          <td>INFO</td><td><details class="why"><summary>User component &#39;example_68000_cpu_core&#39; (user_components.yaml) is in the library, but the run does not use it.</summary>No component of the run has this class. No action is necessary.</details></td><td>1</td></tr>
+      </table></div></details>
+  </div>
+
+  <footer>NPUWattch — ML-based power, area, and timing modeling for neural
+    accelerators (HPCA 2026). The numbers in this report are also available in
+    machine-readable form in <code>report.json</code> next to this file.</footer>
+</main>
+</body>
+</html>
