@@ -416,8 +416,6 @@ def build_context(
             "dtype": dtype,
             "fp32_equivalent": fp32_eq,
         }
-    power_density = ((run.avg_power_mW * 1e-3) / (area_um2 / 1e6)
-                     if area_um2 > 0 else None)
     f_max = run.f_max_MHz if timing else None
     if not timing:
         check_text, check_color, banner = "not shown (no --fmax)", "muted", None
@@ -528,13 +526,6 @@ def build_context(
             "leak_pct": round(100.0 * run.leak_energy_pJ / total_pJ, 1),
             "avg_power_mW": run.avg_power_mW,
             "avg_power_str": fmt_si(run.avg_power_mW, "mW"),
-            # The power divided by the MODELED area only. The denominator
-            # does not include the IO, the PHY, the controllers, the scalar
-            # core, or the empty area, because NPUWattch has no model for
-            # them. Thus this value is higher than a TDP density of a full die.
-            "power_density_W_per_mm2": power_density,
-            "power_density_str": (f"{power_density:.3g} W/mm²"
-                                  if power_density else None),
             "area_um2": area_um2, "area_mm2": round(area_um2 / 1e6, 3),
             "cycles": total_cycles,
             "exec_time_s": run.exec_time_s,

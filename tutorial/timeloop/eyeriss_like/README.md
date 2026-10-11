@@ -118,7 +118,7 @@ window instead.
 Each message line has the format `LEVEL (NW-nnnn): text`. To read more
 about a message, run `npuwattch --explain NW-nnnn`. The run prints no
 warnings. The run ends with this summary:
-`INFO (NW-1902): Message summary: 0 CRITICAL, 0 ERROR, 0 WARNING, 25 INFO.`
+`INFO (NW-1902): Message summary: 0 CRITICAL, 0 ERROR, 0 WARNING, 26 INFO.`
 
 - `INFO (NW-7307): ... no port count is declared, so NPUWattch uses one
   shared read-write port.` A buffer without `n_rw_ports`, `n_rd_ports`, or
@@ -167,10 +167,23 @@ warnings. The run ends with this summary:
 
 The architecture is the `eyeriss_like` design from
 [timeloop-accelergy-exercises](https://github.com/Accelergy-Project/timeloop-accelergy-exercises)
-(`workspace/example_designs/example_designs/eyeriss_like/arch.yaml`), with one
-change: we added two lines to the `psum_spad` attributes, `n_rd_ports: 1` and
-`n_wr_ports: 1`. Timeloop doesn't use these attributes, so `timeloop-mapper`
-gives the same stats with the changed file and with the original.
+(`workspace/example_designs/example_designs/eyeriss_like/arch.yaml`), with two
+changes:
+
+- **Ports.** We added two lines to the `psum_spad` attributes, `n_rd_ports: 1`
+  and `n_wr_ports: 1`. Timeloop doesn't use these attributes, so they don't
+  change the stats.
+- **DRAM bandwidth.** We added `read_bandwidth: 16` and `write_bandwidth: 16`
+  to the `DRAM` component (16 B per cycle, which is 16 GB/s at 1 GHz).
+  `shared_glb` bypasses the weights, so without this limit Timeloop counts the
+  cycles of the fully connected layers from the PEs alone, as if the DRAM
+  could supply about 100 B per cycle.
+
+The DRAM bandwidth changes only the fully connected layers. Their cycles grow
+to about the DRAM bytes divided by 16 (fc6: 2 359 872 cycles instead of
+393 216), and their energy changes by less than 0.2%. The conv layers give the
+same stats as without the limit. NPUWattch ignores the bandwidth attributes
+of the DRAM component, so they add no message.
 
 The stats files come from running `timeloop-mapper` once per AlexNet layer on
 that architecture, with the layer shapes that come with the same exercises
@@ -187,5 +200,7 @@ that architecture, with the layer shapes that come with the same exercises
 | `07_fc7` | fc7 | C=4096, M=4096 |
 | `08_fc8` | fc8 | C=4096, M=1000 |
 
-Each mapper run takes about 25 seconds. The eight runs produced the 8 stats
-files in `alexnet/stats/`, which are unedited.
+We used the default exercise mapper settings (`_include/mapper.yaml`: 4
+threads, timeout 10000, victory condition 100). Each mapper run takes less
+than 30 seconds. The eight runs produced the 8 stats files in
+`alexnet/stats/`, which are unedited.

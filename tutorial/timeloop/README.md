@@ -55,6 +55,18 @@ paper: int8 operands, int32 accumulation, LPDDR4 DRAM, and
 | Post-processing | — | SDP: bias, batch norm, ReLU, and int8 requantization (a user component; see `nvdla_like/README.md`) |
 | Area at 7nm | 0.423 mm² | 0.088 mm² |
 
+**DRAM bandwidth.** In all three tutorial designs, the DRAM stream is limited
+to 16 B per cycle (16 GB/s at 1 GHz). In the Gemmini-like and NVDLA-like
+designs, the limit is `read_bandwidth: 16` and `write_bandwidth: 16` on the
+scratchpad and the CBUF: all inputs and weights go through these buffers, and
+the outputs go through the accumulator or the CACC. In the Eyeriss-like
+design, the limit is `read_bandwidth: 16` and `write_bandwidth: 16` on the
+DRAM component, because its global buffer bypasses the weights. That is why
+the memory-bound windows (fc layers, LLM decode) of all three designs show
+about 1 W average power on LPDDR4. In the Gemmini-like and NVDLA-like runs,
+the fc and decode windows use 16.0 B per cycle, prefill uses 2 to 8 B per
+cycle, and the conv layers use 0.25 to 8 B per cycle.
+
 ## The two workloads
 
 The window label for each layer is its stats file name. NPUWattch sorts the

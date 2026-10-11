@@ -158,13 +158,17 @@ Here is the per-layer table from the console:
 │ 2 │ 03_conv3 │  718848 │  1.85e+08 │ 2.108e+06 │  1.871e+08 │          260.3 │
 │ 3 │ 04_conv4 │ 1437696 │ 2.056e+08 │ 4.215e+06 │  2.098e+08 │          145.9 │
 │ 4 │ 05_conv5 │  638976 │ 1.374e+08 │ 1.873e+06 │  1.393e+08 │            218 │
-│ 5 │ 06_fc6   │  393216 │ 2.461e+09 │ 1.153e+06 │  2.463e+09 │           6263 │
-│ 6 │ 07_fc7   │  262144 │ 1.094e+09 │ 7.686e+05 │  1.095e+09 │           4175 │
-│ 7 │ 08_fc8   │   40960 │ 2.672e+08 │ 1.201e+05 │  2.673e+08 │           6527 │
+│ 5 │ 06_fc6   │ 2359872 │ 2.461e+09 │ 6.919e+06 │  2.467e+09 │           1046 │
+│ 6 │ 07_fc7   │ 1048832 │ 1.094e+09 │ 3.075e+06 │  1.097e+09 │           1046 │
+│ 7 │ 08_fc8   │  256256 │ 2.672e+08 │ 7.513e+05 │   2.68e+08 │           1046 │
 └───┴──────────┴─────────┴───────────┴───────────┴────────────┴────────────────┘
 ```
 
-Total: **5.30 mJ**, 0.82 W average power, 0.459 mm² area, and 7.4 pJ per MAC.
+Total: **5.31 mJ**, 0.56 W average power, 0.459 mm² area, and 7.4 pJ per MAC.
+
+The average power of a window is its energy divided by its cycles. The fully
+connected layers are limited by the DRAM bandwidth in `arch.yaml` (16 B per
+cycle), so all three show about 1 W.
 
 The per-component table below it shows *where* the energy goes. The component
 names are shown relative to the hierarchy prefix they all share, which is
@@ -177,7 +181,7 @@ INFO (NW-1037): Per-window component energy (dynamic, pJ):
 ┃ component                         ┃  01_conv1 ┃  02_conv2 ┃    06_fc6 ┃    08_fc8 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
 │ DRAM                              │ 2.956e+07 │  6.33e+08 │ 2.417e+09 │ 2.625e+08 │
-│ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 4.925e+04 │      1550 │
+│ eyeriss.shared_glb                │ 8.933e+05 │ 2.188e+06 │ 2.478e+04 │      1550 │
 │ eyeriss.PE_column.PE.weights_spad │ 6.652e+06 │ 2.232e+07 │ 1.339e+07 │ 1.453e+06 │
 │ eyeriss.PE_column.PE.mac          │ 4.609e+07 │ 1.469e+08 │ 2.475e+07 │ 2.686e+06 │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┘
