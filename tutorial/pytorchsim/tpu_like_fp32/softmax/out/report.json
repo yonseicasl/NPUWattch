@@ -1,8 +1,8 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "softmax",
- "timestamp": "2026-10-11 16:35:52",
- "version": "0.9",
+ "timestamp": "2026-10-12 00:48:19",
+ "version": "1.0",
  "git_commit": "n/a",
  "tech": {
   "node": "7nm",
@@ -15,7 +15,7 @@
   "frequency_MHz": 940.0
  },
  "activity_source": "pytorchsim harness (simulator logs)",
- "model_tag": "PARTIAL calibration",
+ "model_tag": "calibrated + constant tables",
  "banners": [],
  "totals": {
   "energy_pJ": 1156805836.0185707,
@@ -100,8 +100,8 @@
   }
  ],
  "kernel_split": {
-  "gemm_pJ": -2.384185791015625e-07,
-  "gemm_str": "-2.38e-07 pJ",
+  "gemm_pJ": 0.0,
+  "gemm_str": "0 pJ",
   "non_gemm_pJ": 1156805836.018571,
   "non_gemm_str": "1.16e+03 \u00b5J",
   "non_gemm_pct": 100.0,
@@ -605,7 +605,7 @@
   },
   {
    "name": "dram_chan",
-   "cls": "hbm",
+   "cls": "DRAM",
    "dyn_by_mode": {
     "activate": 208220994.0,
     "read": 467647856.64000005,
@@ -722,7 +722,7 @@
      {
       "name": "dram_chan",
       "count": 16,
-      "label": "class: hbm"
+      "label": "class: DRAM"
      }
     ]
    }
@@ -730,7 +730,7 @@
  },
  "provenance": {
   "models": [],
-  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and DRAM (hbm) use cited table constants; a user component uses the values of the user component library.",
   "inputs": [
    {
     "name": "togsim: togsim_results",
@@ -758,7 +758,7 @@
    },
    {
     "name": "user_components.yaml",
-    "sha": "f3121db8680118569d2a288ebe84f0fda8efa6aa3de34ceec318771a78b0d44e"
+    "sha": "6b2480e3a5d013797edbde959be38ae582c7db47a793d013bfd006a466a6c4de"
    }
   ],
   "warnings": [

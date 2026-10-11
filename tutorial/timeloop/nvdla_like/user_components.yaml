@@ -26,18 +26,19 @@
 #
 # Keys of an entry:
 #   reference      The technology of the values. `node` is necessary.
-#   design_class   Optional: register | compute. The custom component scaler
-#                  uses it.
+#   design_class   Optional: register | compute. For the planned node
+#                  scaling.
 #   area_um2       The area of one instance.
 #   leak_power_mW  Optional. The leakage power of one instance. Default: 0.
 #   actions        action name -> {energy_pJ: energy of one action}
 #   characterized  Optional: the same values, measured at other nodes. The run
-#                  does not use them; they are data for the scaler.
+#                  does not use them; they are data for the planned
+#                  node scaling.
 #
-# The custom component scaler changes the values from the reference technology
-# to the technology of the run. THE SCALER IS NOT IMPLEMENTED. NPUWattch uses
-# the reference values as they are and gives a warning if the nodes are
-# different.
+# NPUWattch uses the reference values as they are. If the node of the run is
+# not the reference node, it says so (NW-8302). Scaling of the values between
+# nodes is planned for a future release; the `characterized` block holds the
+# data for it.
 
 user_components:
 

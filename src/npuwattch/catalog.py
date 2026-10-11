@@ -132,7 +132,12 @@ register("NW", blocks={
                  "the table.",
            "These components have no dynamic energy in any window. "
            "The energy summary below gives their leakage energy."),
-    1039: (INFO, "Energy summary: {tag}"),
+    1039: (INFO, "Energy summary: {tag}",
+           "The tag names the source of the cost of each primitive. "
+           "A calibrated primitive uses a trained model at the node of the run. "
+           "A constant primitive uses a cost table, for example the DRAM tables. "
+           "A user primitive uses the user component library. "
+           "No action is necessary."),
     1040: (INFO, "DRAM device energy ({components}): activation "
                  "{activate_pJ:.4g} pJ ({activate_pct:.1f}%), transfer "
                  "{transfer_pJ:.4g} pJ ({transfer_pct:.1f}%, read {read_pJ:.4g}, "

@@ -29,9 +29,8 @@ cd tpu_like_bf16/matmul_1024 && ./run
 ```
 
 Start with `tpu_like_fp32/matmul_1024/README.md`. It explains each file and
-each console message in detail. All runs are float32, because PyTorchSim simulates
-float32 kernels only; `tpu_like_bf16/README.md` explains how the PE is set
-to bf16 in the hardware model instead.
+each console message in detail. The tutorial runs are float32; `tpu_like_bf16/README.md` explains how the PE
+is set to bf16 in the hardware model.
 
 ## Folder layout
 

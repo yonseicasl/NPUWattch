@@ -1,8 +1,8 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "arch",
- "timestamp": "2026-10-11 16:36:22",
- "version": "0.9",
+ "timestamp": "2026-10-12 00:49:14",
+ "version": "1.0",
  "git_commit": "n/a",
  "tech": {
   "node": "7nm",
@@ -15,7 +15,7 @@
   "frequency_MHz": 1000.0
  },
  "activity_source": "timeloop harness (simulator logs)",
- "model_tag": "PARTIAL calibration",
+ "model_tag": "calibrated + constant tables",
  "banners": [],
  "totals": {
   "energy_pJ": 5311716416.179851,
@@ -304,7 +304,7 @@
  "components": [
   {
    "name": "system_top_level.DRAM",
-   "cls": "hbm",
+   "cls": "DRAM",
    "dyn_by_mode": {
     "read": 4537557184.0,
     "write": 67459584.0
@@ -546,7 +546,7 @@
  },
  "provenance": {
   "models": [],
-  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and DRAM (hbm) use cited table constants; a user component uses the values of the user component library.",
   "inputs": [
    {
     "name": "arch.yaml",
@@ -562,16 +562,16 @@
   ],
   "notes": [
    "(NW-7403): system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.",
-   "(NW-7301): system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.DRAM (DRAM): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7306): system_top_level.eyeriss.shared_glb (sram): depth 16384 is the total of 32 banks, so mem_depth_per_bank is 512 (128 KB total).",
    "(NW-7307): system_top_level.eyeriss.shared_glb (sram): no port count is declared, so NPUWattch uses one shared read-write port.",
    "(NW-7308): system_top_level.eyeriss.shared_glb (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.",
-   "(NW-7301): system_top_level.eyeriss.shared_glb (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.eyeriss.shared_glb (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7307): system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
-   "(NW-7301): system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7307): system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
-   "(NW-7301): system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
-   "(NW-7301): system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth, update_fifo_depth.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
+   "(NW-7301): system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): the Accelergy attribute(s) datawidth, update_fifo_depth have no effect in NPUWattch.",
    "(NW-7116): The description declares technology 65nm, but the run uses 7nm from --node.",
    "(NW-2116): User component 'example_68000_cpu_core' (user_components.yaml) is in the library, but the run does not use it.",
    "(NW-7101): Compound component 'counter' (compound_components.yaml) is parsed, but no component uses it.",
@@ -598,9 +598,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.DRAM (DRAM): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7306",
@@ -626,9 +626,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.eyeriss.shared_glb (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.eyeriss.shared_glb (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7307",
@@ -640,9 +640,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.eyeriss.PE_column.PE.ifmap_spad (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7307",
@@ -654,16 +654,16 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.eyeriss.PE_column.PE.weights_spad (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth, update_fifo_depth.",
+     "message": "system_top_level.eyeriss.PE_column.PE.psum_spad (regfile): the Accelergy attribute(s) datawidth, update_fifo_depth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7116",

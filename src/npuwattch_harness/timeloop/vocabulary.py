@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from npuwattch.diagnostics import info, warning
-from npuwattch.naming import CONTEXT_NAMES, PRIMITIVE_PARAMS, clock_gating_of
+from npuwattch.naming import display_class, CONTEXT_NAMES, PRIMITIVE_PARAMS, clock_gating_of
 from .dram import CONSTANT_NAMES, constants_for
 from ..vocabulary import (
     AttributeReader,
@@ -169,7 +169,8 @@ def attributes_for(
 
     ignored = reader.ignored()
     if ignored:
-        notes.append(info(7301, component=component, primitive=primitive,
+        notes.append(info(7301, component=component,
+                          primitive=display_class(primitive),
                           attributes=", ".join(ignored)))
     return out
 

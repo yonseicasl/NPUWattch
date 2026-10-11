@@ -31,6 +31,11 @@ from npuwattch.diagnostics import (
     group as group_messages,
     is_suppressed,
 )
+from npuwattch.naming import display_class
+
+#: The name of the DRAM cost model (`hbm`) in the component table.
+DRAM_CLASS = display_class("hbm")
+
 from .svg import (
     donut,
     dyn_leak_bar,
@@ -100,7 +105,7 @@ def _model_tag(models: Iterable[str]) -> str:
         return "calibrated"
     if kinds <= {"uncal"}:
         return "UNCALIBRATED"
-    return "PARTIAL calibration"
+    return "calibrated + constant tables"
 
 
 def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any],
@@ -265,7 +270,7 @@ def build_context(
             feats["clock_mhz"] = clock
         components.append({
             "name": name,
-            "cls": c0.primitive,
+            "cls": display_class(c0.primitive),
             # The dynamic energy of the run for each stim_mode. The sum is
             # dyn_energy_pJ. Only the JSON (§3.6) shows this split for each
             # component. The HTML does not.
@@ -316,7 +321,9 @@ def build_context(
     if any(k == "non_mac" for k in kinds.values()):
         non_tot = sum(w.total_energy_pJ for i, w in enumerate(run.windows)
                       if kinds.get(i) == "non_mac")
-        mac_tot = run.total_energy_pJ - non_tot
+        # The subtraction leaves a rounding residue (about 1e-7 pJ) when
+        # every window is non-MAC. Clamp it to 0.
+        mac_tot = max(0.0, run.total_energy_pJ - non_tot)
         kernel_split = {
             "gemm_pJ": mac_tot, "gemm_str": fmt_si(mac_tot, "pJ"),
             "non_gemm_pJ": non_tot, "non_gemm_str": fmt_si(non_tot, "pJ"),
@@ -330,7 +337,7 @@ def build_context(
     # transfer, write transfer, and the refresh term of NPUWattch. A
     # vectorless run charges hbm at `random`. Such a run has no command
     # modes, thus it has no breakdown.
-    dram_comps = [c for c in components if c["cls"] == "hbm"]
+    dram_comps = [c for c in components if c["cls"] == DRAM_CLASS]
     dram_breakdown = None
     if dram_comps:
         modes: Dict[str, float] = {}
@@ -464,7 +471,7 @@ def build_context(
     # donut. Thus the hbm components have a separate bar with two segments.
     # The energy donut and the bar list EXCLUDE them and show only the
     # on-chip (NPU) components.
-    dram_pJ = sum(c["energy_pJ"] for c in components if c["cls"] == "hbm")
+    dram_pJ = sum(c["energy_pJ"] for c in components if c["cls"] == DRAM_CLASS)
     npu_pJ = run.total_energy_pJ - dram_pJ
     npu_dram_split = None
     if dram_pJ > 0:
@@ -475,7 +482,7 @@ def build_context(
             "dram_pct": round(100.0 * dram_pJ / total_pJ, 1),
         }
     energy_items = _top_n([(c["name"], c["energy_pJ"]) for c in components
-                           if c["cls"] != "hbm"])
+                           if c["cls"] != DRAM_CLASS])
     area_items = _top_n([(c["name"], c["area_um2"]) for c in components])
     svg = {
         "split_bar": dyn_leak_bar(run.dyn_energy_pJ, run.leak_energy_pJ),
@@ -556,7 +563,7 @@ def build_context(
         "provenance": {
             "models": [],
             "model_note": ("Calibrated clusters: sram and the "
-                           "logic MLP primitives; d2dlink and hbm use cited "
+                           "logic MLP primitives; d2dlink and DRAM (hbm) use cited "
                            "table constants; a user component uses the "
                            "values of the user component library."),
             "inputs": input_entries,

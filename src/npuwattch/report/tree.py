@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
+from npuwattch.naming import display_class
+
 __all__ = ["ArchTreeNode", "render_text", "to_dict", "tree_from_native",
            "capacity_suffix",
            "component_label"]
@@ -146,7 +148,7 @@ def component_label(comp_class: str, attrs: Mapping[str, Any]) -> str:
     The label shows only the attributes that ``_SALIENT`` lists for the
     class. The label of a storage class also shows the total capacity.
     """
-    parts = [f"class: {comp_class}"]
+    parts = [f"class: {display_class(comp_class)}"]
     for key in _SALIENT.get(str(comp_class), ()):
         v = attrs.get(key)
         if v is not None:

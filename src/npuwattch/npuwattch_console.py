@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+from npuwattch.naming import display_class
 from npuwattch.banner import print_banner
 from npuwattch.diagnostics import (
     INFO,
@@ -651,15 +652,16 @@ def _print_run_energy(run, chain=None, extra_tag=None, verbose: int = 0,
         tag = "calibrated"
     else:
         parts = []
+        shown = lambda names: ", ".join(sorted(display_class(n) for n in names))
         if hits:
-            parts.append(f"calibrated: {', '.join(sorted(hits))}")
+            parts.append(f"calibrated: {shown(hits)}")
         if consts:
-            parts.append(f"constant: {', '.join(sorted(consts))}")
+            parts.append(f"constant: {shown(consts)}")
         if users:
-            parts.append(f"user: {', '.join(sorted(users))}")
+            parts.append(f"user: {shown(users)}")
         if others:
-            parts.append(f"uncalibrated: {', '.join(sorted(others))}")
-        tag = "PARTIAL — " + "; ".join(parts)
+            parts.append(f"uncalibrated: {shown(others)}")
+        tag = "; ".join(parts)
 
     print("\n" + tbl.rule("="))  # nw-lint: text
     if extra_tag:

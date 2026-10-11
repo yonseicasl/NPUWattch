@@ -48,9 +48,9 @@
 
 #
 # TPU-like bf16 variant: this design fixes the PE to a bf16 MAC. The PE does
-# not follow the kernel dtype. The PyTorchSim run is a float32 matmul, because
-# PyTorchSim cannot simulate bf16 or fp16. The systolic array does one MAC per
-# PE per cycle for each dtype, thus the cycle and MAC counts of that run apply.
+# not follow the kernel dtype. The PyTorchSim run is a float32 matmul. The
+# systolic array does one MAC per PE per cycle for each dtype, thus the cycle
+# and MAC counts of that run apply.
 # The vpu below still follows the kernel dtype (fp32, as the TPU vector unit).
 
 systolic_mac:

@@ -81,12 +81,12 @@
   <!-- 1. Header -->
   <h1>NPUWattch PPA Report — arch</h1>
   <div class="sub">
-    Generated 2026-10-11 16:36:30 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-11 23:52:06 · NPUWattch 1.0 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 1000.0 MHz ·
     activity source: <strong>timeloop harness (simulator logs)</strong> ·
-    model: <strong>PARTIAL calibration</strong>
+    model: <strong>calibrated + constant tables</strong>
   </div>
 
 <div class="banner warn">User component library values for: nvdla_sdp — these are the user&#39;s numbers at their reference technology, not model predictions.</div>
@@ -254,7 +254,7 @@
         <tr>
           <td><code>system_top_level.DRAM</code>
 </td>
-          <td>hbm</td>
+          <td>DRAM</td>
           <td><span class="chip const">const</span></td>
           <td>1</td>
           <td>512 / 512</td><td>n/a</td>
@@ -350,7 +350,7 @@
   <!-- 7. Provenance -->
   <div class="card">
     <h2>Provenance</h2>
-    <div class="sub">Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.</div>
+    <div class="sub">Calibrated clusters: sram and the logic MLP primitives; d2dlink and DRAM (hbm) use cited table constants; a user component uses the values of the user component library.</div>
     <div class="sub">
       inputs: arch.yaml <code>d83a975a7370</code>, stats: stats, stats_map.yaml <code>e36b4fa7760b</code>    </div>
     <details><summary style="cursor:pointer;font-size:13px">
@@ -369,7 +369,7 @@
 <tr class="lvl-info"><td><code>NW-7403</code></td>
           <td>INFO</td><td><details class="why"><summary>system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.</summary>To use a different table, give --energy-table.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7301</code></td>
-          <td>INFO</td><td><details class="why"><summary>system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.DRAM (DRAM): the Accelergy attribute(s) datawidth have no effect in NPUWattch.</summary>NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7109</code></td>
           <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.sdp: the user component library entry &#39;nvdla_sdp&#39; gives the cost, not the class &#39;dummy_storage&#39;.</summary>The user_component attribute of the component names the library entry. NPUWattch uses the entry for the area and the energy. Timeloop uses the class of the component.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7306</code></td>
@@ -379,19 +379,19 @@
 <tr class="lvl-info"><td><code>NW-7308</code></td>
           <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.cbuf (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.</summary>NPUWattch charges each bank access as one access event.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7301</code></td>
-          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.cbuf (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.cbuf (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.</summary>NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7307</code></td>
           <td>INFO</td><td>system_top_level.nvdla.cacc (sram): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7301</code></td>
-          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.cacc (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.cacc (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.</summary>NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7307</code></td>
           <td>INFO</td><td>system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7301</code></td>
-          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.</summary>NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7307</code></td>
           <td>INFO</td><td>system_top_level.nvdla.mac_cell.lane.input_reg (regfile): no port count is declared, so NPUWattch uses one shared read-write port.</td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7301</code></td>
-          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.mac_cell.lane.input_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.</summary>These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary.</details></td><td>1</td></tr>
+          <td>INFO</td><td><details class="why"><summary>system_top_level.nvdla.mac_cell.lane.input_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.</summary>NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-2116</code></td>
           <td>INFO</td><td><details class="why"><summary>User component &#39;example_68000_cpu_core&#39; (user_components.yaml) is in the library, but the run does not use it.</summary>No component of the run has this class. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7101</code></td>

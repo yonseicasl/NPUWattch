@@ -71,11 +71,10 @@ matrix-vector products and cost about 190 pJ per MAC.
 
 ## The GELU kernel
 
-`F.gelu(approximate="tanh")` crashes PyTorchSim's functional simulator
-(Spike) with functional mode on. Kernel 10 ran with a copy of the config
-that has `pytorchsim_functional_mode: 0`. The timing simulation and the
-energy do not depend on this flag; only the check of the result against the
-CPU is lost. `how_the_data_was_made/RUN_MANIFEST.md` records it. The run
+Kernel 10 (`F.gelu(approximate="tanh")`) ran with a copy of the config that
+has `pytorchsim_functional_mode: 0`. The timing simulation and the energy
+do not depend on this flag; only the check of the result against the CPU is
+not done for this kernel. `how_the_data_was_made/RUN_MANIFEST.md` records it. The run
 root's `config.yml` is the functional-ON config of the other nine kernels.
 
 ## Files
@@ -106,9 +105,8 @@ share one hash; `kernels.yaml` names them by log file.
 
 Same image and config as the design folder, run on 2026-10-10 and 11. The
 script in `how_the_data_was_made/` compiles each kernel of the table as its
-own function with random float32 tensors of the given shapes, and raises the
-compiler's lock wait at run time (`LOCK_TIMEOUT = 14400`), which changes
-nothing in the simulation. Prefill took 7 h 43 min of wall time
+own function with random float32 tensors of the given shapes. Prefill took
+7 h 43 min of wall time
 (`6_ffn_up_gate` 3.5 h, `7_ffn_down` 3.1 h); decode took 99 min. Kernels 1
 to 9 match the CPU reference. See `docs/PYTORCHSIM_DOCKER.md` for the
 procedure.

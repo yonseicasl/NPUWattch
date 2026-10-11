@@ -1,8 +1,8 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "arch",
- "timestamp": "2026-10-11 16:36:30",
- "version": "0.9",
+ "timestamp": "2026-10-11 23:52:06",
+ "version": "1.0",
  "git_commit": "n/a",
  "tech": {
   "node": "7nm",
@@ -15,7 +15,7 @@
   "frequency_MHz": 1000.0
  },
  "activity_source": "timeloop harness (simulator logs)",
- "model_tag": "PARTIAL calibration",
+ "model_tag": "calibrated + constant tables",
  "banners": [
   {
    "level": "warn",
@@ -301,7 +301,7 @@
  "components": [
   {
    "name": "system_top_level.DRAM",
-   "cls": "hbm",
+   "cls": "DRAM",
    "dyn_by_mode": {
     "read": 610413824.0,
     "write": 98007552.0
@@ -584,7 +584,7 @@
  },
  "provenance": {
   "models": [],
-  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and DRAM (hbm) use cited table constants; a user component uses the values of the user component library.",
   "inputs": [
    {
     "name": "arch.yaml",
@@ -604,18 +604,18 @@
   ],
   "notes": [
    "(NW-7403): system_top_level.DRAM (DRAM type LPDDR4): 8 pJ/bit from the shipped table lpddr4.yml.",
-   "(NW-7301): system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.DRAM (DRAM): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7109): system_top_level.nvdla.sdp: the user component library entry 'nvdla_sdp' gives the cost, not the class 'dummy_storage'.",
    "(NW-7306): system_top_level.nvdla.cbuf (sram): depth 8192 is the total of 16 banks, so mem_depth_per_bank is 512 (64 KB total).",
    "(NW-7307): system_top_level.nvdla.cbuf (sram): no port count is declared, so NPUWattch uses one shared read-write port.",
    "(NW-7308): system_top_level.nvdla.cbuf (sram): bandwidth 16 words/cycle (8 words per access) gives up to 2 bank accesses per cycle.",
-   "(NW-7301): system_top_level.nvdla.cbuf (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.nvdla.cbuf (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7307): system_top_level.nvdla.cacc (sram): no port count is declared, so NPUWattch uses one shared read-write port.",
-   "(NW-7301): system_top_level.nvdla.cacc (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.nvdla.cacc (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7307): system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
-   "(NW-7301): system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-7307): system_top_level.nvdla.mac_cell.lane.input_reg (regfile): no port count is declared, so NPUWattch uses one shared read-write port.",
-   "(NW-7301): system_top_level.nvdla.mac_cell.lane.input_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+   "(NW-7301): system_top_level.nvdla.mac_cell.lane.input_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
    "(NW-2116): User component 'example_68000_cpu_core' (user_components.yaml) is in the library, but the run does not use it.",
    "(NW-7101): Compound component 'counter' (compound_components.yaml) is parsed, but no component uses it.",
    "(NW-7218): Timeloop stats: 7 file(s), 13374976 cycles, 7/7 description components charged (windows mode).",
@@ -642,9 +642,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.DRAM (hbm): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.DRAM (DRAM): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7109",
@@ -677,9 +677,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.nvdla.cbuf (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.nvdla.cbuf (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7307",
@@ -691,9 +691,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.nvdla.cacc (sram): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.nvdla.cacc (sram): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7307",
@@ -705,9 +705,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.nvdla.mac_cell.lane.weight_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-7307",
@@ -719,9 +719,9 @@
     {
      "code": "NW-7301",
      "level": "INFO",
-     "message": "system_top_level.nvdla.mac_cell.lane.input_reg (regfile): NPUWattch ignores the Accelergy attribute(s) datawidth.",
+     "message": "system_top_level.nvdla.mac_cell.lane.input_reg (regfile): the Accelergy attribute(s) datawidth have no effect in NPUWattch.",
      "count": 1,
-     "explain": "These attributes have no NPUWattch attribute with the same meaning. They do not change the result. No action is necessary."
+     "explain": "NPUWattch reads the word width from `width`, the entry count from `depth`, and the bank count from `n_banks`. The attributes in this message have no NPUWattch attribute with the same meaning, so they do not change the result. No action is necessary."
     },
     {
      "code": "NW-2116",

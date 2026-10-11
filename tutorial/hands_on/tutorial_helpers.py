@@ -171,7 +171,7 @@ def components_df(rep, top=None):
             "instances": c["count"],
             "energy": c["energy_str"],
             "share %": round(c["energy_pct"], 1),
-            "area": c["area_str"],
+            "area µm²/inst": c["area_str"],
             "_pJ": c["energy_pJ"],
         })
     df = (pd.DataFrame(rows).sort_values("_pJ", ascending=False)

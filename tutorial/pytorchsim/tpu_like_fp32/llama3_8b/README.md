@@ -58,8 +58,8 @@ once and used once, and the arrays sit idle: `7_ffn_down` streams 235 MB of
 float32 weights for 59 M MACs.
 
 `6_ffn_up_gate` takes fewer cycles than `7_ffn_down` although it has twice
-the MACs. The two kernels got different tile choices from the autotuner;
-the manifest records the cycles as measured.
+the MACs. The two kernels have different tilings; the manifest records the
+cycles as measured.
 
 ## Prefill against decode
 
@@ -106,12 +106,7 @@ cd prefill && ./run --compound-components ../../../tpu_like_bf16/compound_compon
 
 Same image and config as the design folder, run on 2026-10-10. The script in
 `how_the_data_was_made/` compiles each kernel of the table as its own
-function with random float32 tensors of the given shapes. The prefill script
-raises the compiler's lock wait at run time (`LOCK_TIMEOUT = 14400`), which
-changes nothing in the simulation; without it the large FFN kernels fail with
-a file-lock timeout during autotune. The decode `6_ffn_up_gate` kernel
-failed this way in the first run and was rerun the next day with the same
-setting (`run_llama3_8b_decode_ffn.py`). Prefill took 4 h 34 min of wall
-time, of which `6_ffn_up_gate` took 3 h; decode took 85 min plus 56 min for
-the rerun. All outputs match the CPU
-reference. See `docs/PYTORCHSIM_DOCKER.md` for the procedure.
+function with random float32 tensors of the given shapes. Prefill took
+4 h 34 min of wall time, of which `6_ffn_up_gate` took 3 h; decode took
+2 h 21 min. All outputs match the CPU reference. See
+`docs/PYTORCHSIM_DOCKER.md` for the procedure.

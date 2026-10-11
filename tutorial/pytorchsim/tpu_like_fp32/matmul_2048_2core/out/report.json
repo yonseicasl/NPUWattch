@@ -1,8 +1,8 @@
 {
  "schema": "npuwattch-report/1",
  "design_name": "matmul_2048_2core",
- "timestamp": "2026-10-11 16:35:49",
- "version": "0.9",
+ "timestamp": "2026-10-12 00:48:15",
+ "version": "1.0",
  "git_commit": "n/a",
  "tech": {
   "node": "7nm",
@@ -15,7 +15,7 @@
   "frequency_MHz": 940.0
  },
  "activity_source": "pytorchsim harness (simulator logs)",
- "model_tag": "PARTIAL calibration",
+ "model_tag": "calibrated + constant tables",
  "banners": [],
  "totals": {
   "energy_pJ": 47642707427.80584,
@@ -905,7 +905,7 @@
   },
   {
    "name": "dram_chan",
-   "cls": "hbm",
+   "cls": "DRAM",
    "dyn_by_mode": {
     "activate": 691669008.0,
     "read": 2335388467.2,
@@ -1085,7 +1085,7 @@
      {
       "name": "dram_chan",
       "count": 32,
-      "label": "class: hbm"
+      "label": "class: DRAM"
      }
     ]
    }
@@ -1093,7 +1093,7 @@
  },
  "provenance": {
   "models": [],
-  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and hbm use cited table constants; a user component uses the values of the user component library.",
+  "model_note": "Calibrated clusters: sram and the logic MLP primitives; d2dlink and DRAM (hbm) use cited table constants; a user component uses the values of the user component library.",
   "inputs": [
    {
     "name": "togsim: togsim_results",
@@ -1121,7 +1121,7 @@
    },
    {
     "name": "user_components.yaml",
-    "sha": "f3121db8680118569d2a288ebe84f0fda8efa6aa3de34ceec318771a78b0d44e"
+    "sha": "6b2480e3a5d013797edbde959be38ae582c7db47a793d013bfd006a466a6c4de"
    }
   ],
   "warnings": [

@@ -231,10 +231,13 @@ register("NW", blocks={
            "primitive has. No action is necessary."),
 
     # -- 73xx vocabulary ------------------------------------------------------
-    7301: (INFO, "{component} ({primitive}): NPUWattch ignores the Accelergy "
-                 "attribute(s) {attributes}.",
-           "These attributes have no NPUWattch attribute with the same "
-           "meaning. They do not change the result. No action is necessary."),
+    7301: (INFO, "{component} ({primitive}): the Accelergy attribute(s) "
+                 "{attributes} have no effect in NPUWattch.",
+           "NPUWattch reads the word width from `width`, the entry count "
+           "from `depth`, and the bank count from `n_banks`. The attributes "
+           "in this message have no NPUWattch attribute with the same "
+           "meaning, so they do not change the result. No action is "
+           "necessary."),
     7302: (WARNING, "{component} ({primitive}): no word width is declared, so "
                     "NPUWattch uses 32 bits.",
            "The description gives no word width for this storage component. "
@@ -273,7 +276,7 @@ register("NW", blocks={
            "declared banks and ports can give. The declared structure cannot "
            "serve this mapping. Declare more banks or more ports. Or change "
            "the bandwidth in the description."),
-    7310: (WARNING, "{component} (hbm): no word width is declared, so "
+    7310: (WARNING, "{component} (DRAM): no word width is declared, so "
                     "NPUWattch charges a 32 B burst per access.",
            "NPUWattch uses a 256-bit (32 B) burst for each DRAM access. The "
            "DRAM energy is correct only for this burst size. Declare the "

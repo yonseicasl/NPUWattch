@@ -381,6 +381,19 @@ def primitive_of(component_class: str) -> str:
     return CLASS_TO_PRIMITIVE.get(key, key)
 
 
+#: The name that the console, the tree, and the report show for a primitive
+#: when it is not the name of the primitive itself. The `hbm` primitive is the
+#: DRAM cost model of every DRAM type (HBM2, LPDDR4, ...), so it shows as DRAM.
+DISPLAY_CLASS: Dict[str, str] = {
+    "hbm": "DRAM",
+}
+
+
+def display_class(primitive: str) -> str:
+    """Return the name shown for a primitive in the console and the report."""
+    return DISPLAY_CLASS.get(str(primitive).lower(), str(primitive))
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
