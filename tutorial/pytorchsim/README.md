@@ -1,7 +1,7 @@
 # PyTorchSim examples
 
 PyTorchSim runs on a TPUv3-like NPU: one core with two 128×128 systolic
-arrays, 128 VPU lanes, a 16 MB VMEM, 16 HBM2 channels, and a BookSim `fly`
+arrays, 128 VPU lanes with 16 MB of scratchpad memory, 16 HBM2 channels, and a BookSim `fly`
 NoC, at 940 MHz. NPUWattch reads each run as is. Every folder has a `./run`
 script and a README.
 
@@ -110,6 +110,5 @@ All runs use the public PyTorchSim Docker image
 `torch.compile` call, so each kernel has its own TOGSim log. The script and
 the run manifest of each workload are in its `how_the_data_was_made/`
 folder; `docs/PYTORCHSIM_DOCKER.md` in the repository describes the
-procedure. We made two changes to the simulator output for the tutorial: we
-added the `core_spad_size_kb` line to each `config.yml`, and we kept only the
-kernel `.mlir` file of each `outputs/<hash>/` directory.
+procedure. We made one change to the simulator output for the tutorial: we
+kept only the kernel `.mlir` file of each `outputs/<hash>/` directory.

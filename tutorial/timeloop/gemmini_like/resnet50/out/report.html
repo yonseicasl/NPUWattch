@@ -81,7 +81,7 @@
   <!-- 1. Header -->
   <h1>NPUWattch PPA Report — arch</h1>
   <div class="sub">
-    Generated 2026-10-11 14:10:45 · NPUWattch 0.9 (n/a) ·
+    Generated 2026-10-11 16:04:00 · NPUWattch 0.9 (n/a) ·
     node 7nm / hp / TT /
     Vdd+0.00 V / 25.0 °C ·
     clock 1000.0 MHz ·
@@ -93,13 +93,13 @@
   <!-- 2. Summary cards — row 0: efficiency · energy · power,
        row 1: area · f_max · cycles (user layout, 2026-08-12) -->
   <div class="cards">
-    <div class="card kpi"><div class="v">0.994 pJ/FLOP</div>
+    <div class="card kpi"><div class="v">0.965 pJ/FLOP</div>
       <div class="l">Efficiency — 0.253 TFLOP/s over
         this run · MAC = 2 FLOP · includes DRAM ·
         int8 datapath</div></div>
-    <div class="card kpi"><div class="v">1.06e+03 µJ</div>
-      <div class="l">Total energy — dyn 1.05e+03 µJ + leak 7.89 µJ</div></div>
-    <div class="card kpi"><div class="v">252 mW</div>
+    <div class="card kpi"><div class="v">1.03e+03 µJ</div>
+      <div class="l">Total energy — dyn 1.02e+03 µJ + leak 7.89 µJ</div></div>
+    <div class="card kpi"><div class="v">245 mW</div>
       <div class="l">Average power</div></div>
     <div class="card kpi"><div class="v">0.423 mm²</div>
       <div class="l">Total area — modeled components only (no IO/PHY,
@@ -111,16 +111,16 @@
   <!-- 3 & 4. Energy / area breakdowns -->
   <div class="two">
     <div class="card">
-      <h2>Energy breakdown <span class="sub">dynamic 99.3% ·
-        leakage 0.7%</span></h2>
-      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 1 1 25.54 129.25" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.mac: 377 µJ (69.0%)</title></path><path class="slice" d="M 25.54 129.25 A 80.00 80.00 0 0 1 35.55 52.60" fill="none" stroke="#4E7AC0" stroke-width="32.0"><title>system_top_level.gemmini.accumulator: 87.5 µJ (16.0%)</title></path><path class="slice" d="M 35.55 52.60 A 80.00 80.00 0 0 1 82.47 21.94" fill="none" stroke="#C27200" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.psum_reg: 62.1 µJ (11.4%)</title></path><path class="slice" d="M 82.47 21.94 A 80.00 80.00 0 0 1 93.32 20.28" fill="none" stroke="#B5484D" stroke-width="32.0"><title>system_top_level.gemmini.scratchpad: 11.9 µJ (2.2%)</title></path><path class="slice" d="M 93.32 20.28 A 80.00 80.00 0 0 1 96.90 20.06" fill="none" stroke="#118476" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.input_reg: 3.89 µJ (0.7%)</title></path><path class="slice" d="M 96.90 20.06 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A6ED1" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.weight_reg: 3.37 µJ (0.6%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">545 µJ</text></svg></div>
-      <div class="chart"><svg viewBox="0 0 560 132" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#6E59B5"/><text x="16" y="14" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="4" width="250.0" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">377 µJ · 69.0%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#4E7AC0"/><text x="16" y="36" font-size="11" fill="#1c1c1c">system_top_level.gemmini.a</text><rect x="190" y="26" width="58.1" height="12" fill="#4E7AC0" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">87.5 µJ · 16.0%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#C27200"/><text x="16" y="58" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="48" width="41.2" height="12" fill="#C27200" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">62.1 µJ · 11.4%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#B5484D"/><text x="16" y="80" font-size="11" fill="#1c1c1c">system_top_level.gemmini.s</text><rect x="190" y="70" width="7.9" height="12" fill="#B5484D" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">11.9 µJ · 2.2%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#118476"/><text x="16" y="102" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="92" width="2.6" height="12" fill="#118476" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">3.89 µJ · 0.7%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#8A6ED1"/><text x="16" y="124" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="114" width="2.2" height="12" fill="#8A6ED1" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">3.37 µJ · 0.6%</text></g></svg></div>
+      <h2>Energy breakdown <span class="sub">dynamic 99.2% ·
+        leakage 0.8%</span></h2>
+      <div class="chart donut"><svg viewBox="0 0 200 200" role="img" aria-label="per-component breakdown donut" style="max-width:200px"><path class="slice" d="M 100.00 20.00 A 80.00 80.00 0 1 1 20.54 109.31" fill="none" stroke="#6E59B5" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.mac: 377 µJ (73.1%)</title></path><path class="slice" d="M 20.54 109.31 A 80.00 80.00 0 0 1 53.57 34.85" fill="none" stroke="#4E7AC0" stroke-width="32.0"><title>system_top_level.gemmini.accumulator: 87.5 µJ (17.0%)</title></path><path class="slice" d="M 53.57 34.85 A 80.00 80.00 0 0 1 81.45 22.18" fill="none" stroke="#C27200" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.psum_reg: 31.5 µJ (6.1%)</title></path><path class="slice" d="M 81.45 22.18 A 80.00 80.00 0 0 1 92.92 20.31" fill="none" stroke="#B5484D" stroke-width="32.0"><title>system_top_level.gemmini.scratchpad: 11.9 µJ (2.3%)</title></path><path class="slice" d="M 92.92 20.31 A 80.00 80.00 0 0 1 96.71 20.07" fill="none" stroke="#118476" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.input_reg: 3.89 µJ (0.8%)</title></path><path class="slice" d="M 96.71 20.07 A 80.00 80.00 0 0 1 100.00 20.00" fill="none" stroke="#8A6ED1" stroke-width="32.0"><title>system_top_level.gemmini.PE_column.PE.weight_reg: 3.37 µJ (0.7%)</title></path><text x="100.0" y="104.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1c1c">515 µJ</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 132" role="img" aria-label="per-component bar list"><g class="bar-row"><rect x="0" y="5" width="10" height="10" fill="#6E59B5"/><text x="16" y="14" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="4" width="250.0" height="12" fill="#6E59B5" opacity="0.85"/><text x="560" y="14" font-size="11" fill="#6b6b6b" text-anchor="end">377 µJ · 73.1%</text></g><g class="bar-row"><rect x="0" y="27" width="10" height="10" fill="#4E7AC0"/><text x="16" y="36" font-size="11" fill="#1c1c1c">system_top_level.gemmini.a</text><rect x="190" y="26" width="58.1" height="12" fill="#4E7AC0" opacity="0.85"/><text x="560" y="36" font-size="11" fill="#6b6b6b" text-anchor="end">87.5 µJ · 17.0%</text></g><g class="bar-row"><rect x="0" y="49" width="10" height="10" fill="#C27200"/><text x="16" y="58" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="48" width="20.9" height="12" fill="#C27200" opacity="0.85"/><text x="560" y="58" font-size="11" fill="#6b6b6b" text-anchor="end">31.5 µJ · 6.1%</text></g><g class="bar-row"><rect x="0" y="71" width="10" height="10" fill="#B5484D"/><text x="16" y="80" font-size="11" fill="#1c1c1c">system_top_level.gemmini.s</text><rect x="190" y="70" width="7.9" height="12" fill="#B5484D" opacity="0.85"/><text x="560" y="80" font-size="11" fill="#6b6b6b" text-anchor="end">11.9 µJ · 2.3%</text></g><g class="bar-row"><rect x="0" y="93" width="10" height="10" fill="#118476"/><text x="16" y="102" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="92" width="2.6" height="12" fill="#118476" opacity="0.85"/><text x="560" y="102" font-size="11" fill="#6b6b6b" text-anchor="end">3.89 µJ · 0.8%</text></g><g class="bar-row"><rect x="0" y="115" width="10" height="10" fill="#8A6ED1"/><text x="16" y="124" font-size="11" fill="#1c1c1c">system_top_level.gemmini.P</text><rect x="190" y="114" width="2.2" height="12" fill="#8A6ED1" opacity="0.85"/><text x="560" y="124" font-size="11" fill="#6b6b6b" text-anchor="end">3.37 µJ · 0.7%</text></g></svg></div>
       <div class="chart-spacer"></div>
-      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="NPU vs DRAM energy share"><rect class="seg-a" x="0" y="0" width="289.2" height="20" fill="#3b6ea5"><title>NPU (on-chip) 545 µJ (51.7%)</title></rect><rect class="seg-b" x="289.2" y="0" width="270.8" height="20" fill="#948C22"><title>DRAM 510 µJ (48.3%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">NPU (on-chip) 545 µJ · 51.7%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">DRAM 510 µJ · 48.3%</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="NPU vs DRAM energy share"><rect class="seg-a" x="0" y="0" width="281.2" height="20" fill="#3b6ea5"><title>NPU (on-chip) 515 µJ (50.2%)</title></rect><rect class="seg-b" x="281.2" y="0" width="278.8" height="20" fill="#948C22"><title>DRAM 510 µJ (49.8%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">NPU (on-chip) 515 µJ · 50.2%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">DRAM 510 µJ · 49.8%</text></svg></div>
       <div class="sub">DRAM device energy sits on its own bar (details in the
         DRAM section below); the donut and list cover the on-chip (NPU)
         components only.</div>
-      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="dynamic vs leakage energy split"><rect class="seg-dyn" x="0" y="0" width="555.8" height="20" fill="#3b6ea5"><title>dynamic 1.05e+03 µJ (99.3%)</title></rect><rect class="seg-leak" x="555.8" y="0" width="4.2" height="20" fill="#8A97A0"><title>leakage 7.89 µJ (0.7%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">dynamic 99.3%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">leakage 0.7%</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 560 38" role="img" aria-label="dynamic vs leakage energy split"><rect class="seg-dyn" x="0" y="0" width="555.7" height="20" fill="#3b6ea5"><title>dynamic 1.02e+03 µJ (99.2%)</title></rect><rect class="seg-leak" x="555.7" y="0" width="4.3" height="20" fill="#8A97A0"><title>leakage 7.89 µJ (0.8%)</title></rect><text x="0" y="33" font-size="11" fill="#6b6b6b">dynamic 99.2%</text><text x="560" y="33" font-size="11" fill="#6b6b6b" text-anchor="end">leakage 0.8%</text></svg></div>
     </div>
     <div class="card">
       <h2>Area breakdown</h2>
@@ -132,7 +132,7 @@
   <!-- 4b. DRAM device energy (per-command split of the hbm components) -->
   <div class="card">
     <h2>DRAM device energy <span class="sub">system_top_level.DRAM
-      · 510 µJ (48.3% of run total)</span></h2>
+      · 510 µJ (49.8% of run total)</span></h2>
     <div class="tblwrap"><table>
       <thead><tr><th>Command</th><th>Energy</th><th>Share</th></tr></thead>
       <tbody>
@@ -154,36 +154,36 @@
   <!-- 5. Cycle-level energy -->
   <div class="card">
     <h2>Cycle-level energy</h2>
-      <div class="chart"><svg viewBox="0 0 960 306" role="img" aria-label="energy and power per kernel window over cycles"><line x1="72" x2="884" y1="236.0" y2="236.0" stroke="#e3e1dc"/><text x="64" y="240.0" text-anchor="end" font-size="10" fill="#3b6ea5">0 pJ</text><text x="892" y="240.0" font-size="10" fill="#C27200">0 mW</text><line x1="72" x2="884" y1="180.5" y2="180.5" stroke="#e3e1dc"/><text x="64" y="184.5" text-anchor="end" font-size="10" fill="#3b6ea5">73.5 µJ</text><text x="892" y="184.5" font-size="10" fill="#C27200">328 mW</text><line x1="72" x2="884" y1="125.0" y2="125.0" stroke="#e3e1dc"/><text x="64" y="129.0" text-anchor="end" font-size="10" fill="#3b6ea5">147 µJ</text><text x="892" y="129.0" font-size="10" fill="#C27200">655 mW</text><line x1="72" x2="884" y1="69.5" y2="69.5" stroke="#e3e1dc"/><text x="64" y="73.5" text-anchor="end" font-size="10" fill="#3b6ea5">220 µJ</text><text x="892" y="73.5" font-size="10" fill="#C27200">983 mW</text><line x1="72" x2="884" y1="14.0" y2="14.0" stroke="#e3e1dc"/><text x="64" y="18.0" text-anchor="end" font-size="10" fill="#3b6ea5">294 µJ</text><text x="892" y="18.0" font-size="10" fill="#C27200">1.31 W</text><rect class="w-dyn" x="72.0" y="74.4" width="463.9" height="161.6" fill="#3b6ea5"><title>01_conv1: dynamic 214 µJ</title></rect><rect class="w-leak" x="72.0" y="71.0" width="463.9" height="3.5" fill="#8A97A0" opacity="0.6"><title>01_conv1: leakage 4.63 µJ</title></rect><rect class="w-dyn" x="538.9" y="207.5" width="9.5" height="28.5" fill="#3b6ea5"><title>02_res2_1x1: dynamic 37.7 µJ</title></rect><rect class="w-leak" x="538.9" y="207.5" width="9.5" height="0.1" fill="#8A97A0" opacity="0.6"><title>02_res2_1x1: leakage 94.4 nJ</title></rect><rect class="w-dyn" x="551.3" y="121.9" width="85.2" height="114.1" fill="#3b6ea5"><title>03_res2_3x3: dynamic 151 µJ</title></rect><rect class="w-leak" x="551.3" y="121.3" width="85.2" height="0.6" fill="#8A97A0" opacity="0.6"><title>03_res2_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="639.6" y="111.9" width="85.2" height="124.1" fill="#3b6ea5"><title>04_res3_3x3: dynamic 164 µJ</title></rect><rect class="w-leak" x="639.6" y="111.3" width="85.2" height="0.6" fill="#8A97A0" opacity="0.6"><title>04_res3_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="727.8" y="175.3" width="37.9" height="60.7" fill="#3b6ea5"><title>05_res4_1x1_exp: dynamic 80.4 µJ</title></rect><rect class="w-leak" x="727.8" y="175.0" width="37.9" height="0.3" fill="#8A97A0" opacity="0.6"><title>05_res4_1x1_exp: leakage 378 nJ</title></rect><rect class="w-dyn" x="768.6" y="34.8" width="85.2" height="201.2" fill="#3b6ea5"><title>06_res5_3x3: dynamic 266 µJ</title></rect><rect class="w-leak" x="768.6" y="34.2" width="85.2" height="0.6" fill="#8A97A0" opacity="0.6"><title>06_res5_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="856.8" y="134.8" width="24.2" height="101.2" fill="#3b6ea5"><title>07_fc: dynamic 134 µJ</title></rect><rect class="w-leak" x="856.8" y="134.6" width="24.2" height="0.2" fill="#8A97A0" opacity="0.6"><title>07_fc: leakage 241 nJ</title></rect><line class="w-leader" x1="594.0" x2="594.0" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="868.9" x2="868.9" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><rect x="272.2" y="242" width="63.4" height="24" fill="#fff"/><text x="303.9" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">01_conv1</text><text x="303.9" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">2458624 cyc</text><rect x="517.3" y="242" width="52.6" height="24" fill="#fff"/><text x="543.6" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">02_res2_</text><text x="543.6" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">50176 cyc</text><rect x="565.0" y="268" width="58.0" height="24" fill="#fff"/><text x="594.0" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">03_res2_</text><text x="594.0" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="653.2" y="242" width="58.0" height="24" fill="#fff"/><text x="682.2" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">04_res3_</text><text x="682.2" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="717.7" y="242" width="58.0" height="24" fill="#fff"/><text x="746.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">05_res4_</text><text x="746.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">200704 cyc</text><rect x="782.2" y="242" width="58.0" height="24" fill="#fff"/><text x="811.2" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">06_res5_</text><text x="811.2" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="839.9" y="268" width="58.0" height="24" fill="#fff"/><text x="868.9" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">07_fc</text><text x="868.9" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">128128 cyc</text><polyline class="p-line" points="303.9,220.9 543.6,108.5 594.0,179.0 682.2,174.0 746.7,167.8 811.2,135.7 868.9,58.4" fill="none" stroke="#C27200" stroke-width="2"/><circle cx="303.9" cy="220.9" r="3" fill="#C27200"/><circle cx="543.6" cy="108.5" r="3" fill="#C27200"/><circle cx="594.0" cy="179.0" r="3" fill="#C27200"/><circle cx="682.2" cy="174.0" r="3" fill="#C27200"/><circle cx="746.7" cy="167.8" r="3" fill="#C27200"/><circle cx="811.2" cy="135.7" r="3" fill="#C27200"/><circle cx="868.9" cy="58.4" r="3" fill="#C27200"/><line x1="72" x2="884" y1="236" y2="236" stroke="#6b6b6b"/><text x="72" y="304" font-size="10" fill="#6b6b6b"><tspan fill="#3b6ea5">bars: window energy (dyn + leak)</tspan>&#160;·&#160;<tspan fill="#C27200">line: average power</tspan>&#160;·&#160;bar width ∝ cycles</text></svg></div>
+      <div class="chart"><svg viewBox="0 0 960 306" role="img" aria-label="energy and power per kernel window over cycles"><line x1="72" x2="884" y1="236.0" y2="236.0" stroke="#e3e1dc"/><text x="64" y="240.0" text-anchor="end" font-size="10" fill="#3b6ea5">0 pJ</text><text x="892" y="240.0" font-size="10" fill="#C27200">0 mW</text><line x1="72" x2="884" y1="180.5" y2="180.5" stroke="#e3e1dc"/><text x="64" y="184.5" text-anchor="end" font-size="10" fill="#3b6ea5">71.6 µJ</text><text x="892" y="184.5" font-size="10" fill="#C27200">327 mW</text><line x1="72" x2="884" y1="125.0" y2="125.0" stroke="#e3e1dc"/><text x="64" y="129.0" text-anchor="end" font-size="10" fill="#3b6ea5">143 µJ</text><text x="892" y="129.0" font-size="10" fill="#C27200">655 mW</text><line x1="72" x2="884" y1="69.5" y2="69.5" stroke="#e3e1dc"/><text x="64" y="73.5" text-anchor="end" font-size="10" fill="#3b6ea5">215 µJ</text><text x="892" y="73.5" font-size="10" fill="#C27200">982 mW</text><line x1="72" x2="884" y1="14.0" y2="14.0" stroke="#e3e1dc"/><text x="64" y="18.0" text-anchor="end" font-size="10" fill="#3b6ea5">287 µJ</text><text x="892" y="18.0" font-size="10" fill="#C27200">1.31 W</text><rect class="w-dyn" x="72.0" y="75.5" width="463.9" height="160.5" fill="#3b6ea5"><title>01_conv1: dynamic 207 µJ</title></rect><rect class="w-leak" x="72.0" y="71.9" width="463.9" height="3.6" fill="#8A97A0" opacity="0.6"><title>01_conv1: leakage 4.63 µJ</title></rect><rect class="w-dyn" x="538.9" y="207.2" width="9.5" height="28.8" fill="#3b6ea5"><title>02_res2_1x1: dynamic 37.1 µJ</title></rect><rect class="w-leak" x="538.9" y="207.2" width="9.5" height="0.1" fill="#8A97A0" opacity="0.6"><title>02_res2_1x1: leakage 94.4 nJ</title></rect><rect class="w-dyn" x="551.3" y="124.1" width="85.2" height="111.9" fill="#3b6ea5"><title>03_res2_3x3: dynamic 144 µJ</title></rect><rect class="w-leak" x="551.3" y="123.4" width="85.2" height="0.7" fill="#8A97A0" opacity="0.6"><title>03_res2_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="639.6" y="113.9" width="85.2" height="122.1" fill="#3b6ea5"><title>04_res3_3x3: dynamic 158 µJ</title></rect><rect class="w-leak" x="639.6" y="113.3" width="85.2" height="0.7" fill="#8A97A0" opacity="0.6"><title>04_res3_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="727.8" y="175.9" width="37.9" height="60.1" fill="#3b6ea5"><title>05_res4_1x1_exp: dynamic 77.6 µJ</title></rect><rect class="w-leak" x="727.8" y="175.6" width="37.9" height="0.3" fill="#8A97A0" opacity="0.6"><title>05_res4_1x1_exp: leakage 378 nJ</title></rect><rect class="w-dyn" x="768.6" y="34.8" width="85.2" height="201.2" fill="#3b6ea5"><title>06_res5_3x3: dynamic 260 µJ</title></rect><rect class="w-leak" x="768.6" y="34.2" width="85.2" height="0.7" fill="#8A97A0" opacity="0.6"><title>06_res5_3x3: leakage 850 nJ</title></rect><rect class="w-dyn" x="856.8" y="132.2" width="24.2" height="103.8" fill="#3b6ea5"><title>07_fc: dynamic 134 µJ</title></rect><rect class="w-leak" x="856.8" y="132.0" width="24.2" height="0.2" fill="#8A97A0" opacity="0.6"><title>07_fc: leakage 241 nJ</title></rect><line class="w-leader" x1="594.0" x2="594.0" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><line class="w-leader" x1="868.9" x2="868.9" y1="236" y2="268" stroke="#6b6b6b" stroke-width="0.8" opacity="0.7"/><rect x="272.2" y="242" width="63.4" height="24" fill="#fff"/><text x="303.9" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">01_conv1</text><text x="303.9" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">2458624 cyc</text><rect x="517.3" y="242" width="52.6" height="24" fill="#fff"/><text x="543.6" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">02_res2_</text><text x="543.6" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">50176 cyc</text><rect x="565.0" y="268" width="58.0" height="24" fill="#fff"/><text x="594.0" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">03_res2_</text><text x="594.0" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="653.2" y="242" width="58.0" height="24" fill="#fff"/><text x="682.2" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">04_res3_</text><text x="682.2" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="717.7" y="242" width="58.0" height="24" fill="#fff"/><text x="746.7" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">05_res4_</text><text x="746.7" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">200704 cyc</text><rect x="782.2" y="242" width="58.0" height="24" fill="#fff"/><text x="811.2" y="251" text-anchor="middle" font-size="10" fill="#6b6b6b">06_res5_</text><text x="811.2" y="264" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">451584 cyc</text><rect x="839.9" y="268" width="58.0" height="24" fill="#fff"/><text x="868.9" y="277" text-anchor="middle" font-size="10" fill="#6b6b6b">07_fc</text><text x="868.9" y="290" text-anchor="middle" font-size="9" fill="#6b6b6b" opacity="0.8">128128 cyc</text><polyline class="p-line" points="303.9,221.4 543.6,110.3 594.0,181.4 682.2,176.5 746.7,170.2 811.2,138.2 868.9,58.4" fill="none" stroke="#C27200" stroke-width="2"/><circle cx="303.9" cy="221.4" r="3" fill="#C27200"/><circle cx="543.6" cy="110.3" r="3" fill="#C27200"/><circle cx="594.0" cy="181.4" r="3" fill="#C27200"/><circle cx="682.2" cy="176.5" r="3" fill="#C27200"/><circle cx="746.7" cy="170.2" r="3" fill="#C27200"/><circle cx="811.2" cy="138.2" r="3" fill="#C27200"/><circle cx="868.9" cy="58.4" r="3" fill="#C27200"/><line x1="72" x2="884" y1="236" y2="236" stroke="#6b6b6b"/><text x="72" y="304" font-size="10" fill="#6b6b6b"><tspan fill="#3b6ea5">bars: window energy (dyn + leak)</tspan>&#160;·&#160;<tspan fill="#C27200">line: average power</tspan>&#160;·&#160;bar width ∝ cycles</text></svg></div>
       <div class="tblwrap"><table>
         <thead><tr><th>#</th><th>Kernel</th><th>Cycles</th>
           <th>Dynamic</th><th>Leakage</th><th>Total</th><th>Avg power</th></tr></thead>
         <tbody>
           <tr><td>0</td><td><code>01_conv1</code></td>
-            <td>2458624</td><td>214 µJ</td><td>4.63 µJ</td>
-            <td>219 µJ</td><td>88.9 mW</td></tr>
+            <td>2458624</td><td>207 µJ</td><td>4.63 µJ</td>
+            <td>212 µJ</td><td>86.1 mW</td></tr>
           <tr><td>1</td><td><code>02_res2_1x1</code></td>
-            <td>50176</td><td>37.7 µJ</td><td>94.4 nJ</td>
-            <td>37.8 µJ</td><td>753 mW</td></tr>
+            <td>50176</td><td>37.1 µJ</td><td>94.4 nJ</td>
+            <td>37.2 µJ</td><td>741 mW</td></tr>
           <tr><td>2</td><td><code>03_res2_3x3</code></td>
-            <td>451584</td><td>151 µJ</td><td>850 nJ</td>
-            <td>152 µJ</td><td>336 mW</td></tr>
+            <td>451584</td><td>144 µJ</td><td>850 nJ</td>
+            <td>145 µJ</td><td>322 mW</td></tr>
           <tr><td>3</td><td><code>04_res3_3x3</code></td>
-            <td>451584</td><td>164 µJ</td><td>850 nJ</td>
-            <td>165 µJ</td><td>366 mW</td></tr>
+            <td>451584</td><td>158 µJ</td><td>850 nJ</td>
+            <td>158 µJ</td><td>351 mW</td></tr>
           <tr><td>4</td><td><code>05_res4_1x1_exp</code></td>
-            <td>200704</td><td>80.4 µJ</td><td>378 nJ</td>
-            <td>80.8 µJ</td><td>403 mW</td></tr>
+            <td>200704</td><td>77.6 µJ</td><td>378 nJ</td>
+            <td>77.9 µJ</td><td>388 mW</td></tr>
           <tr><td>5</td><td><code>06_res5_3x3</code></td>
-            <td>451584</td><td>266 µJ</td><td>850 nJ</td>
-            <td>267 µJ</td><td>592 mW</td></tr>
+            <td>451584</td><td>260 µJ</td><td>850 nJ</td>
+            <td>260 µJ</td><td>577 mW</td></tr>
           <tr><td>6</td><td><code>07_fc</code></td>
             <td>128128</td><td>134 µJ</td><td>241 nJ</td>
             <td>134 µJ</td><td>1.05 W</td></tr>
         </tbody>
         <tfoot><tr><td colspan="2">Run total</td><td>4192384</td>
-          <td>1.05e+03 µJ</td><td>7.89 µJ</td>
-          <td>1.06e+03 µJ</td><td>252 mW</td></tr></tfoot>
+          <td>1.02e+03 µJ</td><td>7.89 µJ</td>
+          <td>1.03e+03 µJ</td><td>245 mW</td></tr></tfoot>
       </table></div>
       <h2 style="margin-top:18px">Per-window component energy
         <span class="sub">dynamic energy per window; leakage-only components omitted</span></h2>
@@ -202,7 +202,7 @@
           <tr><td><code>system_top_level.gemmini.PE_column.PE.input_reg</code></td>
 <td>862 nJ</td><td>93.8 nJ</td><td>844 nJ</td><td>844 nJ</td><td>375 nJ</td><td>844 nJ</td><td>29.9 pJ</td></tr>
           <tr><td><code>system_top_level.gemmini.PE_column.PE.psum_reg</code></td>
-<td>13.8 µJ</td><td>1.33 µJ</td><td>13.5 µJ</td><td>13.6 µJ</td><td>5.89 µJ</td><td>13.6 µJ</td><td>241 nJ</td></tr>
+<td>6.98 µJ</td><td>760 nJ</td><td>6.84 µJ</td><td>6.84 µJ</td><td>3.04 µJ</td><td>6.84 µJ</td><td>121 nJ</td></tr>
           <tr><td><code>system_top_level.gemmini.PE_column.PE.mac</code></td>
 <td>83.6 µJ</td><td>9.1 µJ</td><td>81.9 µJ</td><td>81.9 µJ</td><td>36.4 µJ</td><td>81.9 µJ</td><td>1.45 µJ</td></tr>
         </tbody>
@@ -260,7 +260,7 @@
           <td>n/a</td>
           <td>9.97e+05</td>
           <td>510 µJ</td><td>0 pJ</td>
-          <td>510 µJ</td><td>48.3%</td>
+          <td>510 µJ</td><td>49.8%</td>
         </tr>
         <tr>
           <td><code>system_top_level.gemmini.scratchpad</code>
@@ -272,7 +272,7 @@
           <td>3.19e+05</td>
           <td>1.83e+06</td>
           <td>6.12 µJ</td><td>5.79 µJ</td>
-          <td>11.9 µJ</td><td>1.1%</td>
+          <td>11.9 µJ</td><td>1.2%</td>
         </tr>
         <tr>
           <td><code>system_top_level.gemmini.accumulator</code>
@@ -284,7 +284,7 @@
           <td>7.97e+04</td>
           <td>8.05e+06</td>
           <td>86.1 µJ</td><td>1.45 µJ</td>
-          <td>87.5 µJ</td><td>8.3%</td>
+          <td>87.5 µJ</td><td>8.5%</td>
         </tr>
         <tr>
           <td><code>system_top_level.gemmini.PE_column.PE.weight_reg</code>
@@ -318,9 +318,9 @@
           <td>256</td>
           <td>0 / 0.0591</td><td>0.000131</td>
           <td>15.4</td>
-          <td>1.57e+09</td>
-          <td>62 µJ</td><td>141 nJ</td>
-          <td>62.1 µJ</td><td>5.9%</td>
+          <td>1.05e+09</td>
+          <td>31.4 µJ</td><td>141 nJ</td>
+          <td>31.5 µJ</td><td>3.1%</td>
         </tr>
         <tr>
           <td><code>system_top_level.gemmini.PE_column.PE.mac</code>
@@ -332,7 +332,7 @@
           <td>70.4</td>
           <td>5.31e+08</td>
           <td>376 µJ</td><td>417 nJ</td>
-          <td>377 µJ</td><td>35.7%</td>
+          <td>377 µJ</td><td>36.7%</td>
         </tr>
       </tbody>
     </table></div>
@@ -361,7 +361,7 @@
           <td>INFO</td><td><details class="why"><summary>Clock gating is assumed: idle cycles of 4 logic component(s) cost leakage only.</summary>NPUWattch assumes that each block is clock-gated, thus an idle cycle costs no dynamic energy. A register-file or FIFO access costs its mode energy minus the idle energy, because a gated array clocks only the accessed row. A datapath event is one active cycle and costs its full energy. To model a block without clock gating, set clock_gating: false on its component.</details></td><td>1</td></tr>
       </table></div></details>
     <details><summary style="cursor:pointer;font-size:13px">
-      17 declared exclusions and notes (INFO —
+      18 declared exclusions and notes (INFO —
       deliberate, not modeling gaps)</summary>
       <div class="tblwrap"><table class="msgs">
         <tr><th>code</th><th>level</th><th>message</th><th>count</th></tr>
@@ -397,6 +397,8 @@
           <td>INFO</td><td><details class="why"><summary>User component &#39;example_68000_cpu_core&#39; (user_components.yaml) is in the library, but the run does not use it.</summary>No component of the run has this class. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7101</code></td>
           <td>INFO</td><td><details class="why"><summary>Compound component &#39;counter&#39; (compound_components.yaml) is parsed, but no component uses it.</summary>The compound component file defines this compound component. No component of the description has this class. No action is necessary.</details></td><td>1</td></tr>
+<tr class="lvl-info"><td><code>NW-7224</code></td>
+          <td>INFO</td><td><details class="why"><summary>psum_reg: a one-entry register with 115605504 fills and 118013952 updates is charged 118013952 writes.</summary>Timeloop counts the fill (the incoming partial sum) and the update (the sum after the MAC) of a one-entry register as two writes. The register is written one time in each cycle, so NPUWattch charges the larger of the two counts. A buffer with more than one entry keeps fills + updates. No action is necessary.</details></td><td>1</td></tr>
 <tr class="lvl-info"><td><code>NW-7218</code></td>
           <td>INFO</td><td><details class="why"><summary>Timeloop stats: 7 file(s), 4192384 cycles, 7/7 description components charged (windows mode).</summary>NPUWattch charges the compute components in the weight-stationary mode. The Timeloop Computes count becomes the hold_b action.</details></td><td>1</td></tr>
       </table></div></details>

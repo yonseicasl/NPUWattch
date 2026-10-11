@@ -80,7 +80,7 @@ out_of_scope:
     open HBM power tool exists), so the dram compound charges command energies
     only (activate / read / write / refresh, constants cited from O'Connor &
     Chatterjee et al., MICRO 2017); the on-chip consequences of DRAM traffic
-    (VMEM fills/drains, DMA engine, NoC flits) are charged by their own
+    (scratchpad fills/drains, DMA engine, NoC flits) are charged by their own
     compounds
 
 # Planned integrations of external power models that are not implemented.
@@ -114,7 +114,7 @@ compounds:
     CustomMatMulwVpush:               # weight load (push of a new weight)
       count_from:
         stat: CustomMatMulwVpush
-        scale: lanes
+        scale: "lanes*vector_elems"   # one push = one vector register of each lane
       elements:
         pe: idle                      # the PE does not compute during a load (clock-gated)
         w_reg: write                  # the weight-register write = weight-load energy
@@ -128,37 +128,39 @@ compounds:
   # An action charges only the element that it names. A scratchpad that an
   # action does not use is clock-gated, and §6 charges only its leakage.
   # First-order traffic model (the emitter gives a warning):
-  #   VMEM fills from DRAM and drains back to DRAM.
-  #     DRAM read bytes  ~ VMEM writes
-  #     DRAM write bytes ~ VMEM reads
+  #   The DMA fills the lane scratchpads from DRAM and drains them to DRAM.
+  #     DRAM read bytes  ~ scratchpad writes
+  #     DRAM write bytes ~ scratchpad reads
   #     (bytes = request count x dram_req_size_byte)
-  #   One iVpush or vpop instruction moves one vector through the VPU
-  #   scratchpad of each lane. The vector has `lanes` elements of the operand
-  #   dtype.
+  #   One iVpush or vpop instruction moves one vector register of each lane
+  #   through the lane scratchpad: `lanes x vector_elems` elements of the
+  #   operand dtype (vector_elems = vpu_vector_length_bits / bitwidth).
   # `unit` converts a stat count into words of the capacity-resolved macro:
   #   bytes:    bytes / word bytes
   #   vectors:  vectors x lanes x bitwidth / word bits
+  #             (`scale: vector_elems` gives the register width)
 
   spads:
 
-    vmem_fill:                        # DRAM -> VMEM (MOVIN traffic)
+    spad_fill:                        # DRAM -> lane scratchpads (MOVIN traffic)
       count_from:
         stat: dram_read_bytes
         unit: bytes
       elements:
-        vmem: write
+        vpu_spad: write
 
-    vmem_drain:                       # VMEM -> DRAM (MOVOUT traffic)
+    spad_drain:                       # lane scratchpads -> DRAM (MOVOUT traffic)
       count_from:
         stat: dram_write_bytes
         unit: bytes
       elements:
-        vmem: read
+        vpu_spad: read
 
     input_push:                       # read of the activations from the lane scratchpad
       count_from:
         stat: CustomMatMuliVpush
         unit: vectors
+        scale: vector_elems           # one push = one vector register of each lane
       elements:
         vpu_spad: read
 
@@ -166,6 +168,7 @@ compounds:
       count_from:
         stat: CustomMatMulvpop
         unit: vectors
+        scale: vector_elems           # one pop = one vector register of each lane
       elements:
         vpu_spad: write
 
@@ -211,7 +214,7 @@ compounds:
   # dram_requests = [DRAM] reads + writes (activity.read_run). The DMA response
   # counters of each core in the log give the exact split between cores
   # (instances.py).
-  # The vmem traffic and the NoC flits already charge the energy of the moved
+  # The scratchpad traffic and the NoC flits already charge the energy of the moved
   # data. This compound charges only the engine datapath.
 
   dma:
@@ -226,10 +229,12 @@ compounds:
   # --------------------------------------------------------------------------
   # fpsfu (SFU of one core, docs/DESIGN_SFU_DMA.md §2)
   # --------------------------------------------------------------------------
-  # One committed CustomV* instruction is one vector of `lanes` elements. Thus
-  # it is one operation on each of the `lanes` pipes of the SFU:
-  #   events = count × lanes
-  # CustomMatMulwVpush uses the same scale.
+  # One committed CustomV* instruction works on one vector register group in
+  # each of the `lanes` lanes. The harness reads the group width from the
+  # vector type of the math operation in the kernel MLIR (sfu_vector_elems,
+  # message NW-6225). Thus:
+  #   events = count × lanes × sfu_vector_elems
+  # CustomMatMulwVpush uses `lanes × vector_elems` (one vector register).
   # Each gem5 class maps to the stim_mode of the operation group that does it.
   # `CustomVlaneIdx` generates lane indexes and is not an SFU operation. The
   # reader does not collect it.
@@ -237,27 +242,27 @@ compounds:
   fpsfu:
 
     vexp:
-      count_from: { stat: CustomVexp, scale: lanes }
+      count_from: { stat: CustomVexp, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: exp }
 
     vexp2:
-      count_from: { stat: CustomVexp2, scale: lanes }
+      count_from: { stat: CustomVexp2, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: exp }
 
     verf:
-      count_from: { stat: CustomVerf, scale: lanes }
+      count_from: { stat: CustomVerf, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: erf }
 
     vtanh:
-      count_from: { stat: CustomVtanh, scale: lanes }
+      count_from: { stat: CustomVtanh, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: hyp }
 
     vsin:
-      count_from: { stat: CustomVsin, scale: lanes }
+      count_from: { stat: CustomVsin, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: trig }
 
     vcos:
-      count_from: { stat: CustomVcos, scale: lanes }
+      count_from: { stat: CustomVcos, scale: "lanes*sfu_vector_elems" }
       elements: { sfu_pipe: trig }
 
   # --------------------------------------------------------------------------

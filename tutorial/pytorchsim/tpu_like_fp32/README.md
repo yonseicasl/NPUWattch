@@ -4,7 +4,7 @@ This folder is the hardware model. The three definition files describe the
 machine for NPUWattch; every workload folder below is one PyTorchSim run on
 it. The simulator's own configuration (`config.yml` and the log header of
 each run) gives the shape of the machine: one core with two 128×128 systolic
-arrays, 128 VPU lanes, a 16 MB VMEM, 16 HBM2 channels, and a BookSim `fly`
+arrays, 128 VPU lanes with 16 MB of scratchpad memory, 16 HBM2 channels, and a BookSim `fly`
 NoC at 940 MHz.
 
 ```
@@ -45,7 +45,7 @@ same design with the PE fixed to a bf16 MAC.
 
 | File | What it is |
 | --- | --- |
-| `compound_components.yaml` | The compounds: `systolic_mac` (PE + weight register, `lanes×lanes` instances), `vpu` (register file + FPU per lane), `spads` (VMEM and the lane scratchpads, by capacity), `dma`, `fpsfu`, `noc`, `dram`. Element configs use the keys of the run configuration as symbols |
+| `compound_components.yaml` | The compounds: `systolic_mac` (PE + weight register, `lanes×lanes` instances), `vpu` (register file + FPU per lane), `spads` (the lane scratchpads, by capacity), `dma`, `fpsfu`, `noc`, `dram`. Element configs use the keys of the run configuration as symbols |
 | `projection.yaml` | Which counter drives which element in which mode. The systolic array is charged per useful MAC (`useful_macs`), and the active PE cycles without a real weight in the idle mode (`array_idle_slots`). The gem5 instruction counts (pushes, pops, SFU operations) drive the registers, scratchpads, and SFU |
 | `user_components.yaml` | One example entry that no workload uses. It shows the format for a block with your own numbers |
 

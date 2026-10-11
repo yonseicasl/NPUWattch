@@ -49,34 +49,22 @@ simulator's own configuration.
 | **`booksim2_config/`** | The NoC network file. It's only needed for `anynet` topologies. This run uses `fly`, which the log describes completely |
 
 The rebuilt machine is what `--tree` prints: 2 × 16 384 fp32 MACs with their
-weight registers, a 16 MB VMEM, 128 VPU lanes (each with a scratchpad,
-register file, FPU, and SFU), a DMA queue and address adder, a 32×32 NoC
+weight registers, 128 VPU lanes (each with a 128 KB scratchpad, together the
+16 MB scratchpad memory of the core, a register file, an FPU, and an SFU), a
+DMA queue and address adder, a 32×32 NoC
 crossbar with its buffers, and 16 HBM channels.
-
-## About `core_spad_size_kb`
-
-We added the last line of `config.yml`:
-
-```yaml
-core_spad_size_kb: 16384
-```
-
-PyTorchSim doesn't use this key, but NPUWattch needs it to size the VMEM SRAM.
-Without it, NPUWattch skips the VMEM component and prints warning NW-6006.
-TPUv2, v3, and v4 all have 16 MB of VMEM, so the value is 16384 KB. The rest
-of `config.yml` is exactly what the simulator ran with.
 
 ## Messages you'll see, and why
 
 Each message line has the format `LEVEL (NW-nnnn): text`. To read more
 about a message, run `npuwattch --explain NW-nnnn`.
 
-The run prints five warnings. Each one tells you what NPUWattch assumed or
+The run prints four warnings. Each one tells you what NPUWattch assumed or
 extrapolated. None of them stops the run.
 
-- `WARNING (NW-8212): vmem: The SRAM of 134217728 bits uses the macro
-  templates 512x sram_256k in banks of at most 16 macros (utilization
-  100.0%).` The same warning occurs for vpu_spad and icnt_buf. The config
+- `WARNING (NW-8212): vpu_spad: The SRAM of 1048576 bits uses the macro
+  templates 4x sram_256k in banks of at most 16 macros (utilization
+  100.0%).` The same warning occurs for icnt_buf. The config
   gives only a capacity, not a macro layout. So NPUWattch builds each memory
   from characterized macros and reports the utilization it got.
 - `WARNING (NW-6607): CustomMatMulwVpush: NPUWattch divides the kernel total
@@ -149,8 +137,7 @@ The workload is a single `torch.matmul` of two 1024×1024 float32 tensors under
 `torch.compile`, which is 1 073 741 824 MACs. The NPUWattch report shows
 1 073 881 472, because it also counts one vector operation.
 
-We made two changes for the tutorial, both described above: we added the
-`core_spad_size_kb` line to `config.yml`, and we removed the large
+We made one change for the tutorial: we removed the large
 `*_llvm.mlir` intermediate files (NPUWattch reads only the kernel file
 `c<hash>.mlir` and the tile graph `c<hash>_tog.py`). Everything else is the
 simulator's original output.

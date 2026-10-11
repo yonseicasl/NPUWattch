@@ -32,6 +32,7 @@ primitive estimator gives that energy, and this module does not calculate it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -73,6 +74,12 @@ _SFU_INSTS = VOCABULARY.stats["sfu_instructions"]
 # bits). The SFU is a floating-point unit. It uses this default if the kernel
 # has no operand datatype or has an integer datatype.
 _SFU_FALLBACK_EXP_MANT = (8, 23)
+
+# The vector type of an SFU operation in the kernel MLIR, for example
+# ``math.exp %t : vector<16xf32>``. The width is the number of elements that
+# one SFU instruction processes in one lane (the RVV register group).
+_SFU_MLIR_OP = re.compile(
+    r"math\.(?:exp2?|erf|tanh|sin|cos)\b[^\n:]*:\s*vector<(\d+)x")
 
 
 @dataclass(frozen=True)
@@ -279,6 +286,37 @@ def _useful_mac_stats(kernel_dir: Path, khash: str, act: TogsimActivity,
     return {"useful_macs": float(macs), "array_idle_slots": float(slots - macs)}
 
 
+def _sfu_vector_elems(kernel_dir: Path, khash: str, stats: Mapping[str, float],
+                      lanes: int, warnings: List[str]) -> Optional[int]:
+    """Return the elements that one SFU instruction processes in one lane.
+
+    The kernel MLIR gives the vector type of each math operation
+    (``vector<16xf32>``). One committed ``CustomV*`` instruction processes
+    that many elements in each of the ``lanes`` lanes. The function reads the
+    largest width. It returns ``None`` if the kernel has no SFU instructions,
+    or if no MLIR gives the width; then the projection uses one vector
+    register (``vector_elems``), and the run gives a warning.
+    """
+    if not any(stats.get(name) for name in _SFU_INSTS):
+        return None
+    widths: List[int] = []
+    for path in sorted(kernel_dir.glob("*.mlir")):
+        if "_llvm" in path.name or "_sample" in path.name:
+            continue
+        try:
+            widths.extend(int(w) for w in _SFU_MLIR_OP.findall(
+                path.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            continue
+    if not widths:
+        warnings.append(warning(6226, kernel=khash))
+        return None
+    width = max(widths)
+    warnings.append(info(6225, kernel=khash, elems=width, lanes=lanes,
+                         total=width * lanes))
+    return width
+
+
 def _sfu_format(mac_config: Optional[MacConfig], stats: Mapping[str, float],
                 khash: str, warnings: List[str]) -> Tuple[int, int]:
     """Return the exponent and mantissa widths of the SFU tables.
@@ -342,7 +380,8 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
 
     windows: List[KernelWindow] = []
     skipped: List[str] = []
-    seen_noc_warnings: set = set()      # report each NoC message one time
+    seen_noc_warnings: set = set()
+    vlen_warned = False      # report each NoC message one time
     for idx, log_path in enumerate(sorted(log_dir.glob("*.log"))):
         warnings: List[str] = []
         try:
@@ -400,6 +439,14 @@ def read_run(togsim_dir: Path, gem5_dir: Path, *,
         (win_config["sfu_exponent_bits"],
          win_config["sfu_mantissa_bits"]) = _sfu_format(
             mac_config, stats, khash, warnings)
+        if not isinstance(win_config.get("vpu_vector_length_bits"), int):
+            if not vlen_warned:
+                vlen_warned = True
+                warnings.append(warning(6227))
+        sfu_elems = _sfu_vector_elems(kernel_dir, khash, stats, act.lanes,
+                                      warnings)
+        if sfu_elems is not None:
+            win_config["sfu_vector_elems"] = sfu_elems
 
         windows.append(
             KernelWindow(

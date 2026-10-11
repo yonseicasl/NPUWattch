@@ -555,6 +555,7 @@ def activity_from_stats(
 
     warnings: List[str] = []
     notes: List[str] = []
+    one_entry_noted: set = set()
     unmatched: List[str] = []
     ignored_with_activity: List[str] = []
     mode_fallbacks: Dict[str, str] = {}     # component -> used stim_mode (not the wanted one)
@@ -657,7 +658,23 @@ def activity_from_stats(
                 _add("op", "hold_b", float(lv.computes))
             block = max(1, lv.block_size)
             _add("read", "read", lv.reads / block)
-            _add("write", "write", (lv.fills + lv.updates) / block)
+            writes = lv.fills + lv.updates
+            if lv.fills > 0 and lv.updates > 0 and own and all(
+                    prim_of.get(t) == "regfile" and int(
+                        (by_name[t].get("attributes") or {}).get(
+                            "mem_depth_per_bank", 0)) == 1
+                    for t in own):
+                # A one-entry register that is filled and updated: the fill
+                # (the incoming partial sum) and the update (the sum after the
+                # MAC) are one physical write of the register in each cycle.
+                # Timeloop counts both. NPUWattch charges one write.
+                writes = max(lv.fills, lv.updates)
+                if lv.name not in one_entry_noted:
+                    one_entry_noted.add(lv.name)
+                    notes.append(info(7224, level=lv.name,
+                                      fills=lv.fills, updates=lv.updates,
+                                      writes=writes))
+            _add("write", "write", writes / block)
 
         windows.append(counts)
         cycles_per_window.append(st.cycles)

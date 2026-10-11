@@ -12,7 +12,7 @@
 #
 # Element config keys are NPUWattch attribute names (data_width,
 # mem_depth_per_bank, ...). A config value can be an expression of the
-# integer keys of the run configuration (for example, core_spad_size_kb).
+# integer keys of the run configuration (for example, vpu_spad_size_kb_per_lane).
 
 
 # ============================================================================
@@ -83,7 +83,7 @@ systolic_mac:
 # expression symbol.
 #
 # The energy scope of the PyTorchSim harness is the vector processor, the
-# VMEM, the systolic array, and the on-chip NoC. This compound completes that
+# scratchpads, the systolic array, and the on-chip NoC. This compound completes that
 # scope. The spads compound has the scratchpad of each lane. This compound
 # adds the lane datapath:
 #
@@ -134,9 +134,13 @@ vpu:
 #  spads: the scratchpads of PyTorchSim, specified by capacity
 # ============================================================================
 # This file belongs to the PyTorchSim harness, as do all files in this bundle.
-# The elements use keys of the PyTorchSim run config as expression symbols
-# (core_spad_size_kb, vpu_spad_size_kb_per_lane). The harness supplies their
-# values at resolution. The bundle of a different harness defines its memories
+# The element uses a key of the PyTorchSim run config as an expression symbol
+# (vpu_spad_size_kb_per_lane). The harness supplies its value at resolution.
+# The scratchpad memory of a core (16 MB on the TPUv3-like NPU) is the sum of
+# the lane scratchpads: PyTorchSim gives it as `vpu_spad_size_kb_per_lane`
+# times the lanes. The DMA engine fills and drains the lane scratchpads
+# (DRAM traffic), and the systolic array pushes and pops through them. There
+# is no separate VMEM. The bundle of a different harness defines its memories
 # with the config keys of that harness.
 #
 # If the config of an sram element has `capacity_kbit`, the element is
@@ -155,13 +159,6 @@ vpu:
 spads:
   default_mode: gated
   elements:
-
-    vmem:                               # vector memory of one core (TPU VMEM)
-      primitive: sram
-      config:
-        capacity_kbit: "core_spad_size_kb * 8"
-      count: 1
-      per: core
 
     vpu_spad:                           # VPU scratchpad of one lane
       primitive: sram

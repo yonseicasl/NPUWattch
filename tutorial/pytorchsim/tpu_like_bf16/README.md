@@ -45,8 +45,9 @@ simulator's own configuration.
 | **`booksim2_config/`** | The NoC network file. It's only needed for `anynet` topologies. This run uses `fly`, which the log describes completely |
 
 The rebuilt machine is what `--tree` prints: 2 × 16 384 bf16 MACs with their
-16-bit weight registers, a 16 MB VMEM, 128 VPU lanes (each with a scratchpad,
-register file, FPU, and SFU), a DMA queue and address adder, a 32×32 NoC
+16-bit weight registers, 128 VPU lanes (each with a 128 KB scratchpad,
+together the 16 MB scratchpad memory of the core, a register file, an FPU,
+and an SFU), a DMA queue and address adder, a 32×32 NoC
 crossbar with its buffers, and 16 HBM channels.
 
 ## How the PE is set to bf16
@@ -83,7 +84,7 @@ What carries over from the float32 run:
 - **Cycles and MAC counts.** The systolic array does one MAC per PE per cycle
   for any data type, so the 1 073 741 824 MACs and the active cycles apply to
   bf16 as well.
-- **DRAM, VMEM, and NoC traffic.** These counts come from the float32 run, so
+- **DRAM, scratchpad, and NoC traffic.** These counts come from the float32 run, so
   they reflect float32 data sizes. At 7nm, DRAM accounts for 22% of the total
   energy of this run.
   <!-- Internal note: a bf16 kernel moves half of these bytes. NPUWattch
@@ -111,30 +112,17 @@ a peak of 138 bf16 TFLOP/s (Jouppi et al., ISCA 2021), which works out to
 chip, including the scalar core, the 128 MiB CMEM, the inter-chip links, and
 the HBM PHY.
 
-## About `core_spad_size_kb`
-
-We added the last line of `config.yml`:
-
-```yaml
-core_spad_size_kb: 16384
-```
-
-PyTorchSim doesn't use this key, but NPUWattch needs it to size the VMEM SRAM.
-Without it, NPUWattch skips the VMEM component and prints warning NW-6006.
-TPUv2, v3, and v4 all have 16 MB of VMEM, so the value is 16384 KB. The rest
-of `config.yml` is exactly what the simulator ran with.
-
 ## Messages you'll see, and why
 
 Each message line has the format `LEVEL (NW-nnnn): text`. To read more
 about a message, run `npuwattch --explain NW-nnnn`.
 
-The run prints five warnings. Each one tells you what NPUWattch assumed or
+The run prints four warnings. Each one tells you what NPUWattch assumed or
 extrapolated. None of them stops the run.
 
-- `WARNING (NW-8212): vmem: The SRAM of 134217728 bits uses the macro
-  templates 512x sram_256k in banks of at most 16 macros (utilization
-  100.0%).` The same warning occurs for vpu_spad and icnt_buf. The config
+- `WARNING (NW-8212): vpu_spad: The SRAM of 1048576 bits uses the macro
+  templates 4x sram_256k in banks of at most 16 macros (utilization
+  100.0%).` The same warning occurs for icnt_buf. The config
   gives only a capacity, not a macro layout. So NPUWattch builds each memory
   from characterized macros and reports the utilization it got.
 - `WARNING (NW-6607): CustomMatMulwVpush: NPUWattch divides the kernel total

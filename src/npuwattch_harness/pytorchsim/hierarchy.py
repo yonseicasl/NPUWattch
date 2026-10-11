@@ -11,7 +11,7 @@ energy summary:
 
     chip → core0 → array0 → pe / w_reg
                  → array1 → …
-                 → vmem (+ tail) / vpu_spad          (elements of each core)
+                 → vpu_spad (+ tail)          (elements of each core)
          → core1 → …
          → noc → icnt_xbar / icnt_buf / icnt_d2d     (compounds of the chip)
 

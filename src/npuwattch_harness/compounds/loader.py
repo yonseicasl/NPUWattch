@@ -329,6 +329,9 @@ def load_compounds(path: Path) -> Dict[str, Compound]:
 #: - "words": the raw count x scale.
 #: - "bytes": the count / the word bytes of the element.
 #: - "vectors": the count x lanes x operand bits / the word bits of the element.
+#:   One count is one element in each lane. A vector register holds
+#:   `vector_elems` elements, so an action that counts vector instructions
+#:   uses `scale: vector_elems`.
 #: - "flits": a NoC flit count. The conversion depends on the element type:
 #:   buffer word accesses, crossbar cycles normalized by the valid fraction,
 #:   or link crossings.
@@ -556,6 +559,21 @@ def _symbols_for(mac_config,
             {"lanes": int(mac_config.lanes),
              "bitwidth": int(mac_config.operand_dtype.bits)}
         )
+        # `vector_elems`: the elements of the operand datatype in one vector
+        # register of a lane (vpu_vector_length_bits / bitwidth). One vector
+        # instruction moves `lanes x vector_elems` elements. The harness gives
+        # the vector length as a run-configuration key.
+        vlen = symbols.get("vpu_vector_length_bits")
+        if "vector_elems" not in symbols:
+            if isinstance(vlen, int) and vlen > 0:
+                symbols["vector_elems"] = max(1, vlen // max(1, symbols["bitwidth"]))
+            else:
+                symbols["vector_elems"] = 1     # no vector length: one element in each lane
+        # `sfu_vector_elems`: the elements of one SFU instruction in one lane.
+        # The harness reads it from the kernel MLIR (the vector type of the
+        # math operation). Without it, one vector register.
+        if "sfu_vector_elems" not in symbols and "vector_elems" in symbols:
+            symbols["sfu_vector_elems"] = symbols["vector_elems"]
     return symbols
 
 

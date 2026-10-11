@@ -283,6 +283,13 @@ register("NW", blocks={
            "NPUWattch uses an 8-bit integer operand. The energy and the area "
            "are correct only for 8-bit operands. Declare the operand width of "
            "the component in the description."),
+    7224: (INFO, "{level}: a one-entry register with {fills} fills and "
+                 "{updates} updates is charged {writes} writes.",
+           "Timeloop counts the fill (the incoming partial sum) and the update "
+           "(the sum after the MAC) of a one-entry register as two writes. "
+           "The register is written one time in each cycle, so NPUWattch "
+           "charges the larger of the two counts. A buffer with more than one "
+           "entry keeps fills + updates. No action is necessary."),
     7312: (INFO, "{component} (intmac): the accumulator width is {width} b, "
                  "{multiplier}x the operand width.",
            "The description declares no accumulator width. NPUWattch uses the "

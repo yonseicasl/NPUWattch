@@ -85,7 +85,7 @@ register("NW", blocks={
     6010: (WARNING,
            "l2d_type={l2d_type!r} enables an L2 data cache, and its energy is "
            "not included.",
-           "The energy scope of this harness is the vector unit, the VMEM, the "
+           "The energy scope of this harness is the vector unit, the scratchpads, the "
            "systolic array, and the on-chip NoC. NPUWattch does not model the "
            "L2 data cache. This cache is a large on-chip SRAM. Its energy and "
            "area are not in the results."),
@@ -362,6 +362,31 @@ register("NW", blocks={
            "literal of the expected form. NPUWattch uses the approximate "
            "scaling (see NW-6218). Copy the file again from the PyTorchSim "
            "run."),
+    6225: (INFO,
+           "{kernel}: one SFU instruction processes {elems} elements in each of "
+           "{lanes} lanes ({total} in total).",
+           "A CustomV* instruction works on one vector register group in every "
+           "lane. The kernel MLIR gives the width of the group (for example "
+           "vector<16xf32>). NPUWattch charges elems x lanes SFU operations "
+           "for each instruction. No action is necessary."),
+    6226: (WARNING,
+           "{kernel}: no MLIR gives the SFU vector width, so one instruction is "
+           "one vector register in each lane.",
+           "NPUWattch reads the elements of one SFU instruction from the vector "
+           "type of the math operation in the kernel MLIR. This kernel "
+           "directory has no MLIR with such a type. NPUWattch uses "
+           "vpu_vector_length_bits / operand bits elements in each lane. The "
+           "SFU energy of this kernel can be off by the register-group factor "
+           "(2 to 4). Copy the kernel .mlir file into outputs/<hash>/."),
+    6227: (WARNING,
+           "The run configuration has no vpu_vector_length_bits, so one vector "
+           "instruction is charged as one element in each lane.",
+           "The pushes, pops, and SFU instructions of PyTorchSim move one vector "
+           "register of each lane. NPUWattch needs the register width "
+           "(vpu_vector_length_bits) to count the elements. Without it, the "
+           "weight-register, scratchpad, and SFU energy is too low by the "
+           "register width in elements (8 for fp32 with 256-bit registers). "
+           "Give the config.yml of the run with --config-yml."),
     6224: (WARNING,
            "{kernel}: {useful} MACs is more than the {slots} active PE cycles, "
            "so all active PE cycles are charged as MACs.",
@@ -537,7 +562,7 @@ register("NW", blocks={
            "NPUWattch uses {size} B for each DRAM request.",
            "NPUWattch calculates the DRAM byte traffic from the request count "
            "and the request size. The default size is the HBM2 request size. "
-           "The VMEM and DMA energy is correct only if the run uses this size. "
+           "The scratchpad and DMA energy is correct only if the run uses this size. "
            "Give the config.yml of the run with --config-yml."),
     6506: (WARNING,
            "{kernel}: the per-core DMA responses ({dma_total}) are different "
@@ -550,7 +575,7 @@ register("NW", blocks={
            "{writes} writes, but the [DRAM] totals are {log_reads} and "
            "{log_writes}.",
            "The DRAM device energy uses the counts of the statistics block. "
-           "The VMEM and NoC traffic uses the [DRAM] interval totals. The two "
+           "The scratchpad and NoC traffic uses the [DRAM] interval totals. The two "
            "sources in the log do not agree."),
     6508: (WARNING,
            "{kernel}: the log has no DRAM statistics block, so the "
@@ -583,16 +608,16 @@ register("NW", blocks={
            "their vector active cycles. The per-core energy is approximate. "
            "The total energy does not change."),
     6602: (WARNING,
-           "{stat}: NPUWattch divides the DRAM→VMEM fill between the cores by "
+           "{stat}: NPUWattch divides the DRAM→scratchpad fill between the cores by "
            "their MOVIN instructions.",
-           "The log gives the DRAM→VMEM fill of the kernel as one total. "
+           "The log gives the DRAM→scratchpad fill of the kernel as one total. "
            "NPUWattch divides the total between the cores in proportion to "
            "their MOVIN instructions. The per-core energy is approximate. The "
            "total energy does not change."),
     6603: (WARNING,
-           "{stat}: NPUWattch divides the VMEM→DRAM drain between the cores by "
+           "{stat}: NPUWattch divides the scratchpad→DRAM drain between the cores by "
            "their MOVOUT instructions.",
-           "The log gives the VMEM→DRAM drain of the kernel as one total. "
+           "The log gives the scratchpad→DRAM drain of the kernel as one total. "
            "NPUWattch divides the total between the cores in proportion to "
            "their MOVOUT instructions. The per-core energy is approximate. The "
            "total energy does not change."),

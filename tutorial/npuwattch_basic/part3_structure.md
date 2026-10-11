@@ -362,7 +362,7 @@ output. One TOGSim log is one kernel, and one kernel is one window.
 | `outputs/<hash>/m5out/stats.txt` (gem5) | The counts of the custom instructions: weight pushes, input pushes, result pops, and the special-function vector instructions (exp, erf, tanh, sin, cos). gem5 runs each tile operation of the kernel one time (the sample program), so the counts are per tile operation. |
 | `outputs/<hash>/*_tog.py` | The tile graph of the kernel: its loop nest and compute nodes. NPUWattch multiplies the gem5 counts of each node by its number of executions. Without this file the counts are scaled by the COMP totals of the log, with a warning. |
 | `outputs/<hash>/meta.txt` and the kernel `.mlir` | The operand and accumulator data types of the kernel. They decide whether the PE is an `intmac` or an `fpmac` and with which widths. |
-| `config.yml` (optional) | Fills in keys the log header does not have, and cross-checks the rest. One key, `core_spad_size_kb`, is read only by NPUWattch: it sizes the VMEM. |
+| `config.yml` (optional) | Fills in keys the log header does not have, and cross-checks the rest. |
 | `booksim2_config/` (optional) | The network file. Needed only for `anynet` topologies; a `fly` network is fully described in the log. |
 | an energy table `.yml` (optional) | The DRAM cost table the run used. Without it, the default HBM2 constants are charged. |
 | `kernels.yaml` (optional) | The name of each kernel (`{name, hash, log}`). NPUWattch uses the names as window labels instead of the kernel hashes. The tutorial run scripts write this file; PyTorchSim does not. `--kernel-names` picks another file. |
@@ -373,7 +373,7 @@ and the NoC port and router counts) and the MAC configuration of each
 kernel; the compounds in `compound_components.yaml` turn them into PEs,
 weight registers, vector lanes, scratchpads, DMA, NoC crossbar, and DRAM
 channels. NPUWattch emits one component per physical instance
-(`core0.array1.pe`, `core0.vmem`, `noc.xbar`, `dram.chan`), so the tree in
+(`core0.array1.pe`, `core0.vpu_spad`, `noc.xbar`, `dram.chan`), so the tree in
 `--tree` matches the machine.
 
 **Activity.** The projection maps each counter to compound elements. The
@@ -381,7 +381,7 @@ systolic arrays are charged per useful MAC of the operator (`useful_macs`,
 from the operation name in the log and the shapes in `meta.txt`), and the
 active PE cycles that hold no real weight are charged in the idle mode
 (`array_idle_slots`). The vector unit is charged from its active cycles,
-the VMEM from the DRAM traffic that moved through it, the weight and input
+the lane scratchpads from the DRAM traffic that moved through them, the weight and input
 registers from the gem5 push and pop counts (scaled to the kernel by the
 tile graph), the NoC from the flits implied by the DRAM requests, and the
 DRAM from its byte and command counts. Kernel totals are split between the
@@ -446,7 +446,7 @@ cd tutorial/pytorchsim/tpu_like_fp32/matmul_1024
 ```
 
 Look for the rebuilt machine in `--tree` (two arrays of 16 384 fp32 MACs,
-128 VPU lanes, a 16 MB VMEM, a 32×32 NoC crossbar, 16 HBM channels), the
+128 VPU lanes with 16 MB of scratchpads, a 32×32 NoC crossbar, 16 HBM channels), the
 warning that splits the kernel-total gem5 counts between the two arrays,
 the INFO line that gives the useful MACs and the array utilization
 (`NW-6222`), and the INFO list of excluded blocks. Then run `../../tpu_like_bf16/matmul_1024/run`. The
