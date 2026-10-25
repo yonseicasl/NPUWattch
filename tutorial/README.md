@@ -13,12 +13,10 @@ tutorial/
 │   ├── gemmini_like/{resnet50,llama3_8b}/
 │   └── nvdla_like/{resnet50,llama3_8b}/
 └── pytorchsim/    Example 2 — PyTorchSim input
-    ├── tpu_like_fp32/             the hardware model (three definition files)
-    │   ├── matmul_1024/           one 1024³ matmul (the basic example)
-    │   ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
-    │   └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
-    └── tpu_like_bf16/             the same model, PEs fixed to bf16 MACs
-        └── matmul_1024/           the matmul again, priced with bf16 PEs
+    └── tpu_like_fp32/             the hardware model (three definition files)
+        ├── matmul_1024/           one 1024³ matmul (the basic example)
+        ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
+        └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
 ```
 
 `npuwattch_basic/` is a four-part introduction (motivation, method, the
@@ -257,23 +255,6 @@ The long INFO block in this run (`NW-6008` and `NW-2209`) is worth a look.
 It lists the parts that are *not* included in the totals (the scalar core and its caches, the VCIX
 serializer, and DRAM standby power), so you always know what the numbers
 cover.
-
-### The bf16 variant
-
-```bash
-cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024
-./run
-```
-
-<!-- Internal note: PyTorchSim cannot simulate bf16 kernels, so this example
-reuses the float32 run and fixes the PE type in the hardware model. DRAM and
-NoC energy keep the float32 byte counts, so they are high for a bf16 kernel. -->
-A real TPU multiplies in bf16. This design reads the simulator files of
-`tpu_like_fp32/matmul_1024` and changes only `compound_components.yaml`: the `pe` element
-uses a fixed bf16 `fpmac` instead of the `{mac_primitive}` / `{mac_config}`
-templates. The PE energy drops from 5.05 to 1.56 pJ per MAC, and the total is
-**2.21 mJ, 1.03 pJ/FLOP**. DRAM and NoC traffic use the byte counts from the
-float32 run. See `pytorchsim/tpu_like_bf16/README.md` for details.
 
 ### More workloads
 
