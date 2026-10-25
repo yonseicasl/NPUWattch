@@ -85,11 +85,7 @@ prefill/, decode/           one run root each: config.yml, togsim_results/, outp
 
 The hardware model is in `../` (the design folder). The `run` scripts pass
 it with `--compound-components ../../compound_components.yaml` and the two
-other definition flags. To price the same runs with bf16 PEs:
-
-```bash
-cd prefill && ./run --compound-components ../../../tpu_like_bf16/compound_components.yaml --report out_bf16/
-```
+other definition flags.
 
 ## Messages you'll see
 

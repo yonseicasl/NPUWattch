@@ -38,8 +38,7 @@ script passes the three definition files of this folder with
 so one hardware model serves every workload.
 
 `matmul_1024/README.md` explains each input file and each console message in
-detail. `../README.md` compares the workloads. `../tpu_like_bf16/` is the
-same design with the PE fixed to a bf16 MAC.
+detail. `../README.md` compares the workloads.
 
 ## The three files
 

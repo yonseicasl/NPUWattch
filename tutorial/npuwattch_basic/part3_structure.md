@@ -449,9 +449,7 @@ Look for the rebuilt machine in `--tree` (two arrays of 16 384 fp32 MACs,
 128 VPU lanes with 16 MB of scratchpads, a 32×32 NoC crossbar, 16 HBM channels), the
 warning that splits the kernel-total gem5 counts between the two arrays,
 the INFO line that gives the useful MACs and the array utilization
-(`NW-6222`), and the INFO list of excluded blocks. Then run `../../tpu_like_bf16/matmul_1024/run`. The
-only file that differs is `compound_components.yaml`, where the PE is fixed
-to a bf16 `fpmac`. Compare the two `pe` rows in the summaries.
+(`NW-6222`), and the INFO list of excluded blocks.
 
 Finally, add `-o native/` to either run and open `native/description.yaml`
 and `native/activity.csv`. These are the two files from §2. Run them

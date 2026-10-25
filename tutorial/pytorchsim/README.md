@@ -7,30 +7,26 @@ script and a README.
 
 ```
 pytorchsim/
-├── tpu_like_fp32/           the hardware model (three definition files) and its workloads
-│   ├── matmul_1024/         one 1024³ matmul (the basic example)
-│   ├── matmul_train/        forward + backward of the matmul (3 kernels)
-│   ├── matmul_2048_1core/   one 2048³ matmul on 1 core
-│   ├── matmul_2048_2core/   the same matmul on 2 cores
-│   ├── softmax/             softmax and exp2: kernels with no MAC
-│   ├── resnet50/            the 7 ResNet-50 layers of the Timeloop example, plus ReLU and batch norm
-│   ├── llama3_8b/           one Llama-3-8B decoder block: prefill/ and decode/
-│   ├── gemma2_9b/           one Gemma-2-9B decoder block: prefill/ and decode/
-│   └── deepseek_v2_lite/    one DeepSeek-V2-Lite MoE decoder block: prefill/ and decode/
-└── tpu_like_bf16/           the same model with the PE fixed to a bf16 MAC
-    └── matmul_1024/         the matmul again, priced with bf16 PEs (reads the fp32 run's data)
+└── tpu_like_fp32/           the hardware model (three definition files) and its workloads
+    ├── matmul_1024/         one 1024³ matmul (the basic example)
+    ├── matmul_train/        forward + backward of the matmul (3 kernels)
+    ├── matmul_2048_1core/   one 2048³ matmul on 1 core
+    ├── matmul_2048_2core/   the same matmul on 2 cores
+    ├── softmax/             softmax and exp2: kernels with no MAC
+    ├── resnet50/            the 7 ResNet-50 layers of the Timeloop example, plus ReLU and batch norm
+    ├── llama3_8b/           one Llama-3-8B decoder block: prefill/ and decode/
+    ├── gemma2_9b/           one Gemma-2-9B decoder block: prefill/ and decode/
+    └── deepseek_v2_lite/    one DeepSeek-V2-Lite MoE decoder block: prefill/ and decode/
 ```
 
 ```bash
 cd tpu_like_fp32/matmul_1024 && ./run           # the basic example
 cd tpu_like_fp32/resnet50 && ./run
 cd tpu_like_fp32/llama3_8b/prefill && ./run
-cd tpu_like_bf16/matmul_1024 && ./run
 ```
 
 Start with `tpu_like_fp32/matmul_1024/README.md`. It explains each file and
-each console message in detail. The tutorial runs are float32; `tpu_like_bf16/README.md` explains how the PE
-is set to bf16 in the hardware model.
+each console message in detail. The tutorial runs are float32.
 
 ## Folder layout
 
