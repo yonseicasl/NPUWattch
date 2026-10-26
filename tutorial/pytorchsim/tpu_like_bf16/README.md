@@ -60,10 +60,10 @@ once. The adder and the register are not counted again.
 
 ## Next to a published TPU
 
-TPUv4i is a 7 nm chip with four 128×128 MXUs at 1050 MHz. Its TDP of 175 W
-over its peak of 138 TFLOP/s is 1.27 pJ/FLOP (Jouppi et al., "Ten Lessons
-From Three Generations Shaped Google's TPUv4i", ISCA 2021, Table 1; the chip
-TDP does not include the memory system). This design, on the 1024³ matmul
+TPUv4i is a 7 nm chip with four bf16 128×128 MXUs at 1050 MHz. From the
+chip figures published in Jouppi et al., "Ten Lessons From Three Generations
+Shaped Google's TPUv4i" (ISCA 2021, Table 1), its efficiency works out to
+1.27 pJ/FLOP. This design, on the 1024³ matmul
 at 7 nm, is at 1.30 pJ/FLOP on chip and 1.41 with DRAM. The on-chip figure
 is the closer pair, since it covers about the same blocks. The model lands
 within 10% of the published figure.

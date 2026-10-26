@@ -286,7 +286,7 @@ cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024 && ./run
 Result at 7 nm: **3.02 mJ**, 1.41 pJ/FLOP, 45 195 cycles, 63 W. The PE costs
 2.56 pJ per useful MAC instead of 5.05, the DRAM traffic halves with the
 2-byte operands, and the run is 13% shorter. At 7 nm the figure lands within
-10% of TPUv4i's TDP / peak (1.27 pJ/FLOP); the design README has the
+10% of TPUv4i's published efficiency (1.27 pJ/FLOP, derived from Jouppi et al., ISCA 2021); the design README has the
 comparison.
 
 ---

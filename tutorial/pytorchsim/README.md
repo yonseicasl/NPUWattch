@@ -69,7 +69,7 @@ files, and one folder per workload with the simulator data.
 | `gemma2_9b/decode` | 13 | 38.5 mJ | 91% | Matrix-vector products: 190 pJ per useful MAC |
 | `deepseek_v2_lite/prefill` | 17 | 337.2 mJ | 31% | MoE: the 64 expert GEMMs with 48 rows each are 69% of the energy |
 | `deepseek_v2_lite/decode` | 17 | 14.3 mJ | 90% | 6 experts of one token each; DRAM again |
-| `../tpu_like_bf16/matmul_1024` | 1 | 3.02 mJ | 8% | The basic example run in bf16 on TPU-style PEs: 1.41 pJ/FLOP, 2.56 pJ per MAC, half the DRAM bytes; within 10% of TPUv4i's TDP / peak |
+| `../tpu_like_bf16/matmul_1024` | 1 | 3.02 mJ | 8% | The basic example run in bf16 on TPU-style PEs: 1.41 pJ/FLOP, 2.56 pJ per MAC, half the DRAM bytes; within 10% of TPUv4i's published efficiency |
 
 Each README has the per-kernel table, the energy per useful MAC, and the
 messages the run prints. NPUWattch counts the useful MACs of each GEMM
