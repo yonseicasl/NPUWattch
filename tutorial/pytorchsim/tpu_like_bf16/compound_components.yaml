@@ -50,9 +50,8 @@ systolic_mac:
   default_mode: gated               # an action charges only the elements it names; the rest are clock-gated
   elements:
 
-    # A bf16 TPU-style PE: a bf16 multiplier, an fp32 adder, and one 32-bit accumulator register. NPUWattch has no
-    # MAC primitive with a bf16 product and an fp32 accumulate, so the PE is built from three primitives. The fp32
-    # design (../tpu_like_fp32) uses one fpmac that follows the kernel dtype instead.
+    # A PE written to the TPU's own spec: a bf16 multiplier, an fp32 adder, and one 32-bit accumulator register,
+    # as the MXU of a TPU does it. The fp32 design (../tpu_like_fp32) uses one fpmac that follows the kernel dtype instead.
     pe:                               # bf16 x bf16 multiplier (8-bit exponent, 7-bit mantissa): the MAC datapath of the PE
       primitive: fpmul
       config:

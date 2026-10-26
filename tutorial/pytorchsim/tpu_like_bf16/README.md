@@ -1,12 +1,12 @@
-# Design — tpu_like_bf16: the same TPUv3-like NPU with a bf16 PE built from three primitives
+# Design — tpu_like_bf16: the same TPUv3-like NPU set up like the TPU, with bf16 PEs
 
 This folder is the second hardware model of the PyTorchSim examples. The
 machine is the one of `../tpu_like_fp32` (one core with two 128×128 systolic
 arrays, 128 VPU lanes with 16 MB of scratchpad memory, 16 HBM2 channels, and
-a BookSim `fly` NoC at 940 MHz) with one change: the PE multiplies in bf16
-and accumulates in fp32, as the MXU of a TPU does. The workload below is a
-native bf16 PyTorchSim run (bf16 tensors, bf16 kernel), not an fp32 run that
-is priced again.
+a BookSim `fly` NoC at 940 MHz) with the PE written to the TPU's own spec: a
+bf16 multiply with an fp32 accumulate. PyTorchSim runs fp32 by default; for
+the 7 nm TPU comparison the workload below was run in bf16 (bf16 tensors,
+bf16 kernel), so the cycles and the DRAM traffic are bf16 as well.
 
 ```
 tpu_like_bf16/
@@ -22,10 +22,9 @@ cd matmul_1024 && ./run
 
 ## The PE
 
-NPUWattch has no MAC primitive with a bf16 product and an fp32 accumulate:
-`fpmac` uses one number format for the product and the sum. So the PE is a
-compound of three primitives with a fixed configuration. The fp32 design
-selects its PE primitive from the kernel's data type; this one does not.
+A TPU MXU multiplies in bf16 and accumulates in fp32. The PE is a compound
+of three NPUWattch primitives written to that spec, with a fixed configuration (the
+fp32 design selects its PE primitive from the kernel's data type instead):
 
 | Element | Primitive | Configuration | Charged for |
 | --- | --- | --- | --- |

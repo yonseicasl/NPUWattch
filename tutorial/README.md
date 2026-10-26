@@ -14,7 +14,7 @@ tutorial/
 │   └── nvdla_like/{resnet50,llama3_8b}/
 └── pytorchsim/    Example 2 — PyTorchSim input
     ├── tpu_like_fp32/             the hardware model (three definition files)
-    └── tpu_like_bf16/             the same machine with a bf16 PE built from three primitives
+    └── tpu_like_bf16/             the same machine set up like the TPU: bf16 PEs
         ├── matmul_1024/           one 1024³ matmul (the basic example)
         ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
         └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
@@ -273,11 +273,11 @@ cd tutorial/pytorchsim/tpu_like_fp32/llama3_8b/prefill && ./run
 
 ### The same matmul in bf16
 
-`pytorchsim/tpu_like_bf16/` is the same machine with a bf16 PE. NPUWattch
-has no MAC primitive with a bf16 product and an fp32 accumulate, so the PE
-is a compound of three primitives: an `fpmul` with an 8-bit exponent and a
-7-bit mantissa, an fp32 `fpadd`, and a 32-bit partial-sum register. Its one
-workload is a native bf16 PyTorchSim run of the 1024³ matmul:
+`pytorchsim/tpu_like_bf16/` is the same machine set up like the TPU: the
+PE multiplies in bf16 and accumulates in fp32 (an `fpmul` with an 8-bit
+exponent and a 7-bit mantissa, an fp32 `fpadd`, and a 32-bit partial-sum
+register). PyTorchSim runs fp32 by default; for the 7 nm TPU comparison its
+one workload, the 1024³ matmul, was run in bf16:
 
 ```bash
 cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024 && ./run

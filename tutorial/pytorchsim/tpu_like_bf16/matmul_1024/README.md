@@ -2,7 +2,8 @@
 
 One 1024×1024×1024 bfloat16 `torch.matmul` on the bf16 design of `../`. It is
 the bf16 twin of `../../tpu_like_fp32/matmul_1024`: the same machine
-configuration, the same operator, and a native bf16 PyTorchSim run.
+configuration and the same operator, run in bf16 like the TPU for the 7 nm
+comparison (PyTorchSim runs fp32 by default).
 
 ```bash
 ./run                                   # 7 nm, report in out/
@@ -68,9 +69,9 @@ A real run of 2026-10-26 with the public PyTorchSim Docker image
 `ghcr.io/psal-postech/torchsim-tutorial:ispass2026` (PyTorchSim v1.1.0) and
 its bundled `systolic_ws_128x128_c1_booksim_tpuv3.yml` config with the
 functional mode turned off. The workload is one `torch.matmul` of two
-1024×1024 bfloat16 tensors under `torch.compile`. The image's compiler
-toolchain cannot build a bf16 kernel as shipped, so three small patches were
-applied outside the simulator (LLVM target features, a bf16 vector-add
+1024×1024 bfloat16 tensors under `torch.compile`. Three small patches were
+applied to the image's compiler toolchain, outside the simulator, to build
+the bf16 kernel (LLVM target features, a bf16 vector-add
 rewrite in the LLVM IR, and a vector LMUL cap). `how_the_data_was_made/RUN_MANIFEST.md`
 lists them with the exact commands, what was checked, and what was not. As
 for the fp32 run, only the kernel `.mlir` file of `outputs/<hash>/` was kept.
