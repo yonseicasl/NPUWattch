@@ -13,7 +13,8 @@ tutorial/
 │   ├── gemmini_like/{resnet50,llama3_8b}/
 │   └── nvdla_like/{resnet50,llama3_8b}/
 └── pytorchsim/    Example 2 — PyTorchSim input
-    └── tpu_like_fp32/             the hardware model (three definition files)
+    ├── tpu_like_fp32/             the hardware model (three definition files)
+    └── tpu_like_bf16/             the same machine with a bf16 PE built from three primitives
         ├── matmul_1024/           one 1024³ matmul (the basic example)
         ├── matmul_train/, matmul_2048_{1,2}core/, softmax/, resnet50/
         └── llama3_8b/, gemma2_9b/, deepseek_v2_lite/   one decoder block each, prefill + decode
@@ -269,6 +270,24 @@ cd tutorial/pytorchsim/tpu_like_fp32/llama3_8b/prefill && ./run
 ```
 
 `pytorchsim/README.md` lists them with their results.
+
+### The same matmul in bf16
+
+`pytorchsim/tpu_like_bf16/` is the same machine with a bf16 PE. NPUWattch
+has no MAC primitive with a bf16 product and an fp32 accumulate, so the PE
+is a compound of three primitives: an `fpmul` with an 8-bit exponent and a
+7-bit mantissa, an fp32 `fpadd`, and a 32-bit partial-sum register. Its one
+workload is a native bf16 PyTorchSim run of the 1024³ matmul:
+
+```bash
+cd tutorial/pytorchsim/tpu_like_bf16/matmul_1024 && ./run
+```
+
+Result at 7 nm: **3.02 mJ**, 1.41 pJ/FLOP, 45 195 cycles, 63 W. The PE costs
+2.56 pJ per useful MAC instead of 5.05, the DRAM traffic halves with the
+2-byte operands, and the run is 13% shorter. At 7 nm the figure lands within
+10% of TPUv4i's TDP / peak (1.27 pJ/FLOP); the design README has the
+comparison.
 
 ---
 

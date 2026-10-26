@@ -1,0 +1,45 @@
+--- /tmp/claude-1008/-home-KNUEEhdd1-ys-knu-kmk/3d76b730-1b09-4358-9af9-b3a4f7d11473/scratchpad/bf16probe/patch/extension_codecache.py.orig	2026-10-26 12:11:42.033608819 +0900
++++ /tmp/claude-1008/-home-KNUEEhdd1-ys-knu-kmk/3d76b730-1b09-4358-9af9-b3a4f7d11473/scratchpad/bf16probe/patch/extension_codecache.py	2026-10-26 12:29:36.831361817 +0900
+@@ -65,14 +65,14 @@
+     ).strip(),
+             re.sub(r"[ \n]+", " ",
+         f"""
+-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {filename}_llvm.mlir -o {filename}.ll
++            /data/patch/mlir_translate_bf16.py -mlir-to-llvmir {filename}_llvm.mlir -o {filename}.ll
+         """,
+     ).strip(),
+             re.sub(r"[ \n]+", " ",
+         f"""
+             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc \
+                 -relocation-model=pic -march=riscv64 -O3 --stack-size-section \
+-                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+xsfvcp,zvl{vlen}b \
++                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+zvfbfmin,+zvfbfwma,+xsfvcp,zvl{vlen}b -riscv-v-fixed-length-vector-lmul-max=4 \
+                 -filetype=obj \
+                 {'--print-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_LLVM_IR else ''} \
+                 -O2 {filename}.ll -o {filename}.o
+@@ -82,7 +82,7 @@
+         f"""
+             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc \
+                 -relocation-model=pic -march=riscv64 -O3 --stack-size-section \
+-                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+xsfvcp,zvl{vlen}b \
++                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+zvfbfmin,+zvfbfwma,+xsfvcp,zvl{vlen}b -riscv-v-fixed-length-vector-lmul-max=4 \
+                 -O2 {filename}.ll -o {filename}.s
+         """,
+     ).strip()]
+@@ -116,14 +116,14 @@
+     ).strip(),
+             re.sub(r"[ \n]+", " ",
+         f"""
+-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {sample_filename}_llvm.mlir -o {sample_filename}.ll
++            /data/patch/mlir_translate_bf16.py -mlir-to-llvmir {sample_filename}_llvm.mlir -o {sample_filename}.ll
+         """,
+     ).strip(),
+             re.sub(r"[ \n]+", " ",
+         f"""
+             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc \
+                 -relocation-model=pic -march=riscv64 -O3 --stack-size-section \
+-                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+xsfvcp,zvl{vlen}b \
++                -mattr=+m,+f,+d,+a,+c,+v,+zvfh,+zvfbfmin,+zvfbfwma,+xsfvcp,zvl{vlen}b -riscv-v-fixed-length-vector-lmul-max=4 \
+                 -filetype=obj \
+                 {'--print-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_LLVM_IR else ''} \
+                 -O2 {sample_filename}.ll -o {sample_filename}.o

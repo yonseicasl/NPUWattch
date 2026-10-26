@@ -111,7 +111,11 @@ _SALIENT = {
     "crossbar": ("net_inputs", "net_outputs", "data_width"),
     "d2dlink": ("data_width", "net_energy_per_bit_pJ"),
     "fpmac": ("exponent_bits", "mantissa_bits", "pipeline_stages"),
+    "fpmul": ("exponent_bits", "mantissa_bits", "pipeline_stages"),
+    "fpadd": ("exponent_bits", "mantissa_bits", "pipeline_stages"),
     "intmac": ("data_width_a", "data_width_b", "data_width_acc"),
+    "intmul": ("data_width_a", "data_width_b"),
+    "intadd": ("data_width_a", "data_width_b"),
     "mxfpmac": ("mx_input_format", "mx_block_elems"),
 }
 

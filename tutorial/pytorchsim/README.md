@@ -7,16 +7,18 @@ script and a README.
 
 ```
 pytorchsim/
-└── tpu_like_fp32/           the hardware model (three definition files) and its workloads
-    ├── matmul_1024/         one 1024³ matmul (the basic example)
-    ├── matmul_train/        forward + backward of the matmul (3 kernels)
-    ├── matmul_2048_1core/   one 2048³ matmul on 1 core
-    ├── matmul_2048_2core/   the same matmul on 2 cores
-    ├── softmax/             softmax and exp2: kernels with no MAC
-    ├── resnet50/            the 7 ResNet-50 layers of the Timeloop example, plus ReLU and batch norm
-    ├── llama3_8b/           one Llama-3-8B decoder block: prefill/ and decode/
-    ├── gemma2_9b/           one Gemma-2-9B decoder block: prefill/ and decode/
-    └── deepseek_v2_lite/    one DeepSeek-V2-Lite MoE decoder block: prefill/ and decode/
+├── tpu_like_fp32/           the hardware model (three definition files) and its workloads
+│   ├── matmul_1024/         one 1024³ matmul (the basic example)
+│   ├── matmul_train/        forward + backward of the matmul (3 kernels)
+│   ├── matmul_2048_1core/   one 2048³ matmul on 1 core
+│   ├── matmul_2048_2core/   the same matmul on 2 cores
+│   ├── softmax/             softmax and exp2: kernels with no MAC
+│   ├── resnet50/            the 7 ResNet-50 layers of the Timeloop example, plus ReLU and batch norm
+│   ├── llama3_8b/           one Llama-3-8B decoder block: prefill/ and decode/
+│   ├── gemma2_9b/           one Gemma-2-9B decoder block: prefill/ and decode/
+│   └── deepseek_v2_lite/    one DeepSeek-V2-Lite MoE decoder block: prefill/ and decode/
+└── tpu_like_bf16/           the same machine with a bf16 PE built from three primitives
+    └── matmul_1024/         the same matmul as a native bf16 run
 ```
 
 ```bash
@@ -26,7 +28,8 @@ cd tpu_like_fp32/llama3_8b/prefill && ./run
 ```
 
 Start with `tpu_like_fp32/matmul_1024/README.md`. It explains each file and
-each console message in detail. The tutorial runs are float32.
+each console message in detail. The tutorial runs are float32, except
+the one bf16 run in `tpu_like_bf16/`.
 
 ## Folder layout
 
@@ -66,6 +69,7 @@ files, and one folder per workload with the simulator data.
 | `gemma2_9b/decode` | 13 | 38.5 mJ | 91% | Matrix-vector products: 190 pJ per useful MAC |
 | `deepseek_v2_lite/prefill` | 17 | 337.2 mJ | 31% | MoE: the 64 expert GEMMs with 48 rows each are 69% of the energy |
 | `deepseek_v2_lite/decode` | 17 | 14.3 mJ | 90% | 6 experts of one token each; DRAM again |
+| `../tpu_like_bf16/matmul_1024` | 1 | 3.02 mJ | 8% | The basic example as a native bf16 run on a PE built from three primitives: 1.41 pJ/FLOP, 2.56 pJ per MAC, half the DRAM bytes |
 
 Each README has the per-kernel table, the energy per useful MAC, and the
 messages the run prints. NPUWattch counts the useful MACs of each GEMM
@@ -107,3 +111,10 @@ the run manifest of each workload are in its `how_the_data_was_made/`
 folder; `docs/PYTORCHSIM_DOCKER.md` in the repository describes the
 procedure. We made one change to the simulator output for the tutorial: we
 kept only the kernel `.mlir` file of each `outputs/<hash>/` directory.
+
+The bf16 run (`tpu_like_bf16/matmul_1024`, 2026-10-26) used the same image
+and the same config with the functional mode turned off, because the
+image's functional model computes in float only. Its compiler toolchain
+needed three small patches outside the simulator to build a bf16 kernel;
+`tpu_like_bf16/matmul_1024/how_the_data_was_made/RUN_MANIFEST.md` lists them,
+the exact command, and the checks that were made.

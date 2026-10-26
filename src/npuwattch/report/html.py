@@ -136,10 +136,32 @@ def _unit_energy_str(provider: Any, primitive: str, feats: Dict[str, Any],
 # Context
 # ---------------------------------------------------------------------------
 
+#: The MAC datapath of a design (the efficiency figure, §8). A MAC primitive
+#: is always a MAC datapath. A multiplier is a MAC datapath only when it is the
+#: PE of an array: the leaf name of the component is ``pe`` or ``mac``. A PE
+#: that is built from a multiplier, an adder, and a register (for example a
+#: bf16 x bf16 product with an fp32 add) does one MAC for each multiplier
+#: event. Other multipliers (a scaler of a post-processor, an address unit)
+#: are not MACs. The adder and the register of a split PE are not counted:
+#: that would count one MAC two or three times.
+_MAC_PRIMS = ("fpmac", "intmac", "mxfpmac")
+_MUL_PRIMS = ("fpmul", "intmul")
+_PE_LEAF_NAMES = ("pe", "mac")
+
+
+def _is_mac_datapath(name: str, primitive: str) -> bool:
+    """Return True if the charged events of this component are MAC operations."""
+    prim = str(primitive).lower()
+    if prim in _MAC_PRIMS:
+        return True
+    return prim in _MUL_PRIMS and str(name).rsplit(".", 1)[-1] in _PE_LEAF_NAMES
+
+
 def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
     """Return the dtype name of a MAC component, for example fp32, bf16,
-    fp16, int8, or an MX format."""
-    if cls == "fpmac":
+    fp16, int8, or an MX format. A split PE gives the dtype of its
+    multiplier."""
+    if cls in ("fpmac", "fpmul"):
         e, m = attrs.get("exponent_bits"), attrs.get("mantissa_bits")
         if (e, m) == (8, 23):
             return "fp32"
@@ -148,7 +170,7 @@ def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
         if (e, m) == (5, 10):
             return "fp16"
         return f"fp e{e}m{m}" if e and m else None
-    if cls == "intmac":
+    if cls in ("intmac", "intmul"):
         w = attrs.get("data_width_a") or attrs.get("data_width")
         return f"int{w}" if w else "int"
     if cls == "mxfpmac":
@@ -156,8 +178,8 @@ def _dtype_label(cls: str, attrs: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
-                     total_pJ, flops):
+def _fp32_equivalent(components, attrs_by_name, prim_by_name, provider, tech,
+                     clock, total_pJ, flops):
     """Return (dtype, fp32_equivalent) for the efficiency figure.
 
     Convention: the function calculates the cost of the fp MAC datapath again
@@ -166,18 +188,26 @@ def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
     energy of all other components (SRAM, NoC, DRAM) does not change. Thus
     you can compare runs of different fp precisions with fp32 references.
 
+    The MAC datapath is the set of components that :func:`_is_mac_datapath`
+    accepts: the MAC primitives, and the multiplier of a split PE. For a
+    split PE only the multiplier is priced again; its adder and register
+    keep their cost (an fp32 adder is already fp32).
+
     The int and mx datapaths are different primitives, not a different
     precision. For them the function gives the dtype but no fp32 equivalent.
     If a step fails (no provider, unknown mode), the function gives no fp32
     equivalent. A report view must not stop the run.
     """
-    macs = [c for c in components if c["cls"] in ("fpmac", "intmac", "mxfpmac")
-            and c["dyn_energy_pJ"] > 0]
+    def prim(c):
+        return str(prim_by_name.get(c["name"], c["cls"])).lower()
+
+    macs = [c for c in components
+            if _is_mac_datapath(c["name"], prim(c)) and c["dyn_energy_pJ"] > 0]
     if not macs or flops <= 0:
         return None, None
     top = max(macs, key=lambda c: c["dyn_energy_pJ"])
-    dtype = _dtype_label(top["cls"], attrs_by_name.get(top["name"], {}))
-    if any(c["cls"] != "fpmac" for c in macs):
+    dtype = _dtype_label(prim(top), attrs_by_name.get(top["name"], {}))
+    if any(prim(c) not in ("fpmac", "fpmul") for c in macs):
         return dtype, None                      # int/mx: no fp32 equivalent
     if provider is None:
         return dtype, None
@@ -193,9 +223,9 @@ def _fp32_equivalent(components, attrs_by_name, provider, tech, clock,
             for mode, e in c["dyn_by_mode"].items():
                 try:
                     e_native = provider.energy_per_cycle(
-                        "fpmac", {**base, "stim_mode": mode})
+                        prim(c), {**base, "stim_mode": mode})
                     e_fp32 = provider.energy_per_cycle(
-                        "fpmac", {**fp32, "stim_mode": mode})
+                        prim(c), {**fp32, "stim_mode": mode})
                 except Exception:
                     continue                    # no model for the mode: ratio = 1
                 if e_native > 0:
@@ -389,25 +419,27 @@ def build_context(
 
     # The compute-efficiency figure: the energy of the run per FLOP, where
     # 1 MAC = 2 FLOP. The operation count is the charged events of the MAC
-    # datapath components, without the idle events. The systolic PEs give
-    # most of the count. The fpmac operations of the vector datapath are
-    # also in the count. The numerator includes the DRAM, NoC, and SRAM
-    # energy. Thus this is a CHIP-LEVEL figure, which you can compare with
-    # TFLOPS/TDP values of a chip. It is not a figure for the MAC only.
-    _MAC_PRIMS = ("fpmac", "intmac", "mxfpmac")
+    # datapath components (_is_mac_datapath), without the idle events. The
+    # systolic PEs give most of the count. The fpmac operations of the vector
+    # datapath are also in the count. A PE that is split into a multiplier,
+    # an adder, and a register counts its multiplier events only. The
+    # numerator includes the DRAM, NoC, and SRAM energy. Thus this is a
+    # CHIP-LEVEL figure, which you can compare with TFLOPS/TDP values of a
+    # chip. It is not a figure for the MAC only.
+    prim_by_name = {name: str(c0.primitive) for name, c0 in comp0.items()}
     mac_ops = 0.0
     for r in activity_rows:
         name = str(r.get("component", ""))
         if name == "__meta__" or name not in comp0:
             continue
-        if (comp0[name].primitive in _MAC_PRIMS
+        if (_is_mac_datapath(name, prim_by_name[name])
                 and str(r.get("mode")) != "idle"):
             mac_ops += float(r.get("count", 0))
     efficiency = None
     if mac_ops > 0 and run.exec_time_s > 0:
         flops = 2.0 * mac_ops
         dtype, fp32_eq = _fp32_equivalent(
-            components, attrs_by_name, provider, tech, clock,
+            components, attrs_by_name, prim_by_name, provider, tech, clock,
             run.total_energy_pJ, flops)
         efficiency = {
             "mac_ops": mac_ops,
